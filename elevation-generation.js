@@ -335,3 +335,41 @@ function calculateTileAverageElevations(tiles, action) {
 		tile.shoreA = 0;
 	}
 }
+
+function reshapeLandElevations(tiles, action) {
+	action.executeSubaction(function (action) {
+		// Apply realistic elevation distribution reshaping
+		if (enableElevationDistributionReshaping) {
+			reshapeElevationDistribution(tiles);
+		}
+		
+	}, 1, "Reshaping Elevation Distribution");
+}
+
+
+function reshapeElevationDistribution(tiles) {
+	// Create pairs of [tile, originalElevation] for land tiles only
+	var landTiles = [];
+	for (var i = 0; i < tiles.length; ++i) {
+		if (tiles[i].elevation > 0) {
+			landTiles.push({ tile: tiles[i], originalElevation: tiles[i].elevation });
+		}
+	}
+	
+	if (landTiles.length === 0) return;
+	
+	// Sort by original elevation (lowest to highest)
+	landTiles.sort(function(a, b) { 
+		return a.originalElevation - b.originalElevation; 
+	});
+	
+	// Apply power law distribution to sorted tiles (preserves relative order)
+	for (var i = 0; i < landTiles.length; ++i) {
+		var percentile = i / (landTiles.length - 1); // 0 to 1 range
+		// Power law: elevation = percentile^exponent
+		// Lower exponent = more contrast (more low elevations, fewer high)
+		// Higher exponent = less contrast (more even distribution)
+		var reshapedElevation = Math.pow(percentile, elevationExponent);
+		landTiles[i].tile.elevation = reshapedElevation;
+	}
+}

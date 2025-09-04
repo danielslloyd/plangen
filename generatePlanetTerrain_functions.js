@@ -111,7 +111,10 @@ function generatePlanetElevation(topology, plates, action) {
 		}, 10)
 		.executeSubaction(function (action) {
 			calculateTileAverageElevations(topology.tiles, action);
-		}, 2);
+		}, 2)
+		.executeSubaction(function (action) {
+			reshapeLandElevations(topology.tiles, action);
+		}, 1, "Reshaping Land Elevation Distribution");
 }
 
 function generatePlanetWeather(topology, partitions, heatLevel, moistureLevel, random, action) {

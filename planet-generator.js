@@ -30,6 +30,9 @@ var renderPlateMovements = false;
 var renderAirCurrents = false;
 var renderRivers = true;
 var elevationMultiplier = 80; // Controls how exaggerated the 3D terrain elevation appears
+var riverElevationDeltaThreshold = 0.2; // Minimum elevation difference for white waterfall rivers
+var enableElevationDistributionReshaping = false; // Apply realistic elevation distribution
+var elevationExponent = 2.7; // Power law exponent for elevation distribution (lower = more contrast)
 var renderEdgeCosts = false;
 var sunTimeOffset = 0;
 var pressedKeys = {};

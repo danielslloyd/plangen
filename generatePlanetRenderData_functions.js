@@ -493,7 +493,13 @@ function buildRiversRenderObject(tiles, action) {
 			}
 			
 			var riverCurrent = toPos.clone().sub(fromPos);
-			buildArrow(geometry, fromPos, riverCurrent, tile.averagePosition.clone().normalize(), 5, (tile.elevation > tile2.elevation * 1.1) ? new THREE.Color(0xFFFFFF) : new THREE.Color(0x003F85));
+			
+			// Determine river color based on elevation delta
+			var elevationDelta = tile.elevation - tile2.elevation;
+			var isWaterfall = elevationDelta >= riverElevationDeltaThreshold;
+			var riverColor = isWaterfall ? new THREE.Color(0xFFFFFF) : new THREE.Color(0x003F85);
+			
+			buildArrow(geometry, fromPos, riverCurrent, tile.averagePosition.clone().normalize(), 5, riverColor);
 		}
 		++i;
 
@@ -502,7 +508,7 @@ function buildRiversRenderObject(tiles, action) {
 
 	geometry.boundingSphere = new THREE.Sphere(new Vector3(0, 0, 0), 1000 + elevationMultiplier + 60);
 	var material = new THREE.MeshBasicMaterial({
-		color: new THREE.Color(0x234DD7)
+		vertexColors: THREE.VertexColors
 	});
 	//var material = new THREE.MeshPhongMaterial({	color: new THREE.Color(0x00AAFF),
 	//							opacity: 1,
