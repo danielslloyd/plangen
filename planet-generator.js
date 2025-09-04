@@ -29,6 +29,7 @@ var renderPlateBoundaries = false;
 var renderPlateMovements = false;
 var renderAirCurrents = false;
 var renderRivers = true;
+var elevationMultiplier = 80; // Controls how exaggerated the 3D terrain elevation appears
 var renderEdgeCosts = false;
 var sunTimeOffset = 0;
 var pressedKeys = {};

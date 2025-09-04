@@ -107,9 +107,40 @@ function createTileSelectRenderObject(tile, color) {
     var outerColor = new THREE.Color(0x000000);
     var innerColor = color || new THREE.Color(0xFFFFFF);
     var geometry = new THREE.Geometry();
-    geometry.vertices.push(new THREE.Vector3().lerp(tile.averagePosition, (1+Math.abs(tile.elevation)/10)));//1.07
+    // Use global elevation multiplier parameter
+    
+    // Calculate tile center position with elevation
+    var centerPos = tile.averagePosition.clone();
+    if (tile.elevation > 0) {
+        var centerDistance = centerPos.length();
+        centerPos.normalize().multiplyScalar(centerDistance + elevationMultiplier * tile.elevation + 5); // +5 for selection highlight offset
+    } else {
+        centerPos.multiplyScalar(1.0005); // slight offset for water tiles
+    }
+    geometry.vertices.push(centerPos);
+    
     for (var i = 0; i < tile.corners.length; ++i) {
-        geometry.vertices.push(new THREE.Vector3().lerp(tile.corners[i].position, 1.0005));
+        var corner = tile.corners[i];
+        var cornerPosition = corner.position.clone();
+        
+        // Check if any adjacent tile is ocean (elevation <= 0)
+        var hasOceanTile = false;
+        for (var k = 0; k < corner.tiles.length; ++k) {
+            if (corner.tiles[k].elevation <= 0) {
+                hasOceanTile = true;
+                break;
+            }
+        }
+        
+        // Apply elevation exaggeration only if no adjacent tiles are ocean and median elevation is positive
+        if (!hasOceanTile && corner.elevationMedian > 0) {
+            var cornerDistance = cornerPosition.length();
+            cornerPosition.normalize().multiplyScalar(cornerDistance + elevationMultiplier * corner.elevationMedian + 5); // +5 for selection highlight offset
+        } else {
+            cornerPosition.multiplyScalar(1.0005); // slight offset for water/coastal corners
+        }
+        
+        geometry.vertices.push(cornerPosition);
         geometry.faces.push(new THREE.Face3(i + 1, (i + 1) % tile.corners.length + 1, 0, tile.normal, [outerColor, outerColor, innerColor]));
     }
     geometry.boundingSphere = tile.boundingSphere.clone();
@@ -216,10 +247,29 @@ function renderPath(path) {
     for (let i = 0; i < path.length - 1; i++) {
         const fromTile = path[i];
         const toTile = path[i + 1];
-        const direction = toTile.position.clone().sub(fromTile.position);
+        // Use global elevation multiplier parameter
+        
+        // Calculate elevated positions for start and end
+        var fromPos = fromTile.position.clone();
+        if (fromTile.elevation > 0) {
+            var fromDistance = fromPos.length();
+            fromPos.normalize().multiplyScalar(fromDistance + elevationMultiplier * fromTile.elevation + 10);
+        } else {
+            fromPos.multiplyScalar(1.0006);
+        }
+        
+        var toPos = toTile.position.clone();
+        if (toTile.elevation > 0) {
+            var toDistance = toPos.length();
+            toPos.normalize().multiplyScalar(toDistance + elevationMultiplier * toTile.elevation + 10);
+        } else {
+            toPos.multiplyScalar(1.0006);
+        }
+        
+        const direction = toPos.clone().sub(fromPos);
         const arrow = new THREE.ArrowHelper(
 			direction.clone().normalize(),
-			fromTile.position.clone().multiplyScalar(1.0006), // closer to surface
+			fromPos,
 			direction.length(),
 			0xff0000
 		);

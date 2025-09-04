@@ -21,6 +21,35 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action) {
 	var maxBody = Math.max.apply(0, tiles.map((data) => data.body.id));
 	let maxSediment = Math.max(...tiles.map(t => t.sediment? t.sediment:0));
 
+	// Calculate corner elevation medians now that tile elevations are available
+	var processedCorners = new Set();
+	for (var t = 0; t < tiles.length; ++t) {
+		var tile = tiles[t];
+		for (var c = 0; c < tile.corners.length; ++c) {
+			var corner = tile.corners[c];
+			if (!processedCorners.has(corner.id)) {
+				processedCorners.add(corner.id);
+				var tileElevations = [];
+				for (var j = 0; j < corner.tiles.length; ++j) {
+					if (typeof corner.tiles[j].elevation !== 'undefined') {
+						tileElevations.push(corner.tiles[j].elevation);
+					}
+				}
+				if (tileElevations.length > 0) {
+					tileElevations.sort(function(a, b) { return a - b; });
+					var medianIndex = Math.floor(tileElevations.length / 2);
+					if (tileElevations.length % 2 === 0) {
+						corner.elevationMedian = (tileElevations[medianIndex - 1] + tileElevations[medianIndex]) / 2;
+					} else {
+						corner.elevationMedian = tileElevations[medianIndex];
+					}
+				} else {
+					corner.elevationMedian = 0;
+				}
+			}
+		}
+	}
+
 	var i = 0;
 	action.executeSubaction(function (action) {
 		if (i >= tiles.length) return;
@@ -198,12 +227,40 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action) {
 		};
 
 		var baseIndex = planetGeometry.vertices.length;
-		var centerPos = tile.averagePosition
-		planetGeometry.vertices.push(tile.averagePosition);
+		// Use global elevation multiplier parameter
+		
+		// Calculate tile center position with elevation
+		var centerPos = tile.averagePosition.clone();
+		if (tile.elevation > 0) {
+			var centerDistance = centerPos.length();
+			centerPos.normalize().multiplyScalar(centerDistance + elevationMultiplier * tile.elevation);
+		}
+		planetGeometry.vertices.push(centerPos);
+		
 		for (var j = 0; j < tile.corners.length; ++j) {
-			var cornerPosition = tile.corners[j].position;
+			var corner = tile.corners[j];
+			var cornerPosition = corner.position.clone();
+			
+			// Check if any adjacent tile is ocean (elevation <= 0)
+			var hasOceanTile = false;
+			for (var k = 0; k < corner.tiles.length; ++k) {
+				if (corner.tiles[k].elevation <= 0) {
+					hasOceanTile = true;
+					break;
+				}
+			}
+			
+			// Apply elevation exaggeration only if no adjacent tiles are ocean and median elevation is positive
+			if (!hasOceanTile && corner.elevationMedian > 0) {
+				var cornerDistance = cornerPosition.length();
+				cornerPosition.normalize().multiplyScalar(cornerDistance + elevationMultiplier * corner.elevationMedian);
+			}
+			
 			planetGeometry.vertices.push(cornerPosition);
-			planetGeometry.vertices.push(tile.averagePosition.clone().sub(cornerPosition).multiplyScalar(0.1).add(cornerPosition)); //0.1 border thickness as multiple of wedge length. low numbers can cause aliasing
+			
+			// Calculate border position (between tile center and corner)
+			var borderPosition = centerPos.clone().sub(cornerPosition).multiplyScalar(0.1).add(cornerPosition);
+			planetGeometry.vertices.push(borderPosition);
 
 			var i0 = j * 2;
 			var i1 = ((j + 1) % tile.corners.length) * 2;
@@ -235,7 +292,8 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action) {
 	});
 
 	planetGeometry.dynamic = true;
-	planetGeometry.boundingSphere = new THREE.Sphere(new Vector3(0, 0, 0), 1000);
+	// Bounding sphere radius = base sphere (1000) + maximum possible elevation (elevationMultiplier * 1.0) + buffer
+	planetGeometry.boundingSphere = new THREE.Sphere(new Vector3(0, 0, 0), 1000 + elevationMultiplier + 50);
 	var planetMaterial = new THREE.MeshLambertMaterial({
 		color: new THREE.Color(0x000000),
 		ambient: new THREE.Color(0xFFFFFF),
@@ -306,7 +364,7 @@ function buildPlateBoundariesRenderObject(borders, action) {
 		action.loop(i / borders.length);
 	});
 
-	geometry.boundingSphere = new THREE.Sphere(new Vector3(0, 0, 0), 1010);
+	geometry.boundingSphere = new THREE.Sphere(new Vector3(0, 0, 0), 1000 + elevationMultiplier + 60);
 	var material = new THREE.MeshBasicMaterial({
 		vertexColors: THREE.VertexColors,
 	});
@@ -331,7 +389,17 @@ function buildPlateMovementsRenderObject(tiles, action) {
 		var movement = plate.calculateMovement(tile.position);
 		var plateMovementColor = new THREE.Color(1 - plate.r, 1 - plate.color.g, 1 - plate.color.b);
 
-		buildArrow(geometry, tile.position.clone().multiplyScalar(1.002), movement.clone().multiplyScalar(0.5), tile.position.clone().normalize(), Math.min(movement.length(), 4), plateMovementColor);
+		// Calculate elevated position for arrow start
+		var arrowPosition = tile.position.clone();
+		if (tile.elevation > 0) {
+			// Use global elevation multiplier parameter
+			var distance = arrowPosition.length();
+			arrowPosition.normalize().multiplyScalar(distance + elevationMultiplier * tile.elevation + 2);
+		} else {
+			arrowPosition.multiplyScalar(1.002);
+		}
+		
+		buildArrow(geometry, arrowPosition, movement.clone().multiplyScalar(0.5), tile.position.clone().normalize(), Math.min(movement.length(), 4), plateMovementColor);
 
 		tile.plateMovement = movement;
 
@@ -340,7 +408,7 @@ function buildPlateMovementsRenderObject(tiles, action) {
 		action.loop(i / tiles.length);
 	});
 
-	geometry.boundingSphere = new THREE.Sphere(new Vector3(0, 0, 0), 1010);
+	geometry.boundingSphere = new THREE.Sphere(new Vector3(0, 0, 0), 1000 + elevationMultiplier + 60);
 	var material = new THREE.MeshBasicMaterial({
 		vertexColors: THREE.VertexColors,
 	});
@@ -361,15 +429,26 @@ function buildAirCurrentsRenderObject(corners, action) {
 		if (i >= corners.length) return;
 
 		var corner = corners[i];
+		
+		// Calculate elevated position for arrow start
+		var arrowPosition = corner.position.clone();
+		if (corner.elevationMedian > 0) {
+			// Use global elevation multiplier parameter
+			var distance = arrowPosition.length();
+			arrowPosition.normalize().multiplyScalar(distance + elevationMultiplier * corner.elevationMedian + 2);
+		} else {
+			arrowPosition.multiplyScalar(1.002);
+		}
+		
 		//buildArrow(geometry, position, direction, normal, baseWidth, color)
-		buildArrow(geometry, corner.position.clone().multiplyScalar(1.002), corner.airCurrent.clone().multiplyScalar(0.5), corner.position.clone().normalize(), Math.min(corner.airCurrent.length(), 4));
+		buildArrow(geometry, arrowPosition, corner.airCurrent.clone().multiplyScalar(0.5), corner.position.clone().normalize(), Math.min(corner.airCurrent.length(), 4));
 
 		++i;
 
 		action.loop(i / corners.length);
 	});
 
-	geometry.boundingSphere = new THREE.Sphere(new Vector3(0, 0, 0), 1010);
+	geometry.boundingSphere = new THREE.Sphere(new Vector3(0, 0, 0), 1000 + elevationMultiplier + 60);
 	//var material = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xFFFFFF), });
 	var material = new THREE.MeshPhongMaterial({
 		color: new THREE.Color(0xFFFFFF),
@@ -393,16 +472,35 @@ function buildRiversRenderObject(tiles, action) {
 		var tile = tiles[i];
 		if (tile.river) {
 			var tile2 = tile.drain;
-			var riverCurrent = new Vector3(0, 0, 0);
-			riverCurrent.add(tile2.averagePosition.clone().add(tile.averagePosition.clone().multiplyScalar(-1)));
-			buildArrow(geometry, tile.averagePosition.clone().multiplyScalar(1.002), riverCurrent, tile.averagePosition.clone().normalize(), 5, (tile.elevation > tile2.elevation * 1.1) ? new THREE.Color(0xFFFFFF) : new THREE.Color(0x003F85));//tiles[i].elevation = tiles[i].tiles[tiles[i].tiles.length - 1].elevation * 1.05
+			
+			// Calculate elevated positions for both tiles
+			// Use global elevation multiplier parameter
+			var fromPos = tile.averagePosition.clone();
+			var toPos = tile2.averagePosition.clone();
+			
+			if (tile.elevation > 0) {
+				var fromDistance = fromPos.length();
+				fromPos.normalize().multiplyScalar(fromDistance + elevationMultiplier * tile.elevation + 2);
+			} else {
+				fromPos.multiplyScalar(1.002);
+			}
+			
+			if (tile2.elevation > 0) {
+				var toDistance = toPos.length();
+				toPos.normalize().multiplyScalar(toDistance + elevationMultiplier * tile2.elevation + 2);
+			} else {
+				toPos.multiplyScalar(1.002);
+			}
+			
+			var riverCurrent = toPos.clone().sub(fromPos);
+			buildArrow(geometry, fromPos, riverCurrent, tile.averagePosition.clone().normalize(), 5, (tile.elevation > tile2.elevation * 1.1) ? new THREE.Color(0xFFFFFF) : new THREE.Color(0x003F85));
 		}
 		++i;
 
 		action.loop(i / tiles.length);
 	});
 
-	geometry.boundingSphere = new THREE.Sphere(new Vector3(0, 0, 0), 1010);
+	geometry.boundingSphere = new THREE.Sphere(new Vector3(0, 0, 0), 1000 + elevationMultiplier + 60);
 	var material = new THREE.MeshBasicMaterial({
 		color: new THREE.Color(0x234DD7)
 	});
