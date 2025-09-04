@@ -1,3 +1,218 @@
+$(document).ready(function onDocumentReady() {
+	scene = new THREE.Scene();
+	camera = new THREE.PerspectiveCamera(70, 1, 0.2, 2000); //(75, 1, 0.2, 2000)
+	renderer = new THREE.WebGLRenderer({
+		antialias: true,
+		alpha: true
+	});
+	projector = new THREE.Projector();
+
+	renderer.setFaceCulling(THREE.CullFaceFront, THREE.FrontFaceDirectionCW);
+
+	var ambientLight = new THREE.AmbientLight(0xFFFFFF);
+	scene.add(ambientLight);
+
+	directionalLight = new THREE.DirectionalLight(0xFFFFFF);
+	directionalLight.position.set(-3, 3, 7).normalize();
+	scene.add(directionalLight);
+
+	requestAnimationFrame(render);
+
+	resetCamera();
+	updateCamera();
+
+	ui.body = $("body");
+	ui.frame = $("#viewportFrame");
+	ui.rendererElement = $(renderer.domElement);
+	ui.frame.append(ui.rendererElement);
+	ui.rendererElement.on("mousewheel", zoomHandler);
+	ui.rendererElement.on("click", clickHandler);
+	ui.body.on("keydown", keyDownHandler);
+	ui.body.on("keyup", keyUpHandler);
+	ui.body.focus();
+
+	ui.helpPanel = $("#helpPanel");
+
+	ui.controlPanel = $("#controlPanel");
+	ui.surfaceDisplayButtons = {
+		terrain: $("#showTerrainButton"),
+		plates: $("#showPlatesButton"),
+		elevation: $("#showElevationButton"),
+		temperature: $("#showTemperatureButton"),
+		moisture: $("#showMoistureButton"),
+	};
+
+	ui.surfaceDisplayButtons.terrain.click(setSurfaceRenderMode.bind(null, "terrain"));
+	ui.surfaceDisplayButtons.plates.click(setSurfaceRenderMode.bind(null, "plates"));
+	ui.surfaceDisplayButtons.elevation.click(setSurfaceRenderMode.bind(null, "elevation"));
+	ui.surfaceDisplayButtons.temperature.click(setSurfaceRenderMode.bind(null, "temperature"));
+	ui.surfaceDisplayButtons.moisture.click(setSurfaceRenderMode.bind(null, "moisture"));
+
+	ui.showSunlightButton = $("#showSunlightButton");
+	ui.showPlateBoundariesButton = $("#showPlateBoundariesButton");
+	ui.showPlateMovementsButton = $("#showPlateMovementsButton");
+	ui.showAirCurrentsButton = $("#showAirCurrentsButton");
+
+	ui.showSunlightButton.click(showHideSunlight);
+	ui.showPlateBoundariesButton.click(showHidePlateBoundaries);
+	ui.showPlateMovementsButton.click(showHidePlateMovements);
+	ui.showAirCurrentsButton.click(showHideAirCurrents);
+
+	ui.lowDetailButton = $("#lowDetailButton");
+	ui.mediumDetailButton = $("#mediumDetailButton");
+	ui.highDetailButton = $("#highDetailButton");
+	ui.generatePlanetButton = $("#generatePlanetButton");
+	ui.advancedSettingsButton = $("#advancedSettingsButton");
+
+	ui.lowDetailButton.click(setSubdivisions.bind(null, 20));
+	ui.mediumDetailButton.click(setSubdivisions.bind(null, 40));
+	ui.highDetailButton.click(setSubdivisions.bind(null, 60));
+	ui.generatePlanetButton.click(generatePlanetAsynchronous);
+	ui.advancedSettingsButton.click(showAdvancedSettings);
+
+	ui.dataPanel = $("#dataPanel");
+
+	ui.progressPanel = $("#progressPanel");
+	ui.progressActionLabel = $("#progressActionLabel");
+	ui.progressBarFrame = $("#progressBarFrame");
+	ui.progressBar = $("#progressBar");
+	ui.progressBarLabel = $("#progressBarLabel");
+	ui.progressCancelButton = $("#progressCancelButton");
+	ui.progressCancelButton.click(cancelButtonHandler);
+	ui.progressPanel.hide();
+
+	ui.tileCountLabel = $("#tileCountLabel");
+	ui.pentagonCountLabel = $("#pentagonCountLabel");
+	ui.hexagonCountLabel = $("#hexagonCountLabel");
+	ui.heptagonCountLabel = $("#heptagonCountLabel");
+	ui.plateCountLabel = $("#plateCountLabel");
+	ui.waterPercentageLabel = $("#waterPercentageLabel");
+	ui.rawSeedLabel = $("#rawSeedLabel");
+	ui.originalSeedLabel = $("#originalSeedLabel");
+
+	ui.minAirCurrentSpeedLabel = $("#minAirCurrentSpeedLabel");
+	ui.avgAirCurrentSpeedLabel = $("#avgAirCurrentSpeedLabel");
+	ui.maxAirCurrentSpeedLabel = $("#maxAirCurrentSpeedLabel");
+
+	ui.minElevationLabel = $("#minElevationLabel");
+	ui.avgElevationLabel = $("#avgElevationLabel");
+	ui.maxElevationLabel = $("#maxElevationLabel");
+
+	ui.minTemperatureLabel = $("#minTemperatureLabel");
+	ui.avgTemperatureLabel = $("#avgTemperatureLabel");
+	ui.maxTemperatureLabel = $("#maxTemperatureLabel");
+
+	ui.minMoistureLabel = $("#minMoistureLabel");
+	ui.avgMoistureLabel = $("#avgMoistureLabel");
+	ui.maxMoistureLabel = $("#maxMoistureLabel");
+
+	ui.minPlateMovementSpeedLabel = $("#minPlateMovementSpeedLabel");
+	ui.avgPlateMovementSpeedLabel = $("#avgPlateMovementSpeedLabel");
+	ui.maxPlateMovementSpeedLabel = $("#maxPlateMovementSpeedLabel");
+
+	ui.minTileAreaLabel = $("#minTileAreaLabel");
+	ui.avgTileAreaLabel = $("#avgTileAreaLabel");
+	ui.maxTileAreaLabel = $("#maxTileAreaLabel");
+
+	ui.minPlateAreaLabel = $("#minPlateAreaLabel");
+	ui.avgPlateAreaLabel = $("#avgPlateAreaLabel");
+	ui.maxPlateAreaLabel = $("#maxPlateAreaLabel");
+
+	ui.minPlateCircumferenceLabel = $("#minPlateCircumferenceLabel");
+	ui.avgPlateCircumferenceLabel = $("#avgPlateCircumferenceLabel");
+	ui.maxPlateCircumferenceLabel = $("#maxPlateCircumferenceLabel");
+
+	ui.generationSettingsPanel = $("#generationSettingsPanel");
+
+	ui.detailLevelLabel = $("#detailLevelLabel");
+	ui.detailLevelRange = $("#detailLevelRange");
+	ui.distortionLevelLabel = $("#distortionLevelLabel");
+	ui.distortionLevelRange = $("#distortionLevelRange");
+	ui.tectonicPlateCountLabel = $("#tectonicPlateCountLabel");
+	ui.tectonicPlateCountRange = $("#tectonicPlateCountRange");
+	ui.oceanicRateLabel = $("#oceanicRateLabel");
+	ui.oceanicRateRange = $("#oceanicRateRange");
+	ui.heatLevelLabel = $("#heatLevelLabel");
+	ui.heatLevelRange = $("#heatLevelRange");
+	ui.moistureLevelLabel = $("#moistureLevelLabel");
+	ui.moistureLevelRange = $("#moistureLevelRange");
+	ui.seedTextBox = $("#seedTextBox");
+	ui.seed2 = $("#seed2");
+	ui.advancedGeneratePlanetButton = $("#advancedGeneratePlanetButton");
+	ui.advancedCancelButton = $("#advancedCancelButton");
+
+	ui.detailLevelRange.on("input", function () {
+		setSubdivisions(parseInt(ui.detailLevelRange.val()));
+	});
+	ui.distortionLevelRange.on("input", function () {
+		setDistortionLevel(parseInt(ui.distortionLevelRange.val()) / 100);
+	});
+	ui.tectonicPlateCountRange.on("input", function () {
+		setPlateCount(Math.floor(Math.pow(2, parseInt(ui.tectonicPlateCountRange.val()) / 300 * (Math.log(1000) / Math.log(2) - 1) + 1)));
+	});
+	ui.oceanicRateRange.on("input", function () {
+		setOceanicRate(parseInt(ui.oceanicRateRange.val()) / 100);
+	});
+	ui.heatLevelRange.on("input", function () {
+		setHeatLevel(parseInt(ui.heatLevelRange.val()) / 100 + 1);
+	});
+	ui.moistureLevelRange.on("input", function () {
+		setMoistureLevel(parseInt(ui.moistureLevelRange.val()) / 100 + 1);
+	});
+	ui.seedTextBox.on("input", function () {
+		setSeed(ui.seedTextBox.val());
+	});
+	ui.advancedGeneratePlanetButton.click(function () {
+		hideAdvancedSettings();
+		generatePlanetAsynchronous();
+	});
+	ui.advancedCancelButton.click(hideAdvancedSettings);
+
+	ui.updatePanel = $("#updatePanel");
+
+	$("button").on("click", function (b) {
+		$(this).blur();
+	});
+	$("button").on("focus", function () {
+		disableKeys = true;
+	});
+	$("input").on("focus", function () {
+		disableKeys = true;
+	});
+	$("button").on("blur", function () {
+		disableKeys = false;
+	});
+	$("input").on("blur", function () {
+		disableKeys = false;
+	});
+
+	hideAdvancedSettings();
+	setPlateCount(50);
+
+	setSurfaceRenderMode(surfaceRenderMode, true);
+	showHideSunlight(renderSunlight);
+	showHidePlateBoundaries(renderPlateBoundaries);
+	showHidePlateMovements(renderPlateMovements);
+	showHideAirCurrents(renderAirCurrents);
+	//showHideEdgeCosts(renderEdgeCosts);
+	showHideRivers(renderRivers);
+
+	ui.lowDetailButton.click();
+
+	//saveToFileSystem(serializePlanetMesh(planet.mesh, "function getPregeneratedPlanetMesh() { return ", "; }\n"));
+
+	window.addEventListener("resize", resizeHandler);
+	resizeHandler();
+	showHideInterface();
+    document.addEventListener('mousemove', (event) => {
+        const rect = renderer.domElement.getBoundingClientRect();
+        mouseX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+        mouseY = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    });
+
+	ui.generatePlanetButton.click();
+});
+
 function setSubdivisions(subdivisions) {
 	if (typeof (subdivisions) === "number" && subdivisions >= 4) {
 		generationSettings.subdivisions = subdivisions;

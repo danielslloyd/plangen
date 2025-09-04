@@ -201,3 +201,29 @@ function buildEdgeCostsRenderObject(edges) {
     var renderObject = new THREE.Line(geometry, material, THREE.LinePieces);
     return renderObject;
 }
+
+function renderPath(path) {
+    // Remove any existing path render object
+    if (planet.pathRenderObject) {
+        for (let i = planet.pathRenderObject.length - 1; i >= 0; i--) {
+            scene.remove(planet.pathRenderObject[i]);
+        }
+    }
+    planet.pathRenderObject = [];
+    if (!fromVertex || !toVertex || !path) {
+        return;
+    }
+    for (let i = 0; i < path.length - 1; i++) {
+        const fromTile = path[i];
+        const toTile = path[i + 1];
+        const direction = toTile.position.clone().sub(fromTile.position);
+        const arrow = new THREE.ArrowHelper(
+			direction.clone().normalize(),
+			fromTile.position.clone().multiplyScalar(1.0006), // closer to surface
+			direction.length(),
+			0xff0000
+		);
+        scene.add(arrow);
+        planet.pathRenderObject.push(arrow);
+    }
+}
