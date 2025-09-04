@@ -1009,3 +1009,83 @@ function generatePlanetPartition(tiles, action) {
 		return rootPartition;
 	});
 }
+
+
+function Corner(id, position, cornerCount, borderCount, tileCount) {
+	this.id = id;
+	this.position = position;
+	this.corners = new Array(cornerCount);
+	this.borders = new Array(borderCount);
+	this.tiles = new Array(tileCount);
+}
+
+Corner.prototype.vectorTo = function Corner_vectorTo(corner) {
+	return corner.position.clone().sub(this.position);
+};
+
+Corner.prototype.toString = function Corner_toString() {
+	return "Corner " + this.id.toFixed(0) + " < " + this.position.x.toFixed(0) + ", " + this.position.y.toFixed(0) + ", " + this.position.z.toFixed(0) + " >";
+};
+
+function Border(id, cornerCount, borderCount, tileCount) {
+	this.id = id;
+	this.corners = new Array(cornerCount);
+	this.borders = new Array(borderCount);
+	this.tiles = new Array(tileCount);
+}
+
+Border.prototype.oppositeCorner = function Border_oppositeCorner(corner) {
+	return (this.corners[0] === corner) ? this.corners[1] : this.corners[0];
+};
+
+Border.prototype.oppositeTile = function Border_oppositeTile(tile) {
+	return (this.tiles[0] === tile) ? this.tiles[1] : this.tiles[0];
+};
+
+Border.prototype.length = function Border_length() {
+	return this.corners[0].position.distanceTo(this.corners[1].position);
+};
+
+Border.prototype.isLandBoundary = function Border_isLandBoundary() {
+	return (this.tiles[0].elevation > 0) !== (this.tiles[1].elevation > 0);
+};
+
+Border.prototype.toString = function Border_toString() {
+	return "Border " + this.id.toFixed(0);
+};
+
+function Tile(id, position, cornerCount, borderCount, tileCount) {
+	this.id = id;
+	this.position = position;
+	this.corners = new Array(cornerCount);
+	this.borders = new Array(borderCount);
+	this.tiles = new Array(tileCount);
+}
+
+Tile.prototype.intersectRay = function Tile_intersectRay(ray) {
+	if (!intersectRayWithSphere(ray, this.boundingSphere)) return false;
+
+	var surface = new THREE.Plane().setFromNormalAndCoplanarPoint(this.normal, this.averagePosition);
+	if (surface.distanceToPoint(ray.origin) <= 0) return false;
+
+	var denominator = surface.normal.dot(ray.direction);
+	if (denominator === 0) return false;
+
+	var t = -(ray.origin.dot(surface.normal) + surface.constant) / denominator;
+	var point = ray.direction.clone().multiplyScalar(t).add(ray.origin);
+
+	var origin = new Vector3(0, 0, 0);
+	for (var i = 0; i < this.corners.length; ++i) {
+		var j = (i + 1) % this.corners.length;
+		var side = new THREE.Plane().setFromCoplanarPoints(this.corners[j].position, this.corners[i].position, origin);
+
+		if (side.distanceToPoint(point) < 0) return false;
+	}
+
+	return true;
+};
+
+Tile.prototype.toString = function Tile_toString() {
+	return "Tile " + this.id.toFixed(0) + " (" + this.tiles.length.toFixed(0) + " Neighbors) < " + this.position.x.toFixed(0) + ", " + this.position.y.toFixed(0) + ", " + this.position.z.toFixed(0) + " >";
+};
+
