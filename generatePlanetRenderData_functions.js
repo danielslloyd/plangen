@@ -430,15 +430,11 @@ function buildAirCurrentsRenderObject(corners, action) {
 
 		var corner = corners[i];
 		
-		// Calculate elevated position for arrow start
+		// Calculate position to hover above maximum possible terrain elevation
 		var arrowPosition = corner.position.clone();
-		if (corner.elevationMedian > 0) {
-			// Use global elevation multiplier parameter
-			var distance = arrowPosition.length();
-			arrowPosition.normalize().multiplyScalar(distance + elevationMultiplier * corner.elevationMedian + 2);
-		} else {
-			arrowPosition.multiplyScalar(1.002);
-		}
+		var distance = arrowPosition.length();
+		// Hover at fixed height above maximum terrain (elevationMultiplier + 10)
+		arrowPosition.normalize().multiplyScalar(distance + elevationMultiplier + 10);
 		
 		//buildArrow(geometry, position, direction, normal, baseWidth, color)
 		buildArrow(geometry, arrowPosition, corner.airCurrent.clone().multiplyScalar(0.5), corner.position.clone().normalize(), Math.min(corner.airCurrent.length(), 4));
@@ -473,33 +469,14 @@ function buildRiversRenderObject(tiles, action) {
 		if (tile.river) {
 			var tile2 = tile.drain;
 			
-			// Calculate elevated positions for both tiles
-			// Use global elevation multiplier parameter
-			var fromPos = tile.averagePosition.clone();
-			var toPos = tile2.averagePosition.clone();
-			
-			if (tile.elevation > 0) {
-				var fromDistance = fromPos.length();
-				fromPos.normalize().multiplyScalar(fromDistance + elevationMultiplier * tile.elevation + 2);
-			} else {
-				fromPos.multiplyScalar(1.002);
-			}
-			
-			if (tile2.elevation > 0) {
-				var toDistance = toPos.length();
-				toPos.normalize().multiplyScalar(toDistance + elevationMultiplier * tile2.elevation + 2);
-			} else {
-				toPos.multiplyScalar(1.002);
-			}
-			
-			var riverCurrent = toPos.clone().sub(fromPos);
-			
 			// Determine river color based on elevation delta
 			var elevationDelta = tile.elevation - tile2.elevation;
 			var isWaterfall = elevationDelta >= riverElevationDeltaThreshold;
 			var riverColor = isWaterfall ? new THREE.Color(0xFFFFFF) : new THREE.Color(0x003F85);
 			
-			buildArrow(geometry, fromPos, riverCurrent, tile.averagePosition.clone().normalize(), 5, riverColor);
+			// Use segmented arrow for better terrain following
+			var riverDirection = tile2.averagePosition.clone().sub(tile.averagePosition);
+			buildSegmentedArrow(geometry, tile, tile2, riverDirection, 5, riverColor);
 		}
 		++i;
 
@@ -522,3 +499,81 @@ function buildRiversRenderObject(tiles, action) {
 	});
 }
 
+// Utility functions for terrain-following arrow rendering
+
+// Utility function to calculate elevation at the border between two tiles
+function calculateBorderElevation(tile1, tile2) {
+	// Find the shared corners between the two tiles
+	var sharedCorners = [];
+	for (var i = 0; i < tile1.corners.length; i++) {
+		for (var j = 0; j < tile2.corners.length; j++) {
+			if (tile1.corners[i] === tile2.corners[j]) {
+				sharedCorners.push(tile1.corners[i]);
+			}
+		}
+	}
+	
+	if (sharedCorners.length === 0) {
+		// No shared border, use average of tile elevations
+		return (tile1.elevation + tile2.elevation) / 2;
+	}
+	
+	// Calculate average elevation of shared corners (using elevationMedian)
+	var totalElevation = 0;
+	var validCorners = 0;
+	for (var k = 0; k < sharedCorners.length; k++) {
+		if (typeof sharedCorners[k].elevationMedian !== 'undefined') {
+			totalElevation += sharedCorners[k].elevationMedian;
+			validCorners++;
+		}
+	}
+	
+	if (validCorners > 0) {
+		return totalElevation / validCorners;
+	} else {
+		// Fallback to average of tile elevations
+		return (tile1.elevation + tile2.elevation) / 2;
+	}
+}
+
+// Utility function to build segmented arrows for better terrain following
+function buildSegmentedArrow(geometry, fromTile, toTile, direction, baseWidth, color) {
+	// Calculate border elevation between the two tiles
+	var borderElevation = calculateBorderElevation(fromTile, toTile);
+	
+	// Calculate positions with elevation
+	var fromPos = fromTile.averagePosition.clone();
+	var toPos = toTile.averagePosition.clone();
+	var midPos = fromPos.clone().add(toPos).multiplyScalar(0.5);
+	
+	// Apply elevation exaggeration
+	if (fromTile.elevation > 0) {
+		var fromDistance = fromPos.length();
+		fromPos.normalize().multiplyScalar(fromDistance + elevationMultiplier * fromTile.elevation + 2);
+	} else {
+		fromPos.multiplyScalar(1.002);
+	}
+	
+	if (toTile.elevation > 0) {
+		var toDistance = toPos.length();
+		toPos.normalize().multiplyScalar(toDistance + elevationMultiplier * toTile.elevation + 2);
+	} else {
+		toPos.multiplyScalar(1.002);
+	}
+	
+	// Apply border elevation to midpoint
+	if (borderElevation > 0) {
+		var midDistance = midPos.length();
+		midPos.normalize().multiplyScalar(midDistance + elevationMultiplier * borderElevation + 2);
+	} else {
+		midPos.multiplyScalar(1.002);
+	}
+	
+	// Build two arrow segments: fromPos -> midPos and midPos -> toPos
+	var firstSegment = midPos.clone().sub(fromPos);
+	var secondSegment = toPos.clone().sub(midPos);
+	
+	// Create both arrow segments
+	buildArrow(geometry, fromPos, firstSegment, fromTile.averagePosition.clone().normalize(), baseWidth, color);
+	buildArrow(geometry, midPos, secondSegment, toTile.averagePosition.clone().normalize(), baseWidth, color);
+}

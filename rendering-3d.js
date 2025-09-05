@@ -233,6 +233,41 @@ function buildEdgeCostsRenderObject(edges) {
     return renderObject;
 }
 
+// Utility function to calculate elevation at the border between two tiles
+function calculateBorderElevation(tile1, tile2) {
+	// Find the shared corners between the two tiles
+	var sharedCorners = [];
+	for (var i = 0; i < tile1.corners.length; i++) {
+		for (var j = 0; j < tile2.corners.length; j++) {
+			if (tile1.corners[i] === tile2.corners[j]) {
+				sharedCorners.push(tile1.corners[i]);
+			}
+		}
+	}
+	
+	if (sharedCorners.length === 0) {
+		// No shared border, use average of tile elevations
+		return (tile1.elevation + tile2.elevation) / 2;
+	}
+	
+	// Calculate average elevation of shared corners (using elevationMedian)
+	var totalElevation = 0;
+	var validCorners = 0;
+	for (var k = 0; k < sharedCorners.length; k++) {
+		if (typeof sharedCorners[k].elevationMedian !== 'undefined') {
+			totalElevation += sharedCorners[k].elevationMedian;
+			validCorners++;
+		}
+	}
+	
+	if (validCorners > 0) {
+		return totalElevation / validCorners;
+	} else {
+		// Fallback to average of tile elevations
+		return (tile1.elevation + tile2.elevation) / 2;
+	}
+}
+
 function renderPath(path) {
     // Remove any existing path render object
     if (planet.pathRenderObject) {
@@ -247,10 +282,16 @@ function renderPath(path) {
     for (let i = 0; i < path.length - 1; i++) {
         const fromTile = path[i];
         const toTile = path[i + 1];
-        // Use global elevation multiplier parameter
         
-        // Calculate elevated positions for start and end
+        // Calculate border elevation for better terrain following
+        var borderElevation = calculateBorderElevation(fromTile, toTile);
+        
+        // Calculate positions with elevation
         var fromPos = fromTile.position.clone();
+        var toPos = toTile.position.clone();
+        var midPos = fromPos.clone().add(toPos).multiplyScalar(0.5);
+        
+        // Apply elevation exaggeration
         if (fromTile.elevation > 0) {
             var fromDistance = fromPos.length();
             fromPos.normalize().multiplyScalar(fromDistance + elevationMultiplier * fromTile.elevation + 10);
@@ -258,7 +299,6 @@ function renderPath(path) {
             fromPos.multiplyScalar(1.0006);
         }
         
-        var toPos = toTile.position.clone();
         if (toTile.elevation > 0) {
             var toDistance = toPos.length();
             toPos.normalize().multiplyScalar(toDistance + elevationMultiplier * toTile.elevation + 10);
@@ -266,14 +306,34 @@ function renderPath(path) {
             toPos.multiplyScalar(1.0006);
         }
         
-        const direction = toPos.clone().sub(fromPos);
-        const arrow = new THREE.ArrowHelper(
-			direction.clone().normalize(),
-			fromPos,
-			direction.length(),
-			0xff0000
-		);
-        scene.add(arrow);
-        planet.pathRenderObject.push(arrow);
+        // Apply border elevation to midpoint
+        if (borderElevation > 0) {
+            var midDistance = midPos.length();
+            midPos.normalize().multiplyScalar(midDistance + elevationMultiplier * borderElevation + 10);
+        } else {
+            midPos.multiplyScalar(1.0006);
+        }
+        
+        // Create two arrow segments: fromPos -> midPos and midPos -> toPos
+        const firstDirection = midPos.clone().sub(fromPos);
+        const firstArrow = new THREE.ArrowHelper(
+            firstDirection.clone().normalize(),
+            fromPos,
+            firstDirection.length(),
+            0xff0000
+        );
+        
+        const secondDirection = toPos.clone().sub(midPos);
+        const secondArrow = new THREE.ArrowHelper(
+            secondDirection.clone().normalize(),
+            midPos,
+            secondDirection.length(),
+            0xff0000
+        );
+        
+        scene.add(firstArrow);
+        scene.add(secondArrow);
+        planet.pathRenderObject.push(firstArrow);
+        planet.pathRenderObject.push(secondArrow);
     }
 }
