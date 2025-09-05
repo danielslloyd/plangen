@@ -5,6 +5,8 @@ var debugOverlay = {
     enabled: false,
     canvas: null,
     ctx: null,
+    tileInfoOverlay: null,
+    selectedTileData: null,
     data: {
         originalElevations: [],
         finalElevations: [],
@@ -15,6 +17,7 @@ var debugOverlay = {
     // Initialize the debug overlay system
     init: function() {
         this.createCanvas();
+        this.createTileInfoOverlay();
         this.setupEventListeners();
         console.log("Debug overlay system initialized");
     },
@@ -41,6 +44,30 @@ var debugOverlay = {
         this.canvas.height = window.innerHeight;
     },
     
+    // Create tile info overlay element
+    createTileInfoOverlay: function() {
+        this.tileInfoOverlay = document.createElement('div');
+        this.tileInfoOverlay.id = 'tile-info-overlay';
+        this.tileInfoOverlay.className = 'tile-info-panel';
+        this.tileInfoOverlay.style.cssText = `
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            color: #00ff00;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            padding: 10px;
+            border: 1px solid #00ff00;
+            border-radius: 4px;
+            z-index: 1001;
+            pointer-events: none;
+            display: none;
+            min-width: 200px;
+        `;
+        document.body.appendChild(this.tileInfoOverlay);
+    },
+    
     // Setup keyboard event listeners
     setupEventListeners: function() {
         // Toggle with H key is handled in ui-handlers.js
@@ -57,6 +84,57 @@ var debugOverlay = {
         }
         
         console.log("Debug overlay:", this.enabled ? "enabled" : "disabled");
+    },
+    
+    // Update selected tile info
+    updateSelectedTile: function(tile) {
+        this.selectedTileData = tile;
+        if (tile && this.tileInfoOverlay) {
+            this.showTileInfo();
+        } else {
+            this.hideTileInfo();
+        }
+    },
+    
+    // Show tile info overlay
+    showTileInfo: function() {
+        if (!this.selectedTileData || !this.tileInfoOverlay) return;
+        
+        var tile = this.selectedTileData;
+        var info = [];
+        
+        info.push('<div style="color: #00ff00; font-weight: bold; margin-bottom: 5px;">SELECTED TILE</div>');
+        info.push('<div style="border-bottom: 1px solid #333; margin-bottom: 5px;"></div>');
+        info.push('<div><span style="color: #888;">ID:</span> <span style="color: #fff;">' + tile.id + '</span></div>');
+        info.push('<div><span style="color: #888;">Elevation:</span> <span style="color: #fff;">' + tile.elevation.toFixed(4) + '</span></div>');
+        
+        // Add additional useful info
+        if (typeof tile.biome !== 'undefined') {
+            info.push('<div><span style="color: #888;">Biome:</span> <span style="color: #fff;">' + tile.biome + '</span></div>');
+        }
+        if (typeof tile.temperature !== 'undefined') {
+            info.push('<div><span style="color: #888;">Temperature:</span> <span style="color: #fff;">' + tile.temperature.toFixed(3) + '</span></div>');
+        }
+        if (typeof tile.moisture !== 'undefined') {
+            info.push('<div><span style="color: #888;">Moisture:</span> <span style="color: #fff;">' + tile.moisture.toFixed(3) + '</span></div>');
+        }
+        if (typeof tile.river !== 'undefined' && tile.river) {
+            info.push('<div><span style="color: #888;">River:</span> <span style="color: #4488ff;">Yes</span></div>');
+        }
+        if (typeof tile.lake !== 'undefined' && tile.lake) {
+            info.push('<div><span style="color: #888;">Lake:</span> <span style="color: #4488ff;">Yes</span></div>');
+        }
+        
+        this.tileInfoOverlay.innerHTML = info.join('');
+        this.tileInfoOverlay.style.display = 'block';
+    },
+    
+    // Hide tile info overlay
+    hideTileInfo: function() {
+        if (this.tileInfoOverlay) {
+            this.tileInfoOverlay.style.display = 'none';
+        }
+        this.selectedTileData = null;
     },
     
     // Collect elevation data for analysis

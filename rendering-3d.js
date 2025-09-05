@@ -165,6 +165,11 @@ function selectTile(tile) {
 
     // Highlight the selected tile
     planet.renderData.surface.renderObject.add(tileSelection.renderObject);
+    
+    // Update tile info overlay
+    if (typeof debugOverlay !== 'undefined') {
+        debugOverlay.updateSelectedTile(tile);
+    }
 
 	//console.log(tile.id,'elevation:',tile.elevation,'neighbors elevation:',tile.tiles.map(n => n.elevation));
     // Highlight all tiles in the upstream array
@@ -191,6 +196,11 @@ function deselectTile() {
             });
         }
         tileSelection = { tile: null, renderObject: null, xstreamRenderObjects: [] };
+        
+        // Hide tile info overlay
+        if (typeof debugOverlay !== 'undefined') {
+            debugOverlay.hideTileInfo();
+        }
     }
 }
 

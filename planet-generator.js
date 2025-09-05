@@ -470,10 +470,7 @@ function groupBodies(planet) {
 
 	}
 	
-	console.log(planet.topology.bodies);
-
-
-
+	//console.log(planet.topology.bodies);
 	return planet.topology.bodies;
 }
 

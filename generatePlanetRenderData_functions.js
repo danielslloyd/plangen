@@ -470,7 +470,8 @@ function buildRiversRenderObject(tiles, action) {
 			var tile2 = tile.drain;
 			
 			// Determine river color based on elevation delta
-			var elevationDelta = tile.elevation - tile2.elevation;
+			// Use max(0, downstream_elevation) so ocean tiles are treated as elevation 0
+			var elevationDelta = tile.elevation - Math.max(0, tile2.elevation);
 			var isWaterfall = elevationDelta >= riverElevationDeltaThreshold;
 			var riverColor = isWaterfall ? new THREE.Color(0xFFFFFF) : new THREE.Color(0x003F85);
 			
@@ -569,11 +570,15 @@ function buildSegmentedArrow(geometry, fromTile, toTile, direction, baseWidth, c
 		midPos.multiplyScalar(1.002);
 	}
 	
-	// Build two arrow segments: fromPos -> midPos and midPos -> toPos
+	// Build arrow segments: fromPos -> midPos (always), midPos -> toPos (only if not ocean)
 	var firstSegment = midPos.clone().sub(fromPos);
-	var secondSegment = toPos.clone().sub(midPos);
 	
-	// Create both arrow segments
+	// Always create first segment (from source to border)
 	buildArrow(geometry, fromPos, firstSegment, fromTile.averagePosition.clone().normalize(), baseWidth, color);
-	buildArrow(geometry, midPos, secondSegment, toTile.averagePosition.clone().normalize(), baseWidth, color);
+	
+	// Only create second segment if downstream tile is not ocean
+	if (toTile.elevation > 0) {
+		var secondSegment = toPos.clone().sub(midPos);
+		buildArrow(geometry, midPos, secondSegment, toTile.averagePosition.clone().normalize(), baseWidth, color);
+	}
 }

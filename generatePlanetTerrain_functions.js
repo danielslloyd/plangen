@@ -148,12 +148,12 @@ function generatePlanetWeather(topology, partitions, heatLevel, moistureLevel, r
 		}, 2, "Calculating Temperature")
 		.getResult(function (result) {
 			console.timeEnd('Weather: Heat Initialization');
+			console.time('Weather: Heat Processing');
 			activeCorners = result.corners;
 			totalHeat = result.airHeat;
 			remainingHeat = result.airHeat;
 		})
 		.executeSubaction(function (action) {
-			console.time('Weather: Heat Processing');
 			var consumedHeat = processAirHeat(activeCorners, action);
 			remainingHeat -= consumedHeat;
 			if (remainingHeat > 0 && consumedHeat >= 0.0001) action.loop(1 - remainingHeat / totalHeat);
@@ -170,12 +170,12 @@ function generatePlanetWeather(topology, partitions, heatLevel, moistureLevel, r
 		}, 2, "Calculating Moisture")
 		.getResult(function (result) {
 			console.timeEnd('Weather: Moisture Initialization');
+			console.time('Weather: Moisture Processing');
 			activeCorners = result.corners;
 			totalMoisture = result.airMoisture;
 			remainingMoisture = result.airMoisture;
 		})
 		.executeSubaction(function (action) {
-			console.time('Weather: Moisture Processing');
 			var consumedMoisture = processAirMoisture(activeCorners, action);
 			remainingMoisture -= consumedMoisture;
 			if (remainingMoisture > 0 && consumedMoisture >= 0.0001) action.loop(1 - remainingMoisture / totalMoisture);

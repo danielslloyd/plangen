@@ -32,6 +32,27 @@
     pointer-events: auto;
 }
 
+/* Tile info overlay styling */
+.tile-info-panel {
+    position: fixed;
+    background: rgba(0, 0, 0, 0.85);
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    border: 1px solid #00ff00;
+    border-radius: 4px;
+    padding: 10px;
+    z-index: 1001;
+    pointer-events: none;
+    box-shadow: 0 2px 10px rgba(0, 255, 0, 0.3);
+    backdrop-filter: blur(2px);
+}
+
+.tile-info-panel div {
+    margin: 2px 0;
+    line-height: 1.4;
+}
+
 .debug-panel h3 {
     margin: 0 0 10px 0;
     color: #00ff00;

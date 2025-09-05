@@ -20,7 +20,7 @@ function clickHandler(event) {
 		var rayCaster = projector.pickingRay(new Vector3(x, y, 0), camera);
 		var intersection = planet.partition.intersectRay(rayCaster.ray);
 		if (intersection !== false) {
-			console.log(intersection);
+			//console.log(intersection);
 			selectTile(intersection); }
 		else
 			deselectTile();
