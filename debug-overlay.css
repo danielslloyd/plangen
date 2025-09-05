@@ -1,0 +1,140 @@
+/* Debug Overlay CSS Styling */
+
+#debug-overlay-canvas {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    pointer-events: none;
+    z-index: 1000;
+    display: none;
+    image-rendering: crisp-edges;
+    image-rendering: pixelated;
+}
+
+/* Ensure debug overlay appears above all other content */
+#debug-overlay-canvas {
+    z-index: 9999;
+}
+
+/* Style for any future HTML debug elements */
+.debug-panel {
+    position: fixed;
+    background: rgba(0, 0, 0, 0.8);
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    border: 2px solid #00ff00;
+    border-radius: 4px;
+    padding: 10px;
+    z-index: 1001;
+    pointer-events: auto;
+}
+
+.debug-panel h3 {
+    margin: 0 0 10px 0;
+    color: #00ff00;
+    font-size: 14px;
+    text-decoration: underline;
+}
+
+.debug-panel .stat-line {
+    margin: 2px 0;
+    font-family: 'Courier New', monospace;
+}
+
+.debug-panel .stat-value {
+    color: #ffffff;
+}
+
+.debug-panel .warning {
+    color: #ff6600;
+}
+
+.debug-panel .error {
+    color: #ff0000;
+}
+
+.debug-panel .good {
+    color: #00ff00;
+}
+
+/* Hide debug elements when not in debug mode */
+body:not(.debug-mode) .debug-panel {
+    display: none;
+}
+
+/* Debug mode class for future expansion */
+body.debug-mode {
+    /* Could add global debug styling here */
+}
+
+/* Responsive adjustments for smaller screens */
+@media (max-width: 800px) {
+    #debug-overlay-canvas {
+        /* Debug overlay should still be full screen on mobile */
+    }
+    
+    .debug-panel {
+        font-size: 10px;
+        padding: 5px;
+    }
+}
+
+/* Print styles - hide debug overlay when printing */
+@media print {
+    #debug-overlay-canvas,
+    .debug-panel {
+        display: none !important;
+    }
+}
+
+/* Future expansion: Debug menu styles */
+.debug-menu {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: rgba(0, 0, 0, 0.9);
+    border: 1px solid #00ff00;
+    color: #00ff00;
+    font-family: monospace;
+    padding: 10px;
+    border-radius: 5px;
+    z-index: 1002;
+    display: none;
+}
+
+.debug-menu.active {
+    display: block;
+}
+
+.debug-menu button {
+    background: transparent;
+    border: 1px solid #00ff00;
+    color: #00ff00;
+    font-family: monospace;
+    margin: 2px;
+    padding: 5px 10px;
+    cursor: pointer;
+}
+
+.debug-menu button:hover {
+    background: rgba(0, 255, 0, 0.1);
+}
+
+.debug-menu button:active {
+    background: rgba(0, 255, 0, 0.2);
+}
+
+.debug-menu .separator {
+    border-top: 1px solid #333;
+    margin: 5px 0;
+}
+
+/* Accessibility: Reduce motion for users who prefer it */
+@media (prefers-reduced-motion: reduce) {
+    #debug-overlay-canvas {
+        /* Could add static rendering preferences here */
+    }
+}

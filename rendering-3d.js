@@ -199,9 +199,6 @@ function buildEdgeCostsRenderObject(edges) {
     var geometry = new THREE.Geometry();
     var minCost = 0.2 //Math.min(...edges.map(edge => edge.cost));
     var maxCost = 50 //Math.max(...edges.map(edge => edge.cost));
-	var portCost = 100
-	var mincolor = new THREE.Color(0xFFFFBB);
-	var maxcolor = new THREE.Color(0xFFFF00);
 
     for (let edge of edges) {
         var fromVertex = edge.from.position;

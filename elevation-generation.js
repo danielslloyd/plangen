@@ -338,9 +338,24 @@ function calculateTileAverageElevations(tiles, action) {
 
 function reshapeLandElevations(tiles, action) {
 	action.executeSubaction(function (action) {
+		// Collect original elevations for debug overlay
+		var originalElevations = [];
+		if (typeof debugOverlay !== 'undefined') {
+			for (var i = 0; i < tiles.length; i++) {
+				if (tiles[i].elevation > 0) {
+					originalElevations.push(tiles[i].elevation);
+				}
+			}
+		}
+		
 		// Apply realistic elevation distribution reshaping
 		if (enableElevationDistributionReshaping) {
 			reshapeElevationDistribution(tiles);
+		}
+		
+		// Send data to debug overlay if it exists
+		if (typeof debugOverlay !== 'undefined') {
+			debugOverlay.collectData(tiles, originalElevations);
 		}
 		
 	}, 1, "Reshaping Elevation Distribution");
@@ -363,13 +378,13 @@ function reshapeElevationDistribution(tiles) {
 		return a.originalElevation - b.originalElevation; 
 	});
 	
-	// Apply power law distribution to sorted tiles (preserves relative order)
+	// Apply exponential distribution to sorted tiles (preserves relative order)
 	for (var i = 0; i < landTiles.length; ++i) {
 		var percentile = i / (landTiles.length - 1); // 0 to 1 range
-		// Power law: elevation = percentile^exponent
-		// Lower exponent = more contrast (more low elevations, fewer high)
-		// Higher exponent = less contrast (more even distribution)
-		var reshapedElevation = Math.pow(percentile, elevationExponent);
+		// Exponential formula: y = (e^(Px) - 1) / (e^P - 1)
+		// Higher P = steeper curve (more low elevations, fewer high)
+		// Lower P = gentler curve (more even distribution)
+		var reshapedElevation = (Math.exp(elevationExponent * percentile) - 1) / (Math.exp(elevationExponent) - 1);
 		landTiles[i].tile.elevation = reshapedElevation;
 	}
 }

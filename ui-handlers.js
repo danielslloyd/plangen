@@ -185,6 +185,12 @@ function keyUpHandler(event) {
             showHideEdgeCosts();
             event.preventDefault();
             break;
+        case KEY.H:
+            if (typeof debugOverlay !== 'undefined') {
+                debugOverlay.toggle();
+            }
+            event.preventDefault();
+            break;
 	}
 }
 
