@@ -203,6 +203,12 @@ function erodeElevation(planet, action) {
 	//randomLocalMax();
 	console.timeEnd("randomLocalMax");
 	
+	// Validate drainage after initial randomLocalMax
+	let landTiles = tiles.filter(t => t.elevation > 0);
+	if (landTiles.some(t => t.drain)) {  // Only validate if drainage has been set
+		validateDrainage(landTiles, 'After initial randomLocalMax');
+	}
+	
 	tiles.sort((a, b) => parseFloat(a.elevation) - parseFloat(b.elevation));
 
 	console.time("newerDrain");
@@ -215,7 +221,63 @@ function erodeElevation(planet, action) {
 	
 	//console.log(planet)
 
+	// Helper function to recalculate drainage for specific tiles
+	function recalculateDrainageForTiles(tilesToUpdate, allLandTiles) {
+		// Clear old relationships for tiles being updated
+		tilesToUpdate.forEach(tile => {
+			tile.drain = undefined;
+			tile.upstream = [];
+			tile.downstream = [];
+			tile.sources = [];
+		});
+		
+		// Recalculate drainage for updated tiles
+		tilesToUpdate.forEach(tile => {
+			tile.tiles.sort((a, b) => a.elevation - b.elevation);
+			tile.drain = tile.tiles.filter(n => n.elevation < tile.elevation)[0];
+		});
+		
+		// Recalculate upstream/downstream for all affected tiles
+		calculateUpstreamDownstream(allLandTiles);
+	}
+
+	// Helper function to validate drainage and report uphill flows
+	function validateDrainage(tiles, context = '') {
+		let uphillCount = 0;
+		let issues = [];
+		
+		tiles.forEach(tile => {
+			if (tile.elevation > 0 && tile.drain) {
+				if (tile.drain.elevation >= tile.elevation) {
+					uphillCount++;
+					issues.push({
+						tile: tile,
+						tileElevation: tile.elevation,
+						drainElevation: tile.drain.elevation,
+						difference: tile.drain.elevation - tile.elevation
+					});
+				}
+			}
+		});
+		
+		if (uphillCount > 0) {
+			console.log(`${context}: Found ${uphillCount} uphill drainage issues`);
+			// Show worst cases for debugging
+			issues.sort((a, b) => b.difference - a.difference);
+			for (let i = 0; i < Math.min(5, issues.length); i++) {
+				console.log(`  Tile ${issues[i].tile.id}: ${issues[i].tileElevation.toFixed(6)} -> ${issues[i].drainElevation.toFixed(6)} (uphill by ${issues[i].difference.toFixed(6)})`);
+				issues[i].tile.error = 'uphill drainage';
+			}
+		} else {
+			console.log(`${context}: All drainage flows downhill ✓`);
+		}
+		
+		return uphillCount;
+	}
+
 	function randomLocalMax() {
+		let modifiedTiles = [];
+		
 		tiles.sort((a, b) => parseFloat(a.elevation) - parseFloat(b.elevation));
 		for (let i = 0; i < tiles.length; i++) {
 			tiles[i].tiles.sort((a, b) => parseFloat(a.elevation) - parseFloat(b.elevation));
@@ -228,12 +290,30 @@ function erodeElevation(planet, action) {
 						if (tiles[i].id / Math.PI % 1 > 0.85) {
 							//console.log('success')
 							tiles[i].elevation = tiles[i].tiles[tiles[i].tiles.length - 1].elevation * 1.05 //make local max
+							modifiedTiles.push(tiles[i]);
 							//tiles[i].error = 'forcedmax'
 						}
 					}
 				}
 			}
 		}
+		
+		// Recalculate drainage for modified tiles and their neighbors
+		if (modifiedTiles.length > 0) {
+			let affectedTiles = new Set(modifiedTiles);
+			modifiedTiles.forEach(tile => {
+				tile.tiles.forEach(neighbor => {
+					if (neighbor.elevation > 0) {
+						affectedTiles.add(neighbor);
+					}
+				});
+			});
+			
+			let land = tiles.filter(t => t.elevation > 0);
+			recalculateDrainageForTiles([...affectedTiles], land);
+			console.log(`randomLocalMax: Updated drainage for ${modifiedTiles.length} raised tiles and ${affectedTiles.size - modifiedTiles.length} affected neighbors`);
+		}
+		
 		tiles.sort((a, b) => parseFloat(a.elevation) - parseFloat(b.elevation));
 		for (let i = 0; i < tiles.length; i++) {
 			tiles[i].tiles.sort((a, b) => parseFloat(a.elevation) - parseFloat(b.elevation));
@@ -327,7 +407,10 @@ function erodeElevation(planet, action) {
 		}
 		calculateUpstreamDownstream(land);
 
-		for (let i = 1; i <= 3; i++) {
+		// Validate initial drainage
+		validateDrainage(land, 'Initial drainage');
+
+		for (let i = 1; i <= 6; i++) {
 			console.time("bowlLoop");
 
 			let bowls = land.filter(t => t.downstream.length < 1 && !t.drain);
@@ -361,14 +444,28 @@ function erodeElevation(planet, action) {
 					lakeCleanup(newLake);
 					bowlFill(newLake,bowlEscapeRoute);
 				} else {
+					let oldElevation = b.elevation;
 					b.elevation = (b.tiles[0].elevation+b.tiles[1].elevation)/2+0.000001*b.id;
+					
+					// Recalculate drainage for this tile if elevation changed significantly
+					if (Math.abs(b.elevation - oldElevation) > 0.000001) {
+						let affectedTiles = new Set([b]);
+						b.tiles.forEach(neighbor => {
+							if (neighbor.elevation > 0) {
+								affectedTiles.add(neighbor);
+							}
+						});
+						recalculateDrainageForTiles([...affectedTiles], land);
+					}
 				}
 			}		
 			if (i===3) {
 				console.time("randomLocalMax");
 				randomLocalMax();
 				console.timeEnd("randomLocalMax");
+				validateDrainage(land, `After randomLocalMax (iteration ${i})`);
 			}
+			// Full recalculation only once per bowl loop iteration
 			calculateUpstreamDownstream(land);
 			land.sort((a, b) => a.upstream.length - b.upstream.length);
 			for (t of land) {
@@ -377,10 +474,14 @@ function erodeElevation(planet, action) {
 				t.outflow = t.rain*runoffFraction + t.inflow;
 			}
 
+			validateDrainage(land, `End of bowlLoop iteration ${i}`);
 			console.timeEnd("bowlLoop");
 		}
 
 		watershedBuilder();
+
+		// Final drainage validation
+		validateDrainage(land, 'Final drainage after newerDrain');
 
 		function lakeCleanup(lake) {
 			var tempNeighbors = [];
@@ -426,13 +527,29 @@ function erodeElevation(planet, action) {
 					//console.log(t.elevation,t.tiles.map(n => n.elevation))
 				}
 			}
+			// Expand drainage recalculation scope beyond just lake and shore
 			let reDrain = [...new Set([...lake.tiles,...lake.shore])];
-			for (t of reDrain) {
-				t.tiles.sort((a, b) => a.elevation - b.elevation);
-				t.drain = t.tiles.filter(n => n.elevation < t.elevation)[0];
-				t.lake = undefined;
-			}
+			let allAffectedTiles = new Set(reDrain);
+			
+			// Add neighbors of shore tiles as they might also be affected by elevation changes
+			lake.shore.forEach(shoreTile => {
+				shoreTile.tiles.forEach(neighbor => {
+					if (neighbor.elevation > 0) {
+						allAffectedTiles.add(neighbor);
+					}
+				});
+			});
+			
+			// Use our comprehensive drainage recalculation function
+			recalculateDrainageForTiles([...allAffectedTiles], land);
+			
+			// Clear lake references
+			lake.tiles.forEach(tile => {
+				tile.lake = undefined;
+			});
 			lake.tiles=[];
+			
+			console.log(`bowlFill: Recalculated drainage for ${reDrain.length} direct tiles and ${allAffectedTiles.size - reDrain.length} affected neighbors`);
 
 			function findMouthOrder(lake,mouth) {
 				var finished = [mouth];
