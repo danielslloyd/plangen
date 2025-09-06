@@ -260,6 +260,9 @@ function erodeElevation(planet, action) {
 				if (tile === tile.drain.drain) {
 					tile.error = 'self drain';
 				}
+				if (tile.drain.elevation >= tile.elevation) {
+					tile.error = 'drain higher/equal elevation';
+				}
 	
 				// Add all upstream tiles to the current tile's upstream array
 				let current = tile;
