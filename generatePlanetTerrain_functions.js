@@ -241,6 +241,70 @@ function erodeElevation(planet, action) {
 		calculateUpstreamDownstream(allLandTiles);
 	}
 
+	// Basin-scoped drainage recalculation - much more efficient for localized changes
+	function recalculateBasinDrainage(basin, escapeRouteArea = []) {
+		// Clear drainage relationships within the basin only
+		basin.forEach(tile => {
+			tile.drain = undefined;
+			tile.upstream = [];
+			tile.downstream = [];
+			tile.sources = [];
+		});
+		
+		// Recalculate drainage for basin tiles
+		basin.forEach(tile => {
+			tile.tiles.sort((a, b) => a.elevation - b.elevation);
+			tile.drain = tile.tiles.filter(n => n.elevation < tile.elevation)[0];
+		});
+		
+		// Also recalculate for tiles in escape route area that might be affected
+		escapeRouteArea.forEach(tile => {
+			if (tile.elevation > 0) {
+				tile.tiles.sort((a, b) => a.elevation - b.elevation);
+				tile.drain = tile.tiles.filter(n => n.elevation < tile.elevation)[0];
+			}
+		});
+		
+		// Recalculate upstream/downstream only for affected tiles (basin + escape area)
+		let allAffectedTiles = [...basin, ...escapeRouteArea.filter(t => t.elevation > 0)];
+		calculateUpstreamDownstreamForSpecificTiles(allAffectedTiles, basin);
+	}
+	
+	// Helper to calculate upstream/downstream for specific tiles only
+	function calculateUpstreamDownstreamForSpecificTiles(tilesToProcess, basinTiles) {
+		// Initialize arrays for tiles being processed
+		tilesToProcess.forEach(tile => {
+			if (tile.elevation > 0) {
+				tile.upstream = [];
+				tile.downstream = [];
+			}
+		});
+		
+		// Calculate upstream and downstream relationships within this scope
+		tilesToProcess.forEach(tile => {
+			if (tile.elevation > 0 && tile.drain) {
+				// Add current tile to downstream of what it drains into (if in scope)
+				if (tilesToProcess.includes(tile.drain)) {
+					if (!tile.drain.downstream) tile.drain.downstream = [];
+					tile.drain.downstream.push(tile);
+				}
+				
+				// Add upstream tiles within the basin
+				let current = tile;
+				while (current.drain && current.drain.elevation > 0 && basinTiles.includes(current.drain)) {
+					if (!current.drain.upstream) current.drain.upstream = [];
+					if (!current.drain.upstream.includes(tile)) {
+						current.drain.upstream.push(tile);
+					}
+					current = current.drain;
+					
+					// Safety check to prevent infinite loops
+					if (current === tile) break;
+				}
+			}
+		});
+	}
+
 	// Helper function to validate drainage and report uphill flows
 	function validateDrainage(tiles, context = '') {
 		let uphillCount = 0;
@@ -298,20 +362,30 @@ function erodeElevation(planet, action) {
 			}
 		}
 		
-		// Recalculate drainage for modified tiles and their neighbors
+		// Use localized drainage recalculation for modified tiles
 		if (modifiedTiles.length > 0) {
-			let affectedTiles = new Set(modifiedTiles);
+			let locallyAffectedTiles = new Set(modifiedTiles);
+			
+			// Add immediate neighbors that might be affected by elevation changes
 			modifiedTiles.forEach(tile => {
 				tile.tiles.forEach(neighbor => {
 					if (neighbor.elevation > 0) {
-						affectedTiles.add(neighbor);
+						locallyAffectedTiles.add(neighbor);
 					}
 				});
 			});
 			
+			// Also find tiles that were previously draining into the raised tiles
 			let land = tiles.filter(t => t.elevation > 0);
-			recalculateDrainageForTiles([...affectedTiles], land);
-			console.log(`randomLocalMax: Updated drainage for ${modifiedTiles.length} raised tiles and ${affectedTiles.size - modifiedTiles.length} affected neighbors`);
+			land.forEach(tile => {
+				if (tile.drain && modifiedTiles.includes(tile.drain)) {
+					locallyAffectedTiles.add(tile);
+				}
+			});
+			
+			// Use basin-scoped recalculation with the locally affected area
+			recalculateBasinDrainage([...locallyAffectedTiles], []);
+			console.log(`randomLocalMax: Localized recalculation for ${modifiedTiles.length} raised tiles affecting ${locallyAffectedTiles.size} total tiles`);
 		}
 		
 		tiles.sort((a, b) => parseFloat(a.elevation) - parseFloat(b.elevation));
@@ -447,15 +521,26 @@ function erodeElevation(planet, action) {
 					let oldElevation = b.elevation;
 					b.elevation = (b.tiles[0].elevation+b.tiles[1].elevation)/2+0.000001*b.id;
 					
-					// Recalculate drainage for this tile if elevation changed significantly
+					// Use very localized drainage recalculation for single tile fix
 					if (Math.abs(b.elevation - oldElevation) > 0.000001) {
-						let affectedTiles = new Set([b]);
+						let locallyAffectedTiles = [b];
+						
+						// Add immediate neighbors
 						b.tiles.forEach(neighbor => {
 							if (neighbor.elevation > 0) {
-								affectedTiles.add(neighbor);
+								locallyAffectedTiles.push(neighbor);
 							}
 						});
-						recalculateDrainageForTiles([...affectedTiles], land);
+						
+						// Also add any tiles that were draining into this tile
+						land.forEach(tile => {
+							if (tile.drain === b) {
+								locallyAffectedTiles.push(tile);
+							}
+						});
+						
+						// Use basin-scoped recalculation for this very small area
+						recalculateBasinDrainage(locallyAffectedTiles, []);
 					}
 				}
 			}		
@@ -527,21 +612,23 @@ function erodeElevation(planet, action) {
 					//console.log(t.elevation,t.tiles.map(n => n.elevation))
 				}
 			}
-			// Expand drainage recalculation scope beyond just lake and shore
-			let reDrain = [...new Set([...lake.tiles,...lake.shore])];
-			let allAffectedTiles = new Set(reDrain);
+			// Use basin-scoped drainage recalculation - much more efficient!
+			let basin = [...lake.tiles]; // The filled basin
+			let escapeRouteArea = [...lake.shore]; // Shore tiles that form boundary
 			
-			// Add neighbors of shore tiles as they might also be affected by elevation changes
-			lake.shore.forEach(shoreTile => {
-				shoreTile.tiles.forEach(neighbor => {
-					if (neighbor.elevation > 0) {
-						allAffectedTiles.add(neighbor);
+			// Add escape route neighbor to capture drainage boundary
+			if (bowlEscapeRoute && bowlEscapeRoute.routeB && bowlEscapeRoute.routeB.elevation > 0) {
+				escapeRouteArea.push(bowlEscapeRoute.routeB);
+				// Also add neighbors of escape route to ensure proper boundary handling
+				bowlEscapeRoute.routeB.tiles.forEach(neighbor => {
+					if (neighbor.elevation > 0 && !escapeRouteArea.includes(neighbor)) {
+						escapeRouteArea.push(neighbor);
 					}
 				});
-			});
+			}
 			
-			// Use our comprehensive drainage recalculation function
-			recalculateDrainageForTiles([...allAffectedTiles], land);
+			// Use basin-scoped recalculation instead of full planet recalculation
+			recalculateBasinDrainage(basin, escapeRouteArea);
 			
 			// Clear lake references
 			lake.tiles.forEach(tile => {
@@ -549,7 +636,7 @@ function erodeElevation(planet, action) {
 			});
 			lake.tiles=[];
 			
-			console.log(`bowlFill: Recalculated drainage for ${reDrain.length} direct tiles and ${allAffectedTiles.size - reDrain.length} affected neighbors`);
+			console.log(`bowlFill: Basin-scoped recalculation for ${basin.length} basin tiles and ${escapeRouteArea.length} boundary tiles`);
 
 			function findMouthOrder(lake,mouth) {
 				var finished = [mouth];
