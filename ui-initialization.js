@@ -448,11 +448,15 @@ function toggleElevationExaggeration() {
 		}
 	}
 	
-	// Regenerate render data to apply the elevation change
+	// Fast elevation toggle using displacement updates
 	if (planet && planet.topology) {
-		console.log("Regenerating planet render data with new elevation multiplier...");
+		console.log("Applying fast elevation toggle...");
+		var startTime = Date.now();
 		
-		// Create a SteppedAction to regenerate the render data
+		// Update displacement values in topology objects
+		updateDisplacementValues(planet.topology, elevationMultiplier);
+		
+		// Regenerate render data with new displacement values
 		var regenerateAction = new SteppedAction("Updating 3D Elevation");
 		regenerateAction
 			.executeSubaction(function(action) {
@@ -481,9 +485,56 @@ function toggleElevationExaggeration() {
 				showHideAirCurrents(renderAirCurrents);
 				showHideRivers(renderRivers);
 				
-				console.log("3D elevation toggle complete");
+				console.log("Fast elevation toggle complete in", (Date.now() - startTime), "ms");
 			})
 			.execute();
+	}
+}
+
+function updateDisplacementValues(topology, multiplier) {
+	// Update displacement values for tiles
+	for (var i = 0; i < topology.tiles.length; ++i) {
+		var tile = topology.tiles[i];
+		if (tile.elevation > 0) {
+			tile.elevationDisplacement = multiplier * tile.elevation;
+		} else {
+			tile.elevationDisplacement = 0;
+		}
+	}
+	
+	// Update displacement values for corners
+	for (var i = 0; i < topology.corners.length; ++i) {
+		var corner = topology.corners[i];
+		
+		// Check if any adjacent tile is ocean (elevation <= 0)
+		var hasOceanTile = false;
+		for (var j = 0; j < corner.tiles.length; ++j) {
+			if (corner.tiles[j].elevation <= 0) {
+				hasOceanTile = true;
+				break;
+			}
+		}
+		
+		// Apply elevation displacement only if no adjacent tiles are ocean and median elevation is positive
+		if (!hasOceanTile && corner.elevationMedian && corner.elevationMedian > 0) {
+			corner.elevationDisplacement = multiplier * corner.elevationMedian;
+		} else {
+			corner.elevationDisplacement = 0;
+		}
+	}
+	
+	// Update displacement values for borders (average of connected tiles/corners)
+	for (var i = 0; i < topology.borders.length; ++i) {
+		var border = topology.borders[i];
+		
+		// Use average displacement of connected tiles
+		var displacement = 0;
+		if (border.tiles.length > 0) {
+			for (var j = 0; j < border.tiles.length; ++j) {
+				displacement += border.tiles[j].elevationDisplacement;
+			}
+			border.elevationDisplacement = displacement / border.tiles.length;
+		}
 	}
 }
 

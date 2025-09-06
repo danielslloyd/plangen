@@ -1017,6 +1017,7 @@ function Corner(id, position, cornerCount, borderCount, tileCount) {
 	this.corners = new Array(cornerCount);
 	this.borders = new Array(borderCount);
 	this.tiles = new Array(tileCount);
+	this.elevationDisplacement = 0;
 }
 
 Corner.prototype.vectorTo = function Corner_vectorTo(corner) {
@@ -1032,6 +1033,7 @@ function Border(id, cornerCount, borderCount, tileCount) {
 	this.corners = new Array(cornerCount);
 	this.borders = new Array(borderCount);
 	this.tiles = new Array(tileCount);
+	this.elevationDisplacement = 0;
 }
 
 Border.prototype.oppositeCorner = function Border_oppositeCorner(corner) {
@@ -1060,6 +1062,7 @@ function Tile(id, position, cornerCount, borderCount, tileCount) {
 	this.corners = new Array(cornerCount);
 	this.borders = new Array(borderCount);
 	this.tiles = new Array(tileCount);
+	this.elevationDisplacement = 0;
 }
 
 Tile.prototype.intersectRay = function Tile_intersectRay(ray) {

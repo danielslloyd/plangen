@@ -113,8 +113,20 @@ function generatePlanetElevation(topology, plates, action) {
 			calculateTileAverageElevations(topology.tiles, action);
 		}, 2)
 		.executeSubaction(function (action) {
+			calculateCornerElevationMedians(topology, action);
+		}, 1, "Calculating Corner Elevation Medians")
+		.executeSubaction(function (action) {
+			calculateElevationDisplacements(topology, action);
+		}, 1, "Calculating Elevation Displacements")
+		.executeSubaction(function (action) {
 			reshapeLandElevations(topology.tiles, action);
-		}, 1, "Reshaping Land Elevation Distribution");
+		}, 1, "Reshaping Land Elevation Distribution")
+		.executeSubaction(function (action) {
+			calculateCornerElevationMedians(topology, action);
+		}, 1, "Recalculating Corner Elevation Medians")
+		.executeSubaction(function (action) {
+			calculateElevationDisplacements(topology, action);
+		}, 1, "Recalculating Elevation Displacements");
 }
 
 function generatePlanetWeather(topology, partitions, heatLevel, moistureLevel, random, action) {

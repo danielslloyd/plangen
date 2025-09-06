@@ -336,6 +336,84 @@ function calculateTileAverageElevations(tiles, action) {
 	}
 }
 
+function calculateCornerElevationMedians(topology, action) {
+	// Calculate corner elevation medians now that tile elevations are available
+	var processedCorners = new Set();
+	for (var t = 0; t < topology.tiles.length; ++t) {
+		var tile = topology.tiles[t];
+		for (var c = 0; c < tile.corners.length; ++c) {
+			var corner = tile.corners[c];
+			if (!processedCorners.has(corner.id)) {
+				processedCorners.add(corner.id);
+				var tileElevations = [];
+				for (var j = 0; j < corner.tiles.length; ++j) {
+					if (typeof corner.tiles[j].elevation !== 'undefined') {
+						tileElevations.push(corner.tiles[j].elevation);
+					}
+				}
+				if (tileElevations.length > 0) {
+					tileElevations.sort(function(a, b) { return a - b; });
+					var medianIndex = Math.floor(tileElevations.length / 2);
+					if (tileElevations.length % 2 === 0) {
+						corner.elevationMedian = (tileElevations[medianIndex - 1] + tileElevations[medianIndex]) / 2;
+					} else {
+						corner.elevationMedian = tileElevations[medianIndex];
+					}
+				} else {
+					corner.elevationMedian = 0;
+				}
+			}
+		}
+	}
+}
+
+function calculateElevationDisplacements(topology, action) {
+	// Calculate displacement values for tiles
+	for (var i = 0; i < topology.tiles.length; ++i) {
+		var tile = topology.tiles[i];
+		if (tile.elevation > 0) {
+			tile.elevationDisplacement = elevationMultiplier * tile.elevation;
+		} else {
+			tile.elevationDisplacement = 0;
+		}
+	}
+	
+	// Calculate displacement values for corners
+	for (var i = 0; i < topology.corners.length; ++i) {
+		var corner = topology.corners[i];
+		
+		// Check if any adjacent tile is ocean (elevation <= 0)
+		var hasOceanTile = false;
+		for (var j = 0; j < corner.tiles.length; ++j) {
+			if (corner.tiles[j].elevation <= 0) {
+				hasOceanTile = true;
+				break;
+			}
+		}
+		
+		// Apply elevation displacement only if no adjacent tiles are ocean and median elevation is positive
+		if (!hasOceanTile && corner.elevationMedian && corner.elevationMedian > 0) {
+			corner.elevationDisplacement = elevationMultiplier * corner.elevationMedian;
+		} else {
+			corner.elevationDisplacement = 0;
+		}
+	}
+	
+	// Calculate displacement values for borders (average of connected tiles/corners)
+	for (var i = 0; i < topology.borders.length; ++i) {
+		var border = topology.borders[i];
+		
+		// Use average displacement of connected tiles
+		var displacement = 0;
+		if (border.tiles.length > 0) {
+			for (var j = 0; j < border.tiles.length; ++j) {
+				displacement += border.tiles[j].elevationDisplacement;
+			}
+			border.elevationDisplacement = displacement / border.tiles.length;
+		}
+	}
+}
+
 function reshapeLandElevations(tiles, action) {
 	action.executeSubaction(function (action) {
 		// Collect original elevations for debug overlay

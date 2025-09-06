@@ -113,7 +113,7 @@ function createTileSelectRenderObject(tile, color) {
     var centerPos = tile.averagePosition.clone();
     if (tile.elevation > 0) {
         var centerDistance = centerPos.length();
-        centerPos.normalize().multiplyScalar(centerDistance + elevationMultiplier * tile.elevation + 5); // +5 for selection highlight offset
+        centerPos.normalize().multiplyScalar(centerDistance + tile.elevationDisplacement + 5); // +5 for selection highlight offset
     } else {
         centerPos.multiplyScalar(1.0005); // slight offset for water tiles
     }
@@ -132,10 +132,10 @@ function createTileSelectRenderObject(tile, color) {
             }
         }
         
-        // Apply elevation exaggeration only if no adjacent tiles are ocean and median elevation is positive
+        // Apply elevation displacement only if no adjacent tiles are ocean and median elevation is positive
         if (!hasOceanTile && corner.elevationMedian > 0) {
             var cornerDistance = cornerPosition.length();
-            cornerPosition.normalize().multiplyScalar(cornerDistance + elevationMultiplier * corner.elevationMedian + 5); // +5 for selection highlight offset
+            cornerPosition.normalize().multiplyScalar(cornerDistance + corner.elevationDisplacement + 5); // +5 for selection highlight offset
         } else {
             cornerPosition.multiplyScalar(1.0005); // slight offset for water/coastal corners
         }
