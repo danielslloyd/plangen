@@ -186,9 +186,7 @@ function keyUpHandler(event) {
             event.preventDefault();
             break;
         case KEY.H:
-            if (typeof debugOverlay !== 'undefined') {
-                debugOverlay.toggle();
-            }
+            toggleElevationExaggeration();
             event.preventDefault();
             break;
 	}

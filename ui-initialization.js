@@ -48,14 +48,22 @@ $(document).ready(function onDocumentReady() {
 	ui.surfaceDisplayButtons.temperature.click(setSurfaceRenderMode.bind(null, "temperature"));
 	ui.surfaceDisplayButtons.moisture.click(setSurfaceRenderMode.bind(null, "moisture"));
 
+	// Projection buttons
+	ui.projectGlobe = $("#projectGlobe");
+	ui.projectRaisedGlobe = $("#projectRaisedGlobe");
+	ui.projectMercatorMap = $("#projectMercatorMap");
+	
+	ui.projectRaisedGlobe.click(toggleElevationExaggeration);
+	
+	// Overlay buttons
 	ui.showSunlightButton = $("#showSunlightButton");
 	ui.showPlateBoundariesButton = $("#showPlateBoundariesButton");
-	ui.showPlateMovementsButton = $("#showPlateMovementsButton");
+	ui.showRiversButton = $("#showRiversButton");
 	ui.showAirCurrentsButton = $("#showAirCurrentsButton");
 
 	ui.showSunlightButton.click(showHideSunlight);
 	ui.showPlateBoundariesButton.click(showHidePlateBoundaries);
-	ui.showPlateMovementsButton.click(showHidePlateMovements);
+	ui.showRiversButton.click(showHideRivers);
 	ui.showAirCurrentsButton.click(showHideAirCurrents);
 
 	ui.lowDetailButton = $("#lowDetailButton");
@@ -190,6 +198,12 @@ $(document).ready(function onDocumentReady() {
 	setPlateCount(50);
 
 	setSurfaceRenderMode(surfaceRenderMode, true);
+	// Initialize projection button states
+	if (elevationMultiplier > 0) {
+		ui.projectRaisedGlobe.addClass("toggled");
+	}
+	
+	// Initialize overlay button states  
 	showHideSunlight(renderSunlight);
 	showHidePlateBoundaries(renderPlateBoundaries);
 	showHidePlateMovements(renderPlateMovements);
@@ -382,8 +396,7 @@ function showHidePlateBoundaries(show) {
 function showHidePlateMovements(show) {
 	if (typeof (show) === "boolean") renderPlateMovements = show;
 	else renderPlateMovements = !renderPlateMovements;
-	if (renderPlateMovements) ui.showPlateMovementsButton.addClass("toggled");
-	if (!renderPlateMovements) ui.showPlateMovementsButton.removeClass("toggled");
+	// Note: No UI button for plate movements anymore - accessed via O key only
 
 	if (!planet) return;
 
@@ -407,13 +420,71 @@ function showHideAirCurrents(show) {
 function showHideRivers(show) {
 	if (typeof (show) === "boolean") renderRivers = show;
 	else renderRivers = !renderRivers;
-	//if (renderRivers) ui.showAirCurrentsButton.addClass("toggled");
-	//if (!renderRivers) ui.showAirCurrentsButton.removeClass("toggled");
+	if (renderRivers) ui.showRiversButton.addClass("toggled");
+	if (!renderRivers) ui.showRiversButton.removeClass("toggled");
 
 	if (!planet) return;
 
 	if (renderRivers) planet.renderData.surface.renderObject.add(planet.renderData.Rivers.renderObject);
 	else planet.renderData.surface.renderObject.remove(planet.renderData.Rivers.renderObject);
+}
+
+function toggleElevationExaggeration() {
+	// Toggle between no elevation (flat) and elevated terrain
+	if (elevationMultiplier > 0) {
+		elevationMultiplier = 0; // Flat
+		console.log("3D elevation disabled (flat terrain)");
+	} else {
+		elevationMultiplier = 80; // Default elevation exaggeration
+		console.log("3D elevation enabled (elevated terrain)");
+	}
+	
+	// Update button state if we have the UI button
+	if (typeof ui !== 'undefined' && ui.projectRaisedGlobe) {
+		if (elevationMultiplier > 0) {
+			ui.projectRaisedGlobe.addClass("toggled");
+		} else {
+			ui.projectRaisedGlobe.removeClass("toggled");
+		}
+	}
+	
+	// Regenerate render data to apply the elevation change
+	if (planet && planet.topology) {
+		console.log("Regenerating planet render data with new elevation multiplier...");
+		
+		// Create a SteppedAction to regenerate the render data
+		var regenerateAction = new SteppedAction("Updating 3D Elevation");
+		regenerateAction
+			.executeSubaction(function(action) {
+				return generatePlanetRenderData(planet.topology, planet.random, action);
+			})
+			.getResult(function(renderData) {
+				// Update the planet's render data
+				Object.keys(renderData).forEach(function(key) {
+					if (planet.renderData[key] && planet.renderData[key].renderObject) {
+						// Remove old render object from scene
+						scene.remove(planet.renderData[key].renderObject);
+					}
+					planet.renderData[key] = renderData[key];
+					
+					// Only automatically add the surface render object to the scene
+					// Overlays will be handled by their visibility functions
+					if (key === 'surface' && renderData[key] && renderData[key].renderObject) {
+						scene.add(renderData[key].renderObject);
+					}
+				});
+				
+				// Reapply current visibility settings (this will add/remove overlays as needed)
+				showHideSunlight(renderSunlight);
+				showHidePlateBoundaries(renderPlateBoundaries);
+				showHidePlateMovements(renderPlateMovements);
+				showHideAirCurrents(renderAirCurrents);
+				showHideRivers(renderRivers);
+				
+				console.log("3D elevation toggle complete");
+			})
+			.execute();
+	}
 }
 
 function showHideEdgeCosts(show) {

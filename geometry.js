@@ -1063,9 +1063,23 @@ function Tile(id, position, cornerCount, borderCount, tileCount) {
 }
 
 Tile.prototype.intersectRay = function Tile_intersectRay(ray) {
-	if (!intersectRayWithSphere(ray, this.boundingSphere)) return false;
+	// Create elevated average position to match 3D visual geometry
+	var elevatedAveragePosition = this.averagePosition.clone();
+	if (this.elevation > 0 && typeof elevationMultiplier !== 'undefined') {
+		var distance = elevatedAveragePosition.length();
+		elevatedAveragePosition.normalize().multiplyScalar(distance + elevationMultiplier * this.elevation);
+	}
+	
+	// Create elevated bounding sphere to match 3D visual geometry
+	var elevatedBoundingSphere = this.boundingSphere.clone();
+	if (this.elevation > 0 && typeof elevationMultiplier !== 'undefined') {
+		var centerDistance = elevatedBoundingSphere.center.length();
+		elevatedBoundingSphere.center.normalize().multiplyScalar(centerDistance + elevationMultiplier * this.elevation);
+	}
+	
+	if (!intersectRayWithSphere(ray, elevatedBoundingSphere)) return false;
 
-	var surface = new THREE.Plane().setFromNormalAndCoplanarPoint(this.normal, this.averagePosition);
+	var surface = new THREE.Plane().setFromNormalAndCoplanarPoint(this.normal, elevatedAveragePosition);
 	if (surface.distanceToPoint(ray.origin) <= 0) return false;
 
 	var denominator = surface.normal.dot(ray.direction);
@@ -1077,7 +1091,22 @@ Tile.prototype.intersectRay = function Tile_intersectRay(ray) {
 	var origin = new Vector3(0, 0, 0);
 	for (var i = 0; i < this.corners.length; ++i) {
 		var j = (i + 1) % this.corners.length;
-		var side = new THREE.Plane().setFromCoplanarPoints(this.corners[j].position, this.corners[i].position, origin);
+		
+		// Elevate corner positions to match 3D visual geometry
+		var elevatedCornerI = this.corners[i].position.clone();
+		var elevatedCornerJ = this.corners[j].position.clone();
+		
+		if (this.corners[i].elevationMedian > 0 && typeof elevationMultiplier !== 'undefined') {
+			var distanceI = elevatedCornerI.length();
+			elevatedCornerI.normalize().multiplyScalar(distanceI + elevationMultiplier * this.corners[i].elevationMedian);
+		}
+		
+		if (this.corners[j].elevationMedian > 0 && typeof elevationMultiplier !== 'undefined') {
+			var distanceJ = elevatedCornerJ.length();
+			elevatedCornerJ.normalize().multiplyScalar(distanceJ + elevationMultiplier * this.corners[j].elevationMedian);
+		}
+		
+		var side = new THREE.Plane().setFromCoplanarPoints(elevatedCornerJ, elevatedCornerI, origin);
 
 		if (side.distanceToPoint(point) < 0) return false;
 	}
