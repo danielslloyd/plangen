@@ -40,7 +40,7 @@ var pressedKeys = {};
 var disableKeys = false;
 var ui = {};
 var watersheds = [];
-var riverThreshold = .0001
+var riverThreshold = .88 //percentile of flow to start rivers
 var loadSeed = null;//1724331434621;//< lake error//1723240716239;//
 
 // FPS tracking variables

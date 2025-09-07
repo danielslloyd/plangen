@@ -848,7 +848,7 @@ function tileElevationProcs(tiles, action) {
 function generatePlanetBiomesResources(tiles, planetRadius, action) {
 	tiles.sort((a, b) => parseFloat(b.elevation) - parseFloat(a.elevation));
 	var flows = tiles.filter(t => t.outflow > 0).sort((a, b) => parseFloat(a.outflow) - parseFloat(b.outflow));
-	var flowThreshold = flows[Math.floor(flows.length * .88)].outflow;
+	var flowThreshold = flows[Math.floor(flows.length * riverThreshold)].outflow;
 	var seaTemps = tiles.filter(t => t.elevation < 0).sort((a, b) => parseFloat(a.temperature) - parseFloat(b.temperature));
 	var optimalTemp = seaTemps[Math.floor(seaTemps.length * .4)].temperature;
 	const fibVectors = generateEvenVectors(Math.floor(Math.pow(tiles.length,0.5)), 1000)
