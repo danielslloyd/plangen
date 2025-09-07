@@ -42,6 +42,9 @@ function render() {
 	var sunTime = Math.PI * 2 * currentRenderFrameTime / 60000 + sunTimeOffset;
 	directionalLight.position.set(Math.cos(sunTime), 0, Math.sin(sunTime)).normalize();
 
+	// Update FPS counter
+	updateFPS();
+
 	requestAnimationFrame(render);
 	renderer.render(scene, camera);
 
@@ -342,5 +345,26 @@ function renderPath(path) {
         scene.add(secondArrow);
         planet.pathRenderObject.push(firstArrow);
         planet.pathRenderObject.push(secondArrow);
+    }
+}
+
+// FPS tracking function
+function updateFPS() {
+    fpsCounter.frameCount++;
+    var currentTime = performance.now();
+    var deltaTime = currentTime - fpsCounter.lastTime;
+    
+    if (deltaTime >= fpsCounter.updateInterval) {
+        fpsCounter.currentFPS = Math.round((fpsCounter.frameCount * 1000) / deltaTime);
+        
+        // Update FPS display if element exists
+        var fpsElement = document.getElementById('fpsCounter');
+        if (fpsElement) {
+            fpsElement.textContent = 'FPS: ' + fpsCounter.currentFPS;
+        }
+        
+        // Reset counters
+        fpsCounter.frameCount = 0;
+        fpsCounter.lastTime = currentTime;
     }
 }

@@ -30,6 +30,7 @@ var renderPlateMovements = false;
 var renderAirCurrents = false;
 var renderRivers = true;
 var elevationMultiplier = 80; // Controls how exaggerated the 3D terrain elevation appears
+var useElevationDisplacement = true; // Binary parameter: use stored displacement values (true) or sphere positions (false)
 var riverElevationDeltaThreshold = 0.1; // Minimum elevation difference for white waterfall rivers
 var enableElevationDistributionReshaping = true; // Apply realistic elevation distribution
 var elevationExponent = 4; // Exponential curve steepness for elevation distribution (higher = more contrast)
@@ -41,6 +42,14 @@ var ui = {};
 var watersheds = [];
 var riverThreshold = .0001
 var loadSeed = null;//1724331434621;//< lake error//1723240716239;//
+
+// FPS tracking variables
+var fpsCounter = {
+	frameCount: 0,
+	lastTime: performance.now(),
+	currentFPS: 0,
+	updateInterval: 1000 // Update FPS display every 1000ms
+};
 var largeSeed = 1724774450630;//1724945514838;//<large error//1724255095950;
 //1731616718950;//<
 //1734463621626;//good one to test small ocean fix
@@ -850,6 +859,12 @@ function showHideInterface() {
 	ui.controlPanel.toggle();
 	ui.dataPanel.toggle();
 	ui.updatePanel.toggle();
+	
+	// Toggle FPS overlay
+	var fpsOverlay = document.getElementById('fpsOverlay');
+	if (fpsOverlay) {
+		fpsOverlay.style.display = fpsOverlay.style.display === 'none' ? 'block' : 'none';
+	}
 }
 
 function updateUI() {

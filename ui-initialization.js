@@ -430,33 +430,25 @@ function showHideRivers(show) {
 }
 
 function toggleElevationExaggeration() {
-	// Toggle between no elevation (flat) and elevated terrain
-	if (elevationMultiplier > 0) {
-		elevationMultiplier = 0; // Flat
-		console.log("3D elevation disabled (flat terrain)");
-	} else {
-		elevationMultiplier = 80; // Default elevation exaggeration
-		console.log("3D elevation enabled (elevated terrain)");
-	}
+	// Toggle binary displacement parameter
+	useElevationDisplacement = !useElevationDisplacement;
+	console.log("3D elevation", useElevationDisplacement ? "enabled (elevated terrain)" : "disabled (flat terrain)");
 	
 	// Update button state if we have the UI button
 	if (typeof ui !== 'undefined' && ui.projectRaisedGlobe) {
-		if (elevationMultiplier > 0) {
+		if (useElevationDisplacement) {
 			ui.projectRaisedGlobe.addClass("toggled");
 		} else {
 			ui.projectRaisedGlobe.removeClass("toggled");
 		}
 	}
 	
-	// Fast elevation toggle using displacement updates
+	// Simple render data regeneration (no displacement recalculation needed)
 	if (planet && planet.topology) {
-		console.log("Applying fast elevation toggle...");
+		console.log("Applying instant elevation toggle...");
 		var startTime = Date.now();
 		
-		// Update displacement values in topology objects
-		updateDisplacementValues(planet.topology, elevationMultiplier);
-		
-		// Regenerate render data with new displacement values
+		// Regenerate render data using existing displacement values and new binary parameter
 		var regenerateAction = new SteppedAction("Updating 3D Elevation");
 		regenerateAction
 			.executeSubaction(function(action) {
@@ -485,58 +477,12 @@ function toggleElevationExaggeration() {
 				showHideAirCurrents(renderAirCurrents);
 				showHideRivers(renderRivers);
 				
-				console.log("Fast elevation toggle complete in", (Date.now() - startTime), "ms");
+				console.log("Instant elevation toggle complete in", (Date.now() - startTime), "ms");
 			})
 			.execute();
 	}
 }
 
-function updateDisplacementValues(topology, multiplier) {
-	// Update displacement values for tiles
-	for (var i = 0; i < topology.tiles.length; ++i) {
-		var tile = topology.tiles[i];
-		if (tile.elevation > 0) {
-			tile.elevationDisplacement = multiplier * tile.elevation;
-		} else {
-			tile.elevationDisplacement = 0;
-		}
-	}
-	
-	// Update displacement values for corners
-	for (var i = 0; i < topology.corners.length; ++i) {
-		var corner = topology.corners[i];
-		
-		// Check if any adjacent tile is ocean (elevation <= 0)
-		var hasOceanTile = false;
-		for (var j = 0; j < corner.tiles.length; ++j) {
-			if (corner.tiles[j].elevation <= 0) {
-				hasOceanTile = true;
-				break;
-			}
-		}
-		
-		// Apply elevation displacement only if no adjacent tiles are ocean and median elevation is positive
-		if (!hasOceanTile && corner.elevationMedian && corner.elevationMedian > 0) {
-			corner.elevationDisplacement = multiplier * corner.elevationMedian;
-		} else {
-			corner.elevationDisplacement = 0;
-		}
-	}
-	
-	// Update displacement values for borders (average of connected tiles/corners)
-	for (var i = 0; i < topology.borders.length; ++i) {
-		var border = topology.borders[i];
-		
-		// Use average displacement of connected tiles
-		var displacement = 0;
-		if (border.tiles.length > 0) {
-			for (var j = 0; j < border.tiles.length; ++j) {
-				displacement += border.tiles[j].elevationDisplacement;
-			}
-			border.elevationDisplacement = displacement / border.tiles.length;
-		}
-	}
-}
 
 function showHideEdgeCosts(show) {
     if (typeof (show) === "boolean") renderEdgeCosts = show;

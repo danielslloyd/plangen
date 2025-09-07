@@ -209,7 +209,7 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action) {
 		
 		if (tile.elevation > 0) {
 			var centerDistance = centerPos.length();
-			centerPos.normalize().multiplyScalar(centerDistance + tile.elevationDisplacement);
+			centerPos.normalize().multiplyScalar(centerDistance + (useElevationDisplacement ? tile.elevationDisplacement : 0));
 		}
 		
 		
@@ -232,7 +232,7 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action) {
 			// Apply elevation exaggeration only if no adjacent tiles are ocean and median elevation is positive
 			if (!hasOceanTile && corner.elevationMedian > 0) {
 				var cornerDistance = cornerPosition.length();
-				cornerPosition.normalize().multiplyScalar(cornerDistance + corner.elevationDisplacement);
+				cornerPosition.normalize().multiplyScalar(cornerDistance + (useElevationDisplacement ? corner.elevationDisplacement : 0));
 			}
 			
 			
@@ -374,7 +374,7 @@ function buildPlateMovementsRenderObject(tiles, action) {
 		if (tile.elevation > 0) {
 			// Use stored elevation displacement
 			var distance = arrowPosition.length();
-			arrowPosition.normalize().multiplyScalar(distance + tile.elevationDisplacement + 2);
+			arrowPosition.normalize().multiplyScalar(distance + (useElevationDisplacement ? tile.elevationDisplacement : 0) + 2);
 		} else {
 			arrowPosition.multiplyScalar(1.002);
 		}
@@ -530,14 +530,14 @@ function buildSegmentedArrow(geometry, fromTile, toTile, direction, baseWidth, c
 	// Apply elevation displacement
 	if (fromTile.elevation > 0) {
 		var fromDistance = fromPos.length();
-		fromPos.normalize().multiplyScalar(fromDistance + fromTile.elevationDisplacement + 2);
+		fromPos.normalize().multiplyScalar(fromDistance + (useElevationDisplacement ? fromTile.elevationDisplacement : 0) + 2);
 	} else {
 		fromPos.multiplyScalar(1.002);
 	}
 	
 	if (toTile.elevation > 0) {
 		var toDistance = toPos.length();
-		toPos.normalize().multiplyScalar(toDistance + toTile.elevationDisplacement + 2);
+		toPos.normalize().multiplyScalar(toDistance + (useElevationDisplacement ? toTile.elevationDisplacement : 0) + 2);
 	} else {
 		toPos.multiplyScalar(1.002);
 	}
@@ -546,7 +546,7 @@ function buildSegmentedArrow(geometry, fromTile, toTile, direction, baseWidth, c
 	if (borderElevation > 0) {
 		var midDistance = midPos.length();
 		// Use average displacement of connected tiles for border elevation
-		var borderDisplacement = (fromTile.elevationDisplacement + toTile.elevationDisplacement) / 2;
+		var borderDisplacement = useElevationDisplacement ? (fromTile.elevationDisplacement + toTile.elevationDisplacement) / 2 : 0;
 		midPos.normalize().multiplyScalar(midDistance + borderDisplacement + 2);
 	} else {
 		midPos.multiplyScalar(1.002);
