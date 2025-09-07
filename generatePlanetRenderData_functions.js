@@ -482,6 +482,20 @@ function buildRiversRenderObject(tiles, action) {
 
 // Utility functions for terrain-following arrow rendering
 
+// Utility function to find the border between two adjacent tiles
+function findBorderBetweenTiles(tile1, tile2) {
+	// Search through tile1's borders to find one that connects to tile2
+	for (var i = 0; i < tile1.borders.length; i++) {
+		var border = tile1.borders[i];
+		// Check if this border connects tile1 to tile2
+		if ((border.tiles[0] === tile1 && border.tiles[1] === tile2) ||
+			(border.tiles[0] === tile2 && border.tiles[1] === tile1)) {
+			return border;
+		}
+	}
+	return null; // No border found (tiles not adjacent)
+}
+
 // Utility function to calculate elevation at the border between two tiles
 function calculateBorderElevation(tile1, tile2) {
 	// Find the shared corners between the two tiles
@@ -519,13 +533,31 @@ function calculateBorderElevation(tile1, tile2) {
 
 // Utility function to build segmented arrows for better terrain following
 function buildSegmentedArrow(geometry, fromTile, toTile, direction, baseWidth, color) {
-	// Calculate border elevation between the two tiles
+	// Find the actual border between the two tiles
+	var border = findBorderBetweenTiles(fromTile, toTile);
+	var borderDisplacement = 0;
+	
+	if (border && useElevationDisplacement) {
+		// Use the pre-calculated border displacement
+		borderDisplacement = border.elevationDisplacement;
+	}
+	
+	// Calculate border elevation for fallback (still needed for elevation check)
 	var borderElevation = calculateBorderElevation(fromTile, toTile);
 	
 	// Calculate positions with elevation
 	var fromPos = fromTile.averagePosition.clone();
 	var toPos = toTile.averagePosition.clone();
-	var midPos = fromPos.clone().add(toPos).multiplyScalar(0.5);
+	
+	// Use actual border geographic position instead of interpolating between tile centers
+	var midPos;
+	if (border && border.midpoint) {
+		// Use the actual border midpoint (average of border corners)
+		midPos = border.midpoint.clone();
+	} else {
+		// Fallback to interpolation if border not found
+		midPos = fromPos.clone().add(toPos).multiplyScalar(0.5);
+	}
 	
 	// Apply elevation displacement
 	if (fromTile.elevation > 0) {
@@ -542,11 +574,10 @@ function buildSegmentedArrow(geometry, fromTile, toTile, direction, baseWidth, c
 		toPos.multiplyScalar(1.002);
 	}
 	
-	// Apply border elevation to midpoint
+	// Apply border displacement to midpoint
 	if (borderElevation > 0) {
 		var midDistance = midPos.length();
-		// Use average displacement of connected tiles for border elevation
-		var borderDisplacement = useElevationDisplacement ? (fromTile.elevationDisplacement + toTile.elevationDisplacement) / 2 : 0;
+		// Use the stored border displacement (calculated during terrain generation)
 		midPos.normalize().multiplyScalar(midDistance + borderDisplacement + 2);
 	} else {
 		midPos.multiplyScalar(1.002);

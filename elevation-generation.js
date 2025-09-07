@@ -399,17 +399,17 @@ function calculateElevationDisplacements(topology, action) {
 		}
 	}
 	
-	// Calculate displacement values for borders (average of connected tiles/corners)
+	// Calculate displacement values for borders (average of connected corners)
 	for (var i = 0; i < topology.borders.length; ++i) {
 		var border = topology.borders[i];
 		
-		// Use average displacement of connected tiles
+		// Use average displacement of connected corners (not tiles)
 		var displacement = 0;
-		if (border.tiles.length > 0) {
-			for (var j = 0; j < border.tiles.length; ++j) {
-				displacement += border.tiles[j].elevationDisplacement;
+		if (border.corners.length > 0) {
+			for (var j = 0; j < border.corners.length; ++j) {
+				displacement += border.corners[j].elevationDisplacement;
 			}
-			border.elevationDisplacement = displacement / border.tiles.length;
+			border.elevationDisplacement = displacement / border.corners.length;
 		}
 	}
 }
