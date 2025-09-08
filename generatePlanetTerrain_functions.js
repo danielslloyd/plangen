@@ -1064,9 +1064,25 @@ function generatePlanetBiomesResources(tiles, planetRadius, action) {
 		} else if (tile.lake) {
 			tile.biome = "lake";
 			tile.fish = tile.upstream.length/20;
-		} else if (tile.drain && tile.outflow > flowThreshold) {
-			tile.river = true;
-			tile.fish = Math.max(.125,Math.min(.25,tile.upstream.length/20))+Math.min(.75,(tile.upstream.length/(tile.downstream.length+1))/45);
+		} else if (tile.drain) {
+			// Check if any individual inflow (not total) exceeds threshold
+			var hasSignificantInflow = false;
+			var significantSources = [];
+			
+			if (tile.sources && tile.sources.length > 0) {
+				for (var source of tile.sources) {
+					if (source.outflow > flowThreshold) {
+						hasSignificantInflow = true;
+						significantSources.push(source);
+					}
+				}
+			}
+			
+			if (hasSignificantInflow) {
+				tile.river = true;
+				tile.riverSources = significantSources; // Store which sources qualify for rendering
+				tile.fish = Math.max(.125,Math.min(.25,tile.upstream.length/20))+Math.min(.75,(tile.upstream.length/(tile.downstream.length+1))/45);
+			}
 		} else {
 			if (tile.elevation <= 0.8 && tile.elevation >= 0 && tile.lake === undefined && tile.temperature > 0.2) {
 				tile.wheat = Math.round(100 * Math.max(0, 1 - 2 * (Math.abs(tile.temperature - .3) + Math.abs(tile.moisture - .3))));

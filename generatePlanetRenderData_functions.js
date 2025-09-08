@@ -446,12 +446,13 @@ function buildRiversRenderObject(tiles, action) {
 	action.executeSubaction(function (action) {
 		if (i >= tiles.length) return;
 		var tile = tiles[i];
-		if (tile.river) {
-			var tile2 = tile.drain;
-			
-			// Use segmented arrow with per-segment waterfall coloring
-			var riverDirection = tile2.averagePosition.clone().sub(tile.averagePosition);
-			buildSegmentedArrowWithWaterfalls(geometry, tile, tile2, riverDirection, 5, riverElevationDeltaThreshold);
+		if (tile.river && tile.riverSources) {
+			// New inflow-based river rendering: draw arrows entirely within the tile
+			// For each significant source, draw: source border → tile center → drain border
+			for (var j = 0; j < tile.riverSources.length; j++) {
+				var source = tile.riverSources[j];
+				buildInflowRiverArrows(geometry, source, tile, tile.drain, 5, riverElevationDeltaThreshold);
+			}
 		}
 		++i;
 
@@ -659,5 +660,91 @@ function buildSegmentedArrowWithWaterfalls(geometry, fromTile, toTile, direction
 	if (toTile.elevation > 0) {
 		var secondSegment = toPos.clone().sub(midPos);
 		buildArrow(geometry, midPos, secondSegment, toTile.averagePosition.clone().normalize(), baseWidth, secondSegmentColor);
+	}
+}
+
+function buildInflowRiverArrows(geometry, sourceTile, centerTile, drainTile, baseWidth, waterfallThreshold) {
+	// Draw two arrows entirely within the centerTile:
+	// 1. From source border to tile center
+	// 2. From tile center to drain border
+	
+	// Find the borders
+	var sourceBorder = findBorderBetweenTiles(sourceTile, centerTile);
+	var drainBorder = findBorderBetweenTiles(centerTile, drainTile);
+	
+	if (!sourceBorder || !drainBorder) {
+		// Fallback to old rendering if borders not found
+		console.warn("Could not find borders for inflow river rendering");
+		return;
+	}
+	
+	// Calculate positions
+	var centerPos = centerTile.averagePosition.clone();
+	
+	// Source border position (where water flows in)
+	var sourceBorderPos;
+	if (sourceBorder.midpoint) {
+		sourceBorderPos = sourceBorder.midpoint.clone();
+	} else {
+		// Fallback to corner average
+		sourceBorderPos = sourceBorder.corners[0].position.clone().add(sourceBorder.corners[1].position).multiplyScalar(0.5);
+	}
+	
+	// Drain border position (where water flows out)
+	var drainBorderPos;
+	if (drainBorder.midpoint) {
+		drainBorderPos = drainBorder.midpoint.clone();
+	} else {
+		// Fallback to corner average
+		drainBorderPos = drainBorder.corners[0].position.clone().add(drainBorder.corners[1].position).multiplyScalar(0.5);
+	}
+	
+	// Apply elevation displacement
+	if (centerTile.elevation > 0) {
+		var centerDistance = centerPos.length();
+		centerPos.normalize().multiplyScalar(centerDistance + (useElevationDisplacement ? centerTile.elevationDisplacement : 0) + 2);
+	} else {
+		centerPos.multiplyScalar(1.002);
+	}
+	
+	// Apply elevation to source border
+	var sourceBorderElevation = calculateBorderElevation(sourceTile, centerTile);
+	if (sourceBorderElevation > 0) {
+		var sourceBorderDistance = sourceBorderPos.length();
+		var sourceBorderDisplacement = sourceBorder.elevationDisplacement || sourceBorderElevation * elevationMultiplier;
+		sourceBorderPos.normalize().multiplyScalar(sourceBorderDistance + (useElevationDisplacement ? sourceBorderDisplacement : 0) + 2);
+	} else {
+		sourceBorderPos.multiplyScalar(1.002);
+	}
+	
+	// Apply elevation to drain border  
+	var drainBorderElevation = calculateBorderElevation(centerTile, drainTile);
+	if (drainBorderElevation > 0) {
+		var drainBorderDistance = drainBorderPos.length();
+		var drainBorderDisplacement = drainBorder.elevationDisplacement || drainBorderElevation * elevationMultiplier;
+		drainBorderPos.normalize().multiplyScalar(drainBorderDistance + (useElevationDisplacement ? drainBorderDisplacement : 0) + 2);
+	} else {
+		drainBorderPos.multiplyScalar(1.002);
+	}
+	
+	// Calculate elevation drops for waterfall detection
+	var inflowDrop = Math.max(0, sourceBorderElevation) - Math.max(0, centerTile.elevation);
+	var outflowDrop = Math.max(0, centerTile.elevation) - Math.max(0, drainBorderElevation);
+	
+	// Determine colors
+	var inflowColor = inflowDrop >= waterfallThreshold ? new THREE.Color(0xFFFFFF) : new THREE.Color(0x003F85);
+	var outflowColor = outflowDrop >= waterfallThreshold ? new THREE.Color(0xFFFFFF) : new THREE.Color(0x003F85);
+	
+	// Build the two arrow segments
+	var inflowSegment = centerPos.clone().sub(sourceBorderPos);
+	var outflowSegment = drainBorderPos.clone().sub(centerPos);
+	
+	// Draw arrows: source border → center → drain border
+	buildArrow(geometry, sourceBorderPos, inflowSegment, centerTile.averagePosition.clone().normalize(), baseWidth, inflowColor);
+	
+	// Always draw outflow arrow since it's contained within the center tile
+	// (No longer need to check if drain is ocean since arrow stays in current tile)
+	if (drainTile) {
+		buildArrow(geometry, centerPos, outflowSegment, centerTile.averagePosition.clone().normalize(), baseWidth, outflowColor);
 	}
 }
