@@ -41,7 +41,17 @@ var disableKeys = false;
 var ui = {};
 var watersheds = [];
 var riverThreshold = .88 //percentile of flow to start rivers
+var logTimers = false; // Enable/disable console timer logging for performance analysis
 var loadSeed = null;//1724331434621;//< lake error//1723240716239;//
+
+// Timer logging wrapper functions
+function ctime(label) {
+	if (logTimers) console.time(label);
+}
+
+function ctimeEnd(label) {
+	if (logTimers) console.timeEnd(label);
+}
 
 // FPS tracking variables
 var fpsCounter = {
@@ -155,59 +165,59 @@ function Planet() {}
 
 function generatePlanet(icosahedronSubdivision, topologyDistortionRate, plateCount, oceanicRate, heatLevel, moistureLevel, random, action) {
 	console.log('🌍 Starting Planet Generation');
-	console.time('Total Generation Time');
+	ctime('Total Generation Time');
 	var planet = new Planet();
 	var mesh;
 	
 	action
 		.executeSubaction(function (action) {
-			console.time('1. Mesh Generation');
+			ctime('1. Mesh Generation');
 			generatePlanetMesh(icosahedronSubdivision, topologyDistortionRate, random, action);
 		}, 6, "Generating Mesh")
 		.getResult(function (result) {
-			console.timeEnd('1. Mesh Generation');
+			ctimeEnd('1. Mesh Generation');
 			mesh = result;
 			//console.log(mesh);
 		})
 		.executeSubaction(function (action) {
-			console.time('2. Topology Generation');
+			ctime('2. Topology Generation');
 			generatePlanetTopology(mesh, action);
 		}, 1, "Generating Topology")
 		.getResult(function (result) {
-			console.timeEnd('2. Topology Generation');
+			ctimeEnd('2. Topology Generation');
 			planet.topology = result;
 			planet.topology.watersheds = [];
 			//console.log(planet.topology);
 		})
 		.executeSubaction(function (action) {
-			console.time('3. Spatial Partitions');
+			ctime('3. Spatial Partitions');
 			generatePlanetPartition(planet.topology.tiles, action);
 		}, 1, "Generating Spatial Partitions")
 		.getResult(function (result) {
-			console.timeEnd('3. Spatial Partitions');
+			ctimeEnd('3. Spatial Partitions');
 			planet.partition = result;
 		})
 		.executeSubaction(function (action) {
-			console.time('4. Terrain Generation');
+			ctime('4. Terrain Generation');
 			generatePlanetTerrain(planet, plateCount, oceanicRate, heatLevel, moistureLevel, random, action);
 		}, 8, "Generating Terrain")
 		.executeSubaction(function (action) {
-			console.timeEnd('4. Terrain Generation');
-			console.time('5. Render Data');
+			ctimeEnd('4. Terrain Generation');
+			ctime('5. Render Data');
 			generatePlanetRenderData(planet.topology, random, action);
 		}, 1, "Building Visuals")
 		.getResult(function (result) {
-			console.timeEnd('5. Render Data');
+			ctimeEnd('5. Render Data');
 			planet.renderData = result;
 		})
 		.executeSubaction(function (action) {
-			console.time('6. Statistics');
+			ctime('6. Statistics');
 			generatePlanetStatistics(planet.topology, planet.plates, action);
 		}, 1, "Compiling Statistics")
 		.getResult(function (result) {
-			console.timeEnd('6. Statistics');
+			ctimeEnd('6. Statistics');
 			planet.statistics = result;
-			console.timeEnd('Total Generation Time');
+			ctimeEnd('Total Generation Time');
 			console.log('✅ Planet Generation Complete');
 		})
 		.provideResult(planet);
@@ -217,46 +227,46 @@ function generatePlanetTerrain(planet, plateCount, oceanicRate, heatLevel, moist
 	
 	action
 		.executeSubaction(function (action) {
-			console.time('4a. Tectonic Plates');
+			ctime('4a. Tectonic Plates');
 			generatePlanetTectonicPlates(planet.topology, plateCount, oceanicRate, random, action);
 		}, 3, "Generating Tectonic Plates")
 		.getResult(function (result) {
-			console.timeEnd('4a. Tectonic Plates');
+			ctimeEnd('4a. Tectonic Plates');
 			planet.plates = result;
 		})
 		.executeSubaction(function (action) {
-			console.time('4b. Base Elevation');
+			ctime('4b. Base Elevation');
 			generatePlanetElevation(planet.topology, planet.plates, action);
 		}, 4, "Generating Elevation")
 		.executeSubaction(function (action) {
-			console.timeEnd('4b. Base Elevation');
-			console.time('4c. Weather & Climate');
+			ctimeEnd('4b. Base Elevation');
+			ctime('4c. Weather & Climate');
 			generatePlanetWeather(planet.topology, planet.partition, heatLevel, moistureLevel, random, action);
 		}, 16, "Generating Weather")
 		.executeSubaction(function (action) {
-			console.timeEnd('4c. Weather & Climate');
-			console.time('4d. Erosion Process');
+			ctimeEnd('4c. Weather & Climate');
+			ctime('4d. Erosion Process');
 			erodeElevation(planet, action);
 		}, 8, "Weathering Elevation")
 		.executeSubaction(function (action) {
-			console.timeEnd('4d. Erosion Process');
-			console.time('4e. Tile Elevation Processing');
+			ctimeEnd('4d. Erosion Process');
+			ctime('4e. Tile Elevation Processing');
 			tileElevationProcs(planet.topology.tiles, action);
 		}, 2)
 		.executeSubaction(function (action) {
-			console.timeEnd('4e. Tile Elevation Processing');
-			console.time('4f. Distance Calculations');
+			ctimeEnd('4e. Tile Elevation Processing');
+			ctime('4f. Distance Calculations');
 			setDistances(planet, action);
 		}, 8, "Creating Distances")
 
 		//erode
 		.executeSubaction(function (action) {
-			console.timeEnd('4f. Distance Calculations');
-			console.time('4g. Biomes & Resources');
+			ctimeEnd('4f. Distance Calculations');
+			ctime('4g. Biomes & Resources');
 			generatePlanetBiomesResources(planet.topology.tiles, 1000, action);
 		}, 1, "Generating Biomes")
 		.getResult(function (result) {
-			console.timeEnd('4g. Biomes & Resources');
+			ctimeEnd('4g. Biomes & Resources');
 		});
 
 }

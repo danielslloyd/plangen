@@ -42,7 +42,7 @@ function setToVertex(event) {
 }
 
 function aStarPathfinding(startTile, goalTile, planet) {
-    console.time("aStarPathfinding");
+    ctime("aStarPathfinding");
 
     const pathFinder = ngraphPath.aStar(planet.graph, {
         oriented: true,
@@ -67,7 +67,7 @@ function aStarPathfinding(startTile, goalTile, planet) {
     }
 
     console.log("Actual Path Cost (graph weights):", totalCost);
-    console.timeEnd("aStarPathfinding");
+    ctimeEnd("aStarPathfinding");
 
     return path;
 }

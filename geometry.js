@@ -1,13 +1,13 @@
 function generatePlanetMesh(icosahedronSubdivision, topologyDistortionRate, random, action) {
 	var mesh;
 	action.executeSubaction(function (action) {
-		console.time('Mesh: Subdivided Icosahedron');
+		ctime('Mesh: Subdivided Icosahedron');
 		mesh = generateSubdividedIcosahedron(icosahedronSubdivision);
-		console.timeEnd('Mesh: Subdivided Icosahedron');
+		ctimeEnd('Mesh: Subdivided Icosahedron');
 	}, 1, "Generating Subdivided Icosahedron");
 
 	action.executeSubaction(function (action) {
-		console.time('Mesh: Distortion Process');
+		ctime('Mesh: Distortion Process');
 		var totalDistortion = Math.ceil(mesh.edges.length * topologyDistortionRate);
 		var remainingIterations = 6;
 		action.executeSubaction(function (action) {
@@ -22,11 +22,11 @@ function generatePlanetMesh(icosahedronSubdivision, topologyDistortionRate, rand
 			--remainingIterations;
 			if (remainingIterations > 0) action.loop(1 - remainingIterations / 6);
 		});
-		console.timeEnd('Mesh: Distortion Process');
+		ctimeEnd('Mesh: Distortion Process');
 	}, 15, "Distorting Triangle Mesh");
 
 	action.executeSubaction(function (action) {
-		console.time('Mesh: Relaxation Process');
+		ctime('Mesh: Relaxation Process');
 		var initialIntervalIteration = action.intervalIteration;
 
 		var averageNodeRadius = Math.sqrt(4 * Math.PI / mesh.nodes.length);
@@ -43,7 +43,7 @@ function generatePlanetMesh(icosahedronSubdivision, topologyDistortionRate, rand
 				action.loop(Math.pow(Math.max(0, (maxShiftDelta - shiftDelta) / (maxShiftDelta - minShiftDelta)), 4));
 			}
 		});
-		console.timeEnd('Mesh: Relaxation Process');
+		ctimeEnd('Mesh: Relaxation Process');
 	}, 25, "Relaxing Triangle Mesh");
 
 	action.executeSubaction(function (action) {

@@ -140,27 +140,27 @@ function generatePlanetWeather(topology, partitions, heatLevel, moistureLevel, r
 
 	action
 		.executeSubaction(function (action) {
-			console.time('Weather: Air Currents');
+			ctime('Weather: Air Currents');
 			generateAirCurrentWhorls(planetRadius, random, action);
 		}, 1, "Generating Air Currents")
 		.getResult(function (result) {
-			console.timeEnd('Weather: Air Currents');
+			ctimeEnd('Weather: Air Currents');
 			whorls = result;
 		})
 		.executeSubaction(function (action) {
-			console.time('Weather: Calculate Currents');
+			ctime('Weather: Calculate Currents');
 			calculateAirCurrents(topology.corners, whorls, planetRadius, action);
 		}, 1, "Generating Air Currents")
 		.getResult(function (result) {
-			console.timeEnd('Weather: Calculate Currents');
+			ctimeEnd('Weather: Calculate Currents');
 		})
 		.executeSubaction(function (action) {
-			console.time('Weather: Heat Initialization');
+			ctime('Weather: Heat Initialization');
 			initializeAirHeat(topology.corners, heatLevel, action);
 		}, 2, "Calculating Temperature")
 		.getResult(function (result) {
-			console.timeEnd('Weather: Heat Initialization');
-			console.time('Weather: Heat Processing');
+			ctimeEnd('Weather: Heat Initialization');
+			ctime('Weather: Heat Processing');
 			activeCorners = result.corners;
 			totalHeat = result.airHeat;
 			remainingHeat = result.airHeat;
@@ -171,18 +171,18 @@ function generatePlanetWeather(topology, partitions, heatLevel, moistureLevel, r
 			if (remainingHeat > 0 && consumedHeat >= 0.0001) action.loop(1 - remainingHeat / totalHeat);
 		}, 8, "Calculating Temperature")
 		.executeSubaction(function (action) {
-			console.timeEnd('Weather: Heat Processing');
-			console.time('Weather: Temperature Calculation');
+			ctimeEnd('Weather: Heat Processing');
+			ctime('Weather: Temperature Calculation');
 			calculateTemperature(topology.corners, topology.tiles, planetRadius, action);
 		}, 1, "Calculating Temperature")
 		.executeSubaction(function (action) {
-			console.timeEnd('Weather: Temperature Calculation');
-			console.time('Weather: Moisture Initialization');
+			ctimeEnd('Weather: Temperature Calculation');
+			ctime('Weather: Moisture Initialization');
 			initializeAirMoisture(topology.corners, moistureLevel, action);
 		}, 2, "Calculating Moisture")
 		.getResult(function (result) {
-			console.timeEnd('Weather: Moisture Initialization');
-			console.time('Weather: Moisture Processing');
+			ctimeEnd('Weather: Moisture Initialization');
+			ctime('Weather: Moisture Processing');
 			activeCorners = result.corners;
 			totalMoisture = result.airMoisture;
 			remainingMoisture = result.airMoisture;
@@ -193,12 +193,12 @@ function generatePlanetWeather(topology, partitions, heatLevel, moistureLevel, r
 			if (remainingMoisture > 0 && consumedMoisture >= 0.0001) action.loop(1 - remainingMoisture / totalMoisture);
 		}, 32, "Calculating Moisture")
 		.executeSubaction(function (action) {
-			console.timeEnd('Weather: Moisture Processing');
-			console.time('Weather: Final Moisture Calculation');
+			ctimeEnd('Weather: Moisture Processing');
+			ctime('Weather: Final Moisture Calculation');
 			calculateMoisture(topology.corners, topology.tiles, action);
 		}, 1, "Calculating Moisture")
 		.getResult(function (result) {
-			console.timeEnd('Weather: Final Moisture Calculation');
+			ctimeEnd('Weather: Final Moisture Calculation');
 		});
 }
 
@@ -206,14 +206,14 @@ function erodeElevation(planet, action) {
 	let tiles = planet.topology.tiles
 	let watersheds = planet.topology.watersheds
 
-	console.time("groupBodies");
+	ctime("groupBodies");
 	groupBodies(planet);
-	console.timeEnd("groupBodies");
+	ctimeEnd("groupBodies");
 
-	console.time("randomLocalMax");
+	ctime("randomLocalMax");
 	randomLocalMax();
 	//randomLocalMax();
-	console.timeEnd("randomLocalMax");
+	ctimeEnd("randomLocalMax");
 	
 	// Validate drainage after initial randomLocalMax
 	let landTiles = tiles.filter(t => t.elevation > 0);
@@ -223,13 +223,18 @@ function erodeElevation(planet, action) {
 	
 	tiles.sort((a, b) => parseFloat(a.elevation) - parseFloat(b.elevation));
 
-	console.time("newerDrain");
+	ctime("newerDrain");
 	newerDrain();
-	console.timeEnd("newerDrain");
+	ctimeEnd("newerDrain");
 
-	console.time("reMoisture");
+	// Redirect parallel rivers after drainage is established
+	ctime("redirectParallelRivers");
+	redirectParallelRivers(tiles.filter(t => t.elevation >= 0));
+	ctimeEnd("redirectParallelRivers");
+
+	ctime("reMoisture");
 	reMoisture()
-	console.timeEnd("reMoisture");
+	ctimeEnd("reMoisture");
 	
 	//console.log(planet)
 
@@ -345,7 +350,7 @@ function erodeElevation(planet, action) {
 				issues[i].tile.error = 'uphill drainage';
 			}
 		} else {
-			console.log(`${context}: All drainage flows downhill ✓`);
+			//console.log(`${context}: All drainage flows downhill ✓`);
 		}
 		
 		return uphillCount;
@@ -397,7 +402,7 @@ function erodeElevation(planet, action) {
 			
 			// Use basin-scoped recalculation with the locally affected area
 			recalculateBasinDrainage([...locallyAffectedTiles], []);
-			console.log(`randomLocalMax: Localized recalculation for ${modifiedTiles.length} raised tiles affecting ${locallyAffectedTiles.size} total tiles`);
+			//console.log(`randomLocalMax: Localized recalculation for ${modifiedTiles.length} raised tiles affecting ${locallyAffectedTiles.size} total tiles`);
 		}
 		
 		tiles.sort((a, b) => parseFloat(a.elevation) - parseFloat(b.elevation));
@@ -497,7 +502,7 @@ function erodeElevation(planet, action) {
 		validateDrainage(land, 'Initial drainage');
 
 		for (let i = 1; i <= 6; i++) {
-			console.time("bowlLoop");
+			ctime("bowlLoop");
 
 			let bowls = land.filter(t => t.downstream.length < 1 && !t.drain);
 			bowls.sort((a, b) => parseFloat(b.elevation) - parseFloat(a.elevation));
@@ -557,9 +562,9 @@ function erodeElevation(planet, action) {
 				}
 			}		
 			if (i===3) {
-				console.time("randomLocalMax");
+				ctime("randomLocalMax");
 				randomLocalMax();
-				console.timeEnd("randomLocalMax");
+				ctimeEnd("randomLocalMax");
 				validateDrainage(land, `After randomLocalMax (iteration ${i})`);
 			}
 			// Full recalculation only once per bowl loop iteration
@@ -572,7 +577,7 @@ function erodeElevation(planet, action) {
 			}
 
 			validateDrainage(land, `End of bowlLoop iteration ${i}`);
-			console.timeEnd("bowlLoop");
+			ctimeEnd("bowlLoop");
 		}
 
 		watershedBuilder();
@@ -648,7 +653,7 @@ function erodeElevation(planet, action) {
 			});
 			lake.tiles=[];
 			
-			console.log(`bowlFill: Basin-scoped recalculation for ${basin.length} basin tiles and ${escapeRouteArea.length} boundary tiles`);
+			//console.log(`bowlFill: Basin-scoped recalculation for ${basin.length} basin tiles and ${escapeRouteArea.length} boundary tiles`);
 
 			function findMouthOrder(lake,mouth) {
 				var finished = [mouth];
@@ -732,6 +737,91 @@ function erodeElevation(planet, action) {
 			}
 		};
 	}
+	
+	function redirectParallelRivers(landTiles) {
+		// Simplified approach: find qualifying river tiles and raise their drain elevation to force redirection
+		var flows = landTiles.filter(t => t.outflow > 0).sort((a, b) => parseFloat(a.outflow) - parseFloat(b.outflow));
+		const riverThresholdValue = flows[Math.floor(flows.length * riverThreshold)].outflow;
+		
+		// Get all tiles that qualify as rivers
+		let qualifyingRivers = landTiles.filter(t => t.outflow > riverThresholdValue && t.drain);
+		
+		console.log(`Processing ${qualifyingRivers.length} qualifying rivers for redirection`);
+		
+		let redirectionCount = 0;
+		let modifiedElevations = []; // Track elevation changes
+		
+		let excludedTiles = new Set(); // Track tiles to skip
+		
+		// Process each qualifying river tile
+		for (let i = 0; i < qualifyingRivers.length; i++) {
+			let tile = qualifyingRivers[i];
+			
+			// Skip if this tile has been excluded due to a previous redirection
+			if (excludedTiles.has(tile)) {
+				continue;
+			}
+			
+			// Check for neighboring river tiles that are neither upstream nor downstream
+			let hasParallelNeighbor = false;
+			for (let neighbor of tile.tiles) {
+				if (qualifyingRivers.includes(neighbor) && !excludedTiles.has(neighbor)) {
+					// Check if neighbor is upstream or downstream
+					let isUpstream = tile.upstream && tile.upstream.includes(neighbor);
+					let isDownstream = tile.downstream && tile.downstream.includes(neighbor);
+					
+					if (!isUpstream && !isDownstream) {
+						hasParallelNeighbor = true;
+						break;
+					}
+				}
+			}
+			
+			if (hasParallelNeighbor) {
+				// Mark for visual debugging
+				//tile.error = 'parallel';
+				
+				// Store original elevation and raise drain elevation
+				let originalElevation = tile.drain.elevation;
+				modifiedElevations.push({ tile: tile.drain, original: originalElevation });
+				
+				// Raise drain elevation to force redirection
+				tile.drain.elevation = tile.elevation + 0.01;
+				redirectionCount++;
+				
+				// Remove all downstream tiles from consideration
+				if (tile.downstream) {
+					for (let downstreamTile of tile.downstream) {
+						excludedTiles.add(downstreamTile);
+					}
+				}
+			}
+		}
+		
+		console.log(`Modified ${redirectionCount} drainage targets, recalculating drainage...`);
+		
+		// Recalculate drainage system to handle the elevation changes
+		if (redirectionCount > 0) {
+			// Recalculate drainage relationships
+			newerDrain(landTiles);
+			
+			// Restore original elevations after drainage recalculation
+			for (let modified of modifiedElevations) {
+				modified.tile.elevation = modified.original;
+			}
+			
+			console.log(`Drainage recalculation complete, restored original elevations`);
+		}
+	}
+	
+	// Removed - using tile.downstream.length directly
+	
+	// Helper functions removed - using simplified neighbor check
+	
+	
+	// Removed - using tile.downstream directly
+	
+	// Helper function removed - no longer needed with simplified approach
 }
 
 function tileElevationProcs(tiles, action) {
