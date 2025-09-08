@@ -510,6 +510,25 @@ function validateDisplacements(topology) {
 	}
 }
 
+function validateDrainageFlow(topology) {
+	// Check for uphill drainage issues after all elevations and drains are final
+	for (var i = 0; i < topology.tiles.length; ++i) {
+		var tile = topology.tiles[i];
+		
+		// Only check land tiles that have drainage sources
+		if (tile.elevation > 0 && tile.sources && tile.sources.length > 0) {
+			// Check if any source tile has lower elevation than this tile (uphill flow)
+			for (var j = 0; j < tile.sources.length; j++) {
+				var source = tile.sources[j];
+				if (source.elevation < tile.elevation) {
+					tile.error = 'uphill river';
+					break; // One uphill source is enough to mark as error
+				}
+			}
+		}
+	}
+}
+
 function reshapeLandElevations(tiles, action) {
 	action.executeSubaction(function (action) {
 		// Collect original elevations for debug overlay

@@ -214,8 +214,15 @@ function erodeElevation(planet, action) {
 
 	// Redirect parallel rivers after drainage is established
 	ctime("redirectParallelRivers");
-	redirectParallelRivers(tiles.filter(t => t.elevation >= 0));
+	for (let i = 0; i < 2; i++) {
+		redirectParallelRivers(tiles.filter(t => t.elevation >= 0));
+	}
 	ctimeEnd("redirectParallelRivers");
+
+	// Validate drainage flow after all drainage operations are complete
+	ctime("validateDrainageFlow");
+	validateDrainageFlow(planet.topology);
+	ctimeEnd("validateDrainageFlow");
 
 	ctime("reMoisture");
 	reMoisture()
@@ -356,6 +363,7 @@ function erodeElevation(planet, action) {
 						if (tiles[i].id / Math.PI % 1 > 0.85) {
 							//console.log('success')
 							tiles[i].elevation = tiles[i].tiles[tiles[i].tiles.length - 1].elevation * 1.05 //make local max
+							//logElevationChange(tiles[i], 'localMax', tiles[i].elevation);
 							modifiedTiles.push(tiles[i]);
 							//tiles[i].error = 'forcedmax'
 						}
@@ -522,6 +530,7 @@ function erodeElevation(planet, action) {
 				} else {
 					let oldElevation = b.elevation;
 					b.elevation = (b.tiles[0].elevation+b.tiles[1].elevation)/2+0.000001*b.id;
+					//logElevationChange(b, 'borderElevation', b.elevation);
 					
 					// Use very localized drainage recalculation for single tile fix
 					if (Math.abs(b.elevation - oldElevation) > 0.000001) {
@@ -546,12 +555,12 @@ function erodeElevation(planet, action) {
 					}
 				}
 			}		
-			if (i===3) {
-				ctime("randomLocalMax");
-				randomLocalMax();
-				ctimeEnd("randomLocalMax");
-				validateDrainage(land, `After randomLocalMax (iteration ${i})`);
-			}
+			//if (i===3) {
+			//	ctime("randomLocalMax");
+			//	randomLocalMax();
+			//	ctimeEnd("randomLocalMax");
+			//	validateDrainage(land, `After randomLocalMax (iteration ${i})`);
+			//}
 			// Full recalculation only once per bowl loop iteration
 			calculateUpstreamDownstream(land);
 			land.sort((a, b) => a.upstream.length - b.upstream.length);
@@ -605,9 +614,11 @@ function erodeElevation(planet, action) {
 					t.sediment = 0;
 					var eOld = t.elevation;
 					t.elevation = minE+(step*(j+.0000000001*t.id));
+					//logElevationChange(t, 'elevationLeveling', t.elevation);
 					if (t.tiles.some(a => a.elevation === t.elevation)) {
 						t.error = 'same elevation as neighbor, had to bump';
 						t.elevation = t.elevation+.00000001*t.id;
+						//logElevationChange(t, 'elevationUnique', t.elevation);
 					}
 					t.sediment += t.elevation - eOld;
 					j++;
@@ -731,17 +742,15 @@ function erodeElevation(planet, action) {
 		// Get all tiles that qualify as rivers
 		let qualifyingRivers = landTiles.filter(t => t.outflow > riverThresholdValue && t.drain);
 		
-		console.log(`Processing ${qualifyingRivers.length} qualifying rivers for redirection`);
+		//console.log(`Processing ${qualifyingRivers.length} qualifying rivers for redirection`);
 		
 		let redirectionCount = 0;
-		let modifiedElevations = []; // Track elevation changes
 		
 		let excludedTiles = new Set(); // Track tiles to skip
 		
 		// Process each qualifying river tile
 		for (let i = 0; i < qualifyingRivers.length; i++) {
 			let tile = qualifyingRivers[i];
-			
 			// Skip if this tile has been excluded due to a previous redirection
 			if (excludedTiles.has(tile)) {
 				continue;
@@ -763,16 +772,38 @@ function erodeElevation(planet, action) {
 			}
 			
 			if (hasParallelNeighbor) {
-				// Mark for visual debugging
-				//tile.error = 'parallel';
 				
-				// Store original elevation and raise drain elevation
-				let originalElevation = tile.drain.elevation;
-				modifiedElevations.push({ tile: tile.drain, original: originalElevation });
+				// Calculate minimum elevation needed to prevent drainage into tile.drain
+				let sourcesOfDrain = landTiles.filter(t => t.drain === tile.drain);
+				let minNeighborElevations = [];
 				
-				// Raise drain elevation to force redirection
-				tile.drain.elevation = tile.elevation + 0.01;
-				redirectionCount++;
+				// For each source, find its lowest neighbor (excluding tile.drain)
+				sourcesOfDrain.forEach(source => {
+					let otherNeighbors = source.tiles.filter(neighbor => neighbor !== tile.drain && neighbor.elevation !== undefined);
+					if (otherNeighbors.length > 0) {
+						let minOtherNeighbor = Math.min(...otherNeighbors.map(n => n.elevation));
+						minNeighborElevations.push(minOtherNeighbor);
+					}
+				});
+				
+				// Permanently raise drain elevation to force redirection
+				if (minNeighborElevations.length > 0) {
+					let lowestAlternative = Math.min(...minNeighborElevations);
+					let newElevation = lowestAlternative + 0.001;
+					
+					//console.log(`Permanently raising drain elevation from ${tile.drain.elevation.toFixed(4)} to ${newElevation.toFixed(4)} to force redirection`);
+					tile.drain.elevation = newElevation;
+					//logElevationChange(tile.drain, 'redirectParallelRivers', newElevation);
+			
+					redirectionCount++;
+				} else {
+					// Fallback to small bump if we can't calculate alternatives
+					//console.log(`Using fallback elevation bump for drain at ${tile.drain.elevation.toFixed(4)}`);
+					tile.drain.elevation = tile.drain.elevation + 0.01;
+					//logElevationChange(tile.drain, 'redirectParallelRivers', tile.drain.elevation);
+			
+					redirectionCount++;
+				}
 				
 				// Remove all downstream tiles from consideration
 				if (tile.downstream) {
@@ -783,19 +814,12 @@ function erodeElevation(planet, action) {
 			}
 		}
 		
-		console.log(`Modified ${redirectionCount} drainage targets, recalculating drainage...`);
+		//console.log(`Permanently modified ${redirectionCount} drainage targets, recalculating drainage...`);
 		
-		// Recalculate drainage system to handle the elevation changes
+		// Recalculate drainage system with the permanent elevation changes
 		if (redirectionCount > 0) {
-			// Recalculate drainage relationships
 			newerDrain(landTiles);
-			
-			// Restore original elevations after drainage recalculation
-			for (let modified of modifiedElevations) {
-				modified.tile.elevation = modified.original;
-			}
-			
-			console.log(`Drainage recalculation complete, restored original elevations`);
+			//console.log(`Drainage recalculation complete with permanent elevations`);
 		}
 	}
 	
@@ -1052,18 +1076,20 @@ function generatePlanetBiomesResources(tiles, planetRadius, action) {
 		} else if (tile.drain) {
 			// Check if any individual inflow (not total) exceeds threshold
 			var hasSignificantInflow = false;
+			var alreadyRiver = false;
 			var significantSources = [];
 			
 			if (tile.sources && tile.sources.length > 0) {
 				for (var source of tile.sources) {
 					if (source.outflow > flowThreshold) {
 						hasSignificantInflow = true;
+						alreadyRiver = source.river;
 						significantSources.push(source);
 					}
 				}
 			}
 			
-			if (hasSignificantInflow) {
+			if (hasSignificantInflow && (alreadyRiver||(tile.downstream && tile.downstream.length > 0))) {
 				tile.river = true;
 				tile.riverSources = significantSources; // Store which sources qualify for rendering
 				tile.fish = Math.max(.125,Math.min(.25,tile.upstream.length/20))+Math.min(.75,(tile.upstream.length/(tile.downstream.length+1))/45);

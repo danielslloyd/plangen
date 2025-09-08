@@ -8,6 +8,13 @@
 
 //const THREE = require('three');
 
+// Global elevation change logging function for debugging
+window.logElevationChange = function(tile, functionName, newElevation) {
+	if (!tile.log) tile.log = [];
+	tile.log.push(functionName + ': ' + newElevation.toFixed(4));
+	console.log('Elevation change logged:', tile.id, functionName, newElevation.toFixed(4));
+};
+
 var scene = null;
 var camera = null;
 var renderer = null;

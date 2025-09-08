@@ -102,7 +102,7 @@ var debugOverlay = {
         
         var tile = this.selectedTileData;
         var info = [];
-        
+        console.log(tileall )
         info.push('<div style="color: #00ff00; font-weight: bold; margin-bottom: 5px;">SELECTED TILE</div>');
         info.push('<div style="border-bottom: 1px solid #333; margin-bottom: 5px;"></div>');
         info.push('<div><span style="color: #888;">ID:</span> <span style="color: #fff;">' + tile.id + '</span></div>');
@@ -118,6 +118,19 @@ var debugOverlay = {
         var tileDispColor = tileDisplacementError ? '#ff4444' : '#888';
         
         info.push('<div><span style="color: #888;">Elevation:</span> <span style="color: #fff;">' + tileElevation + '</span> <span style="color: ' + tileDispColor + ';">(disp: ' + tileDisplacement + ')</span></div>');
+        
+        // Show tile error if present
+        if (typeof tile.error !== 'undefined' && tile.error) {
+            info.push('<div><span style="color: #888;">Error:</span> <span style="color: #ff44ff; font-weight: bold;">' + tile.error + '</span></div>');
+        }
+        
+        // Show elevation change log if present
+        if (tile.log && tile.log.length > 0) {
+            info.push('<div style="color: #ffff00; font-weight: bold; margin-top: 10px; margin-bottom: 5px;">ELEVATION LOG</div>');
+            for (var i = 0; i < tile.log.length; i++) {
+                info.push('<div style="margin-left: 10px; color: #fff;">' + tile.log[i] + '</div>');
+            }
+        }
         
         // Add clockwise border traversal information
         info.push('<div style="color: #ffaa00; font-weight: bold; margin-top: 10px; margin-bottom: 5px;">CLOCKWISE BORDER TRAVERSAL</div>');
