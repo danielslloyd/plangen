@@ -361,11 +361,23 @@ function erodeElevation(planet, action) {
 					if (tiles[i].elevation < tiles[i].tiles[tiles[i].tiles.length - 1].elevation) { //if not local max
 						//console.log('try')
 						if (tiles[i].id / Math.PI % 1 > 0.85) {
-							//console.log('success')
-							tiles[i].elevation = tiles[i].tiles[tiles[i].tiles.length - 1].elevation * 1.05 //make local max
-							//logElevationChange(tiles[i], 'localMax', tiles[i].elevation);
-							modifiedTiles.push(tiles[i]);
-							//tiles[i].error = 'forcedmax'
+							// Check if any neighbor is already a local max
+							let neighborIsLocalMax = false;
+							for (let neighbor of tiles[i].tiles) {
+								if (neighbor.elevation > 0 && neighbor.elevation >= neighbor.tiles[neighbor.tiles.length - 1].elevation) {
+									neighborIsLocalMax = true;
+									//console.log('neighbor is local max', neighbor.id);
+									break;
+								}
+							}
+							
+							if (!neighborIsLocalMax) {
+								//console.log('success')
+								tiles[i].elevation = tiles[i].tiles[tiles[i].tiles.length - 1].elevation * 1.05 //make local max
+								//logElevationChange(tiles[i], 'localMax', tiles[i].elevation);
+								modifiedTiles.push(tiles[i]);
+								//tiles[i].error = 'forcedmax'
+							}
 						}
 					}
 				}
@@ -555,12 +567,12 @@ function erodeElevation(planet, action) {
 					}
 				}
 			}		
-			//if (i===3) {
-			//	ctime("randomLocalMax");
-			//	randomLocalMax();
-			//	ctimeEnd("randomLocalMax");
-			//	validateDrainage(land, `After randomLocalMax (iteration ${i})`);
-			//}
+			if (i===3) {
+				ctime("randomLocalMax");
+				randomLocalMax();
+				ctimeEnd("randomLocalMax");
+				validateDrainage(land, `After randomLocalMax (iteration ${i})`);
+			}
 			// Full recalculation only once per bowl loop iteration
 			calculateUpstreamDownstream(land);
 			land.sort((a, b) => a.upstream.length - b.upstream.length);
