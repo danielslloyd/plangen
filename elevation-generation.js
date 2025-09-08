@@ -365,6 +365,55 @@ function calculateCornerElevationMedians(topology, action) {
 			}
 		}
 	}
+	
+	// Force corner elevations based on tile composition
+	for (var i = 0; i < topology.corners.length; ++i) {
+		var corner = topology.corners[i];
+		if (corner.tiles && corner.tiles.length > 0) {
+			// Get elevations of all tiles touching this corner
+			var landTileCount = 0;
+			var oceanTileCount = 0;
+			var tileElevations = [];
+			
+			for (var j = 0; j < corner.tiles.length; ++j) {
+				var tile = corner.tiles[j];
+				if (typeof tile.elevation !== 'undefined') {
+					tileElevations.push(tile.elevation);
+					if (tile.elevation > 0) {
+						landTileCount++;
+					} else {
+						oceanTileCount++;
+					}
+				}
+			}
+			
+			// Force corner elevation based on tile composition
+			if (landTileCount === corner.tiles.length) {
+				// All land tiles - force to median of tile elevations
+				tileElevations.sort(function(a, b) { return a - b; });
+				var medianIndex = Math.floor(tileElevations.length / 2);
+				if (tileElevations.length % 2 === 0) {
+					corner.elevationMedian = (tileElevations[medianIndex - 1] + tileElevations[medianIndex]) / 2;
+				} else {
+					corner.elevationMedian = tileElevations[medianIndex];
+				}
+			} else if (oceanTileCount === corner.tiles.length) {
+				// All ocean tiles - force to median of tile elevations (should be negative)
+				tileElevations.sort(function(a, b) { return a - b; });
+				var medianIndex = Math.floor(tileElevations.length / 2);
+				if (tileElevations.length % 2 === 0) {
+					corner.elevationMedian = (tileElevations[medianIndex - 1] + tileElevations[medianIndex]) / 2;
+				} else {
+					corner.elevationMedian = tileElevations[medianIndex];
+				}
+			} else {
+				// Mixed land/ocean (coastal) - force to zero
+				corner.elevationMedian = 0;
+			}
+		} else {
+			corner.elevationMedian = 0;
+		}
+	}
 }
 
 function calculateElevationDisplacements(topology, action) {
@@ -410,6 +459,53 @@ function calculateElevationDisplacements(topology, action) {
 				displacement += border.corners[j].elevationDisplacement;
 			}
 			border.elevationDisplacement = displacement / border.corners.length;
+		}
+	}
+}
+
+function validateDisplacements(topology) {
+	// Validate displacement calculations and mark tiles with errors
+	for (var i = 0; i < topology.tiles.length; ++i) {
+		var tile = topology.tiles[i];
+		var hasError = false;
+		
+		// Check tile's own displacement
+		var expectedTileDisplacement = tile.elevation > 0 ? elevationMultiplier * tile.elevation : 0;
+		if (Math.abs(tile.elevationDisplacement - expectedTileDisplacement) > 0.01) {
+			hasError = true;
+		}
+		
+		// Check all corners of this tile
+		if (tile.corners) {
+			for (var j = 0; j < tile.corners.length; j++) {
+				var corner = tile.corners[j];
+				if (corner.elevationMedian !== undefined && corner.elevationDisplacement !== undefined) {
+					var expectedCornerDisplacement = corner.elevationMedian > 0 ? elevationMultiplier * corner.elevationMedian : 0;
+					if (Math.abs(corner.elevationDisplacement - expectedCornerDisplacement) > 0.01) {
+						hasError = true;
+						break;
+					}
+				}
+			}
+		}
+		
+		// Check all borders of this tile
+		if (tile.borders && !hasError) {
+			for (var k = 0; k < tile.borders.length; k++) {
+				var border = tile.borders[k];
+				if (border && border.corners && border.corners.length === 2 && border.elevationDisplacement !== undefined) {
+					var expectedBorderDisplacement = (border.corners[0].elevationDisplacement + border.corners[1].elevationDisplacement) / 2;
+					if (Math.abs(border.elevationDisplacement - expectedBorderDisplacement) > 0.01) {
+						hasError = true;
+						break;
+					}
+				}
+			}
+		}
+		
+		// Mark tile with error if any displacement is incorrect
+		if (hasError) {
+			tile.error = 'displacement error';
 		}
 	}
 }

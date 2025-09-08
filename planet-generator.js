@@ -255,18 +255,32 @@ function generatePlanetTerrain(planet, plateCount, oceanicRate, heatLevel, moist
 		}, 2)
 		.executeSubaction(function (action) {
 			ctimeEnd('4e. Tile Elevation Processing');
-			ctime('4f. Distance Calculations');
+			ctime('4f. Final Elevation Processing');
+			reshapeLandElevations(planet.topology.tiles, action);
+		}, 1, "Reshaping Land Elevation Distribution")
+		.executeSubaction(function (action) {
+			calculateCornerElevationMedians(planet.topology, action);
+		}, 1, "Calculating Final Corner Elevation Medians")
+		.executeSubaction(function (action) {
+			calculateElevationDisplacements(planet.topology, action);
+		}, 1, "Calculating Final Elevation Displacements")
+		.executeSubaction(function (action) {
+			validateDisplacements(planet.topology);
+		}, 1, "Validating Final Displacement Calculations")
+		.executeSubaction(function (action) {
+			ctimeEnd('4f. Final Elevation Processing');
+			ctime('4g. Distance Calculations');
 			setDistances(planet, action);
 		}, 8, "Creating Distances")
 
 		//erode
 		.executeSubaction(function (action) {
-			ctimeEnd('4f. Distance Calculations');
-			ctime('4g. Biomes & Resources');
+			ctimeEnd('4g. Distance Calculations');
+			ctime('4h. Biomes & Resources');
 			generatePlanetBiomesResources(planet.topology.tiles, 1000, action);
 		}, 1, "Generating Biomes")
 		.getResult(function (result) {
-			ctimeEnd('4g. Biomes & Resources');
+			ctimeEnd('4h. Biomes & Resources');
 		});
 
 }
