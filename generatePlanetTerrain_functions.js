@@ -501,7 +501,7 @@ function erodeElevation(planet, action) {
 		// Validate initial drainage
 		validateDrainage(land, 'Initial drainage');
 
-		for (let i = 1; i <= 6; i++) {
+		for (let i = 1; i <= 10; i++) {
 			ctime("bowlLoop");
 
 			let bowls = land.filter(t => t.downstream.length < 1 && !t.drain);

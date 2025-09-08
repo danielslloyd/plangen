@@ -449,15 +449,9 @@ function buildRiversRenderObject(tiles, action) {
 		if (tile.river) {
 			var tile2 = tile.drain;
 			
-			// Determine river color based on elevation delta
-			// Use max(0, downstream_elevation) so ocean tiles are treated as elevation 0
-			var elevationDelta = tile.elevation - Math.max(0, tile2.elevation);
-			var isWaterfall = elevationDelta >= riverElevationDeltaThreshold;
-			var riverColor = isWaterfall ? new THREE.Color(0xFFFFFF) : new THREE.Color(0x003F85);
-			
-			// Use segmented arrow for better terrain following
+			// Use segmented arrow with per-segment waterfall coloring
 			var riverDirection = tile2.averagePosition.clone().sub(tile.averagePosition);
-			buildSegmentedArrow(geometry, tile, tile2, riverDirection, 5, riverColor);
+			buildSegmentedArrowWithWaterfalls(geometry, tile, tile2, riverDirection, 5, riverElevationDeltaThreshold);
 		}
 		++i;
 
@@ -593,5 +587,77 @@ function buildSegmentedArrow(geometry, fromTile, toTile, direction, baseWidth, c
 	if (toTile.elevation > 0) {
 		var secondSegment = toPos.clone().sub(midPos);
 		buildArrow(geometry, midPos, secondSegment, toTile.averagePosition.clone().normalize(), baseWidth, color);
+	}
+}
+
+function buildSegmentedArrowWithWaterfalls(geometry, fromTile, toTile, direction, baseWidth, waterfallThreshold) {
+	// Find the actual border between the two tiles
+	var border = findBorderBetweenTiles(fromTile, toTile);
+	var borderDisplacement = 0;
+	
+	if (border && useElevationDisplacement) {
+		// Use the pre-calculated border displacement
+		borderDisplacement = border.elevationDisplacement;
+	}
+	
+	// Calculate border elevation for fallback (still needed for elevation check)
+	var borderElevation = calculateBorderElevation(fromTile, toTile);
+	
+	// Calculate positions with elevation
+	var fromPos = fromTile.averagePosition.clone();
+	var toPos = toTile.averagePosition.clone();
+	
+	// Use actual border geographic position instead of interpolating between tile centers
+	var midPos;
+	if (border && border.midpoint) {
+		// Use the actual border midpoint (average of border corners)
+		midPos = border.midpoint.clone();
+	} else {
+		// Fallback to interpolation if border not found
+		midPos = fromPos.clone().add(toPos).multiplyScalar(0.5);
+	}
+	
+	// Apply elevation displacement
+	if (fromTile.elevation > 0) {
+		var fromDistance = fromPos.length();
+		fromPos.normalize().multiplyScalar(fromDistance + (useElevationDisplacement ? fromTile.elevationDisplacement : 0) + 2);
+	} else {
+		fromPos.multiplyScalar(1.002);
+	}
+	
+	if (toTile.elevation > 0) {
+		var toDistance = toPos.length();
+		toPos.normalize().multiplyScalar(toDistance + (useElevationDisplacement ? toTile.elevationDisplacement : 0) + 2);
+	} else {
+		toPos.multiplyScalar(1.002);
+	}
+	
+	// Apply border displacement to midpoint
+	if (borderElevation > 0) {
+		var midDistance = midPos.length();
+		// Use the stored border displacement (calculated during terrain generation)
+		midPos.normalize().multiplyScalar(midDistance + borderDisplacement + 2);
+	} else {
+		midPos.multiplyScalar(1.002);
+	}
+	
+	// Calculate elevation drops for each segment independently
+	var firstSegmentDrop = fromTile.elevation - Math.max(0, borderElevation);
+	var secondSegmentDrop = Math.max(0, borderElevation) - Math.max(0, toTile.elevation);
+	
+	// Determine colors for each segment
+	var firstSegmentColor = firstSegmentDrop >= waterfallThreshold ? new THREE.Color(0xFFFFFF) : new THREE.Color(0x003F85);
+	var secondSegmentColor = secondSegmentDrop >= waterfallThreshold ? new THREE.Color(0xFFFFFF) : new THREE.Color(0x003F85);
+	
+	// Build arrow segments with individual colors
+	var firstSegment = midPos.clone().sub(fromPos);
+	
+	// Always create first segment (from source to border)
+	buildArrow(geometry, fromPos, firstSegment, fromTile.averagePosition.clone().normalize(), baseWidth, firstSegmentColor);
+	
+	// Only create second segment if downstream tile is not ocean
+	if (toTile.elevation > 0) {
+		var secondSegment = toPos.clone().sub(midPos);
+		buildArrow(geometry, midPos, secondSegment, toTile.averagePosition.clone().normalize(), baseWidth, secondSegmentColor);
 	}
 }
