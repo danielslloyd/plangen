@@ -373,9 +373,18 @@ function setSurfaceRenderMode(mode, force) {
 		else return;
 
 		var faces = planet.renderData.surface.geometry.faces;
-		for (var i = 0; i < faces.length; ++i) faces[i].vertexColors = colors[i];
-
-		planet.renderData.surface.geometry.colorsNeedUpdate = true;
+		if (faces && faces.length > 0) {
+			// Legacy geometry system with faces
+			for (var i = 0; i < faces.length; ++i) faces[i].vertexColors = colors[i];
+			planet.renderData.surface.geometry.colorsNeedUpdate = true;
+		} else {
+			// BufferGeometry system - recalculate colors on demand
+			if (typeof recalculateBufferGeometryColors === 'function' && planet.topology && planet.topology.tiles) {
+				recalculateBufferGeometryColors(planet.topology.tiles, planet.renderData.surface.geometry, mode);
+			} else {
+				console.log("Cannot switch render modes - missing topology data or recalculation function");
+			}
+		}
 	}
 }
 
@@ -387,15 +396,22 @@ function showHideSunlight(show) {
 
 	if (!planet) return;
 
-	var material = planet.renderData.surface.material;
 	if (renderSunlight) {
-		material.color = new THREE.Color(0xFFFFBB);
-		material.ambient = new THREE.Color(0x243D53); //
+		// Add orbiting sun light if it doesn't exist
+		if (!window.orbitingSunLight) {
+			window.orbitingSunLight = new THREE.DirectionalLight(0xFFFFDD, 2.0);
+			window.orbitingSunLight.position.set(2000, 1000, 1000);
+			scene.add(window.orbitingSunLight);
+			console.log("Added orbiting sun light:", window.orbitingSunLight);
+		}
 	} else {
-		material.color = new THREE.Color(0x000000);
-		material.ambient = new THREE.Color(0xFFFFFF);
+		// Remove orbiting sun light
+		if (window.orbitingSunLight) {
+			scene.remove(window.orbitingSunLight);
+			console.log("Removed orbiting sun light");
+			window.orbitingSunLight = null;
+		}
 	}
-	material.needsUpdate = true;
 }
 
 function showHidePlateBoundaries(show) {
@@ -444,6 +460,21 @@ function showHideRivers(show) {
 
 	if (renderRivers) planet.renderData.surface.renderObject.add(planet.renderData.Rivers.renderObject);
 	else planet.renderData.surface.renderObject.remove(planet.renderData.Rivers.renderObject);
+}
+
+function showHideMoon(show) {
+	if (typeof (show) === "boolean") renderMoon = show;
+	else renderMoon = !renderMoon;
+	
+	if (!planet || !planet.renderData.moon) return;
+
+	if (renderMoon) {
+		scene.add(planet.renderData.moon.renderObject);
+		console.log("Added moon to scene for material testing");
+	} else {
+		scene.remove(planet.renderData.moon.renderObject);
+		console.log("Removed moon from scene");
+	}
 }
 
 function toggleElevationExaggeration() {

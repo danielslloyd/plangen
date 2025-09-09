@@ -185,6 +185,10 @@ function keyUpHandler(event) {
 			showHideRivers();
 			event.preventDefault();
 			break;
+		case KEY.M:
+			showHideMoon();
+			event.preventDefault();
+			break;
         case KEY.J:
             showHideEdgeCosts();
             event.preventDefault();

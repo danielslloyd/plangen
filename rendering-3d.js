@@ -39,8 +39,16 @@ function render() {
 
 	if (cameraNeedsUpdated) updateCamera();
 
-	var sunTime = Math.PI * 2 * currentRenderFrameTime / 60000 + sunTimeOffset;
-	directionalLight.position.set(Math.cos(sunTime), 0, Math.sin(sunTime)).normalize();
+	// Animate orbiting sun light if it exists
+	if (window.orbitingSunLight) {
+		var sunTime = Math.PI * 2 * currentRenderFrameTime / 60000 + sunTimeOffset;
+		var sunDistance = 2000;
+		window.orbitingSunLight.position.set(
+			Math.cos(sunTime) * sunDistance, 
+			Math.sin(sunTime * 0.3) * 500,  // Slight vertical oscillation
+			Math.sin(sunTime) * sunDistance
+		);
+	}
 
 	// Update FPS counter
 	updateFPS();

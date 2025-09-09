@@ -110,88 +110,14 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action) {
 	action.executeSubaction(function (action) {
 		if (i >= tiles.length) return;
 
-		if (i % 100 === 0) {
-			console.log("Processing tile", i, "of", tiles.length);
-		}
+		//if (i % 100 === 0) {
+		//	console.log("Processing tile", i, "of", tiles.length);
+		//}
 
 		var tile = tiles[i];
 		
-		// Calculate sophisticated terrain color using original algorithm
-		var terrainColor;
-		var elevationColor;
-		
-		// First calculate elevation color for land areas
-		if (tile.elevation <= 0) elevationColor = new THREE.Color(0x224488).lerp(new THREE.Color(0xAADDFF), Math.max(0, Math.min((tile.elevation + 3 / 4) / (3 / 4), 1)));
-		else elevationColor = new THREE.Color(0x997755).lerp(new THREE.Color(0x222222), Math.max(0, Math.min(tile.elevation, 1)));
-
-		if (tile.elevation <= 0 || tile.lake) {
-			// Water areas - sophisticated depth and temperature-based coloring
-			if (tile.elevation <= 0) {
-				var normalizedDepth = Math.min(-tile.elevation, 1);
-			} else {
-				if (tile.lake.log === 'filled') {
-					var normalizedDepth = 0.1
-				} else if (tile.lake.log === 'kept no drain') {
-					var normalizedDepth = 0.5
-				} else var normalizedDepth = 1
-			}
-			
-			if ((tile.temperature < 0 || (Math.min(tile.elevation, 1) - Math.min(Math.max(tile.temperature, 0), 1) / 1.5 > 0.75)) && tile.lake) {
-				terrainColor = new THREE.Color(0xDDEEFF) // glacier
-			} else if (tile.biome === "ocean" || tile.lake) {
-				// Complex ocean color with depth and temperature
-				terrainColor = new THREE.Color(0x27efff)
-					.lerp(new THREE.Color(0x072995), Math.pow(normalizedDepth, 1 / 3))
-					.lerp(new THREE.Color(0x072995).lerp(new THREE.Color(0x222D5E), Math.pow(normalizedDepth, 1 / 5)), 1 - 1.1 * tile.temperature);
-			} else if (tile.biome === "seaIce") {
-				terrainColor = new THREE.Color(0x9EE1FF);
-			} else {
-				terrainColor = new THREE.Color(0xFF0000); // Error case
-			}
-		} else {
-			// Land areas - complex blend based on elevation, moisture, temperature
-			var normalizedElevation = Math.min(tile.elevation, 1);
-			var normalizedMoisture = Math.min(tile.moisture, 1);
-			var normalizedTemperature = Math.min(Math.max(tile.temperature, 0), 1);
-
-			// Base terrain color - sophisticated blend
-			terrainColor = new THREE.Color(0xCCCC66) // Base yellowish color
-				.lerp(new THREE.Color(0x005000), Math.pow(normalizedMoisture, .25))  // Green for moisture
-				.lerp(new THREE.Color(0x777788), Math.pow(normalizedElevation, 2))   // Gray for elevation
-				.lerp(new THREE.Color(0x555544), (1 - tile.temperature));           // Brown for cold
-			
-			// Additional elevation blending for realistic mountain appearance
-			terrainColor = terrainColor.lerp(elevationColor, Math.pow(Math.max(normalizedElevation - .4, 0), .7) - normalizedMoisture);
-			terrainColor = terrainColor.lerp(new THREE.Color(0x808079), (normalizedTemperature) ^ .01)
-
-			// Special biome overrides
-			if (tile.biome === "glacier" || tile.temperature < 0) {
-				terrainColor = new THREE.Color(0xDDEEFF); // Snow/glacier
-			}
-			else if (tile.biome === "lake") {
-				terrainColor = new THREE.Color(0x00FFFF); // Lake cyan
-			}
-		}
-
-		// Resource visualization (optional - shows resource deposits)
-		if (tile.oil || tile.gold || tile.bauxite || tile.copper || tile.iron) {
-			if (tile.gold > 0) {
-				terrainColor = new THREE.Color(0xFFFF00); // Gold
-			} else if (tile.oil > 0) {
-				terrainColor = new THREE.Color(0x000000); // Oil (black)
-			} else if (tile.bauxite > 0) {
-				terrainColor = new THREE.Color(0xFFA500); // Bauxite (orange)
-			} else if (tile.copper > 0) {
-				terrainColor = new THREE.Color(0xFF00FF); // Copper (magenta)
-			} else if (tile.iron > 0) {
-				terrainColor = new THREE.Color(0xFF0000); // Iron (red)
-			}
-		}
-
-		// Error tiles for debugging
-		if (tile.error) { 
-			terrainColor = new THREE.Color(0xFF00FF) // Bright magenta
-		}
+		// Calculate terrain color using extracted function
+		var terrainColor = calculateTerrainColor(tile);
 		
 		// Store tile center index
 		var centerIndex = vertexIndex;
@@ -260,9 +186,9 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action) {
 	});
 
 	// Create BufferGeometry directly (no conversion needed)
-	console.log("=== CREATING MODERN BUFFER GEOMETRY ===");
-	console.log("Final vertexIndex:", vertexIndex);
-	console.log("Final triangleIndex:", triangleIndex);
+	//console.log("=== CREATING MODERN BUFFER GEOMETRY ===");
+	//console.log("Final vertexIndex:", vertexIndex);
+	//console.log("Final triangleIndex:", triangleIndex);
 	
 	var planetGeometry = new THREE.BufferGeometry();
 	
@@ -275,7 +201,7 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action) {
 	planetGeometry.computeVertexNormals();
 	planetGeometry.computeBoundingBox();
 	
-	console.log("=== MODERN GEOMETRY VALIDATION ===");
+	/* console.log("=== MODERN GEOMETRY VALIDATION ===");
 	console.log("Position attribute:", planetGeometry.getAttribute('position'));
 	console.log("Color attribute:", planetGeometry.getAttribute('color'));
 	console.log("Index:", planetGeometry.getIndex());
@@ -287,32 +213,33 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action) {
 		console.log("Face count:", planetGeometry.getIndex().count / 3);
 	}
 	console.log("Bounding box:", planetGeometry.boundingBox);
-	console.log("=== END VALIDATION ===");
+	console.log("=== END VALIDATION ==="); */
 	
-	// Create material - start with vertex colors to see the terrain  
+	// Create material with vertex colors - set color to white so it doesn't interfere
 	var planetMaterial = new THREE.MeshBasicMaterial({
 		vertexColors: true,
 		wireframe: false,
-		side: THREE.DoubleSide
+		side: THREE.DoubleSide,
+		color: 0xFFFFFF  // White base color doesn't affect vertex colors
 	});
 	
-	console.log("Using vertex color material for terrain visualization");
+	//console.log("Using vertex color material for terrain visualization");
 	var planetRenderObject = new THREE.Mesh(planetGeometry, planetMaterial);
 	console.log("Created planetRenderObject:", planetRenderObject);
 	
-	// Add a simple test cube to verify basic rendering works
-	var testGeometry = new THREE.BoxGeometry(100, 100, 100);
+ 	// Add a simple test cube to verify basic rendering works
+/* 	var testGeometry = new THREE.BoxGeometry(100, 100, 100);
 	var testMaterial = new THREE.MeshBasicMaterial({ color: 0x00FFFF, wireframe: true });
 	var testCube = new THREE.Mesh(testGeometry, testMaterial);
 	testCube.position.set(1500, 0, 0); // Position it off to the side
 	console.log("Adding test cube at position:", testCube.position);
-
+*/
 	action.provideResult({
 		geometry: planetGeometry,
 		material: planetMaterial,
 		renderObject: planetRenderObject,
-		testCube: testCube  // Add test cube for debugging
-	});
+		//testCube: testCube  // Add test cube for debugging
+	});  
 }
 
 function buildPlateBoundariesRenderObject(borders, action) {
@@ -779,4 +706,190 @@ function buildInflowRiverArrows(geometry, sourceTile, centerTile, drainTile, bas
 	if (drainTile) {
 		buildArrow(geometry, centerPos, outflowSegment, centerTile.averagePosition.clone().normalize(), baseWidth, outflowColor);
 	}
+}
+
+// Color calculation functions for different render modes
+function calculateTerrainColor(tile) {
+	var terrainColor;
+	var elevationColor;
+	
+	// First calculate elevation color for land areas
+	if (tile.elevation <= 0) elevationColor = new THREE.Color(0x224488).lerp(new THREE.Color(0xAADDFF), Math.max(0, Math.min((tile.elevation + 3 / 4) / (3 / 4), 1)));
+	else elevationColor = new THREE.Color(0x997755).lerp(new THREE.Color(0x222222), Math.max(0, Math.min(tile.elevation, 1)));
+
+	if (tile.elevation <= 0 || tile.lake) {
+		// Water areas - sophisticated depth and temperature-based coloring
+		if (tile.elevation <= 0) {
+			var normalizedDepth = Math.min(-tile.elevation, 1);
+		} else {
+			if (tile.lake.log === 'filled') {
+				var normalizedDepth = 0.1
+			} else if (tile.lake.log === 'kept no drain') {
+				var normalizedDepth = 0.5
+			} else var normalizedDepth = 1
+		}
+		
+		if ((tile.temperature < 0 || (Math.min(tile.elevation, 1) - Math.min(Math.max(tile.temperature, 0), 1) / 1.5 > 0.75)) && tile.lake) {
+			terrainColor = new THREE.Color(0xDDEEFF) // glacier
+		} else if (tile.biome === "ocean" || tile.lake) {
+			// Complex ocean color with depth and temperature
+			terrainColor = new THREE.Color(0x27efff)
+				.lerp(new THREE.Color(0x072995), Math.pow(normalizedDepth, 1 / 3))
+				.lerp(new THREE.Color(0x072995).lerp(new THREE.Color(0x222D5E), Math.pow(normalizedDepth, 1 / 5)), 1 - 1.1 * tile.temperature);
+		} else if (tile.biome === "seaIce") {
+			terrainColor = new THREE.Color(0x9EE1FF);
+		} else {
+			terrainColor = new THREE.Color(0xFF0000); // Error case
+		}
+	} else {
+		// Land areas - complex blend based on elevation, moisture, temperature
+		var normalizedElevation = Math.min(tile.elevation, 1);
+		var normalizedMoisture = Math.min(tile.moisture, 1);
+		var normalizedTemperature = Math.min(Math.max(tile.temperature, 0), 1);
+
+		// Base terrain color - sophisticated blend
+		terrainColor = new THREE.Color(0xCCCC66) // Base yellowish color
+			.lerp(new THREE.Color(0x005000), Math.pow(normalizedMoisture, .25))  // Green for moisture
+			.lerp(new THREE.Color(0x777788), Math.pow(normalizedElevation, 2))   // Gray for elevation
+			.lerp(new THREE.Color(0x555544), (1 - tile.temperature));           // Brown for cold
+		
+		// Additional elevation blending for realistic mountain appearance
+		//var elevationBlend = Math.max(0, Math.min(1, Math.pow(Math.max(normalizedElevation - .4, 0), .7) - normalizedMoisture));
+		//terrainColor = terrainColor.lerp(elevationColor, elevationBlend);
+		//terrainColor = terrainColor.lerp(new THREE.Color(0x808079), Math.pow(normalizedTemperature, .01));
+
+		// Special biome overrides
+		if (tile.biome === "glacier" || tile.temperature < 0) {
+			terrainColor = new THREE.Color(0xDDEEFF); // Snow/glacier
+		}
+		else if (tile.biome === "lake") {
+			terrainColor = new THREE.Color(0x00FFFF); // Lake cyan
+		}
+	}
+
+	// Error tiles for debugging
+	if (tile.error) { 
+		terrainColor = new THREE.Color(0xFF00FF) // Bright magenta
+	}
+	
+	return terrainColor;
+}
+
+function calculateElevationColor(tile) {
+	if (tile.elevation <= 0) {
+		// Ocean depths - blue gradient
+		var normalizedDepth = Math.min(-tile.elevation, 1);
+		return new THREE.Color(0x224488).lerp(new THREE.Color(0x000044), normalizedDepth);
+	} else {
+		// Land elevation - brown to white gradient
+		var normalizedElevation = Math.min(tile.elevation, 1);
+		return new THREE.Color(0x4B2F20).lerp(new THREE.Color(0xFFFFFF), normalizedElevation);
+	}
+}
+
+function calculateTemperatureColor(tile) {
+	var normalizedTemp = Math.max(-1, Math.min(tile.temperature || 0, 1));
+	if (normalizedTemp < 0) {
+		// Cold - blue to cyan
+		return new THREE.Color(0x0000FF).lerp(new THREE.Color(0x00FFFF), Math.abs(normalizedTemp));
+	} else {
+		// Warm - yellow to red
+		return new THREE.Color(0xFFFF00).lerp(new THREE.Color(0xFF0000), normalizedTemp);
+	}
+}
+
+function calculateMoistureColor(tile) {
+	var normalizedMoisture = Math.max(0, Math.min(tile.moisture || 0, 1));
+	// Dry (brown) to wet (green)
+	return new THREE.Color(0x8B4513).lerp(new THREE.Color(0x00FF00), normalizedMoisture);
+}
+
+function calculatePlatesColor(tile) {
+	if (tile.plate && tile.plate.color) {
+		return new THREE.Color(tile.plate.color.r, tile.plate.color.g, tile.plate.color.b);
+	}
+	return new THREE.Color(0x888888); // Default gray
+}
+
+// Function to recalculate colors for BufferGeometry based on render mode
+function recalculateBufferGeometryColors(tiles, geometry, renderMode) {
+	var colorAttribute = geometry.getAttribute('color');
+	if (!colorAttribute) {
+		console.error("No color attribute found in geometry");
+		return;
+	}
+
+	// Select color calculation function based on render mode
+	var calculateColor;
+	switch(renderMode) {
+		case "terrain":
+			calculateColor = calculateTerrainColor;
+			break;
+		case "elevation":
+			calculateColor = calculateElevationColor;
+			break;
+		case "temperature":
+			calculateColor = calculateTemperatureColor;
+			break;
+		case "moisture":
+			calculateColor = calculateMoistureColor;
+			break;
+		case "plates":
+			calculateColor = calculatePlatesColor;
+			break;
+		default:
+			calculateColor = calculateTerrainColor;
+			break;
+	}
+
+	var vertexIndex = 0;
+	
+	// Process each tile and update vertex colors
+	for (var i = 0; i < tiles.length; i++) {
+		var tile = tiles[i];
+		var tileColor = calculateColor(tile);
+		
+		// Update center vertex color
+		colorAttribute.setXYZ(vertexIndex, tileColor.r, tileColor.g, tileColor.b);
+		vertexIndex++;
+		
+		// Update corner vertex colors (same as center for consistency)
+		for (var j = 0; j < tile.corners.length; j++) {
+			colorAttribute.setXYZ(vertexIndex, tileColor.r, tileColor.g, tileColor.b);
+			vertexIndex++;
+		}
+	}
+	
+	// Mark the color attribute for update
+	colorAttribute.needsUpdate = true;
+}
+
+// Function to create a simple moon for material testing
+function buildMoonRenderObject(action) {
+	console.log("Creating moon render object for material testing");
+	
+	// Create simple sphere geometry for the moon
+	var moonRadius = 200;
+	var moonGeometry = new THREE.SphereGeometry(moonRadius, 32, 16);
+	
+	// Create material for testing - start with Phong to see lighting effects
+	var moonMaterial = new THREE.MeshPhongMaterial({
+		color: 0xCCCCCC,    // Light gray base color
+		shininess: 10,       // Low shininess for moon-like appearance  
+		specular: 0x222222   // Dark specular for realistic moon surface
+	});
+	
+	// Create moon mesh
+	var moonRenderObject = new THREE.Mesh(moonGeometry, moonMaterial);
+	
+	// Position moon relative to planet (distance ~1500, slightly offset)
+	moonRenderObject.position.set(1500, 300, 800);
+	
+	console.log("Created moon at position:", moonRenderObject.position);
+	
+	action.provideResult({
+		geometry: moonGeometry,
+		material: moonMaterial,
+		renderObject: moonRenderObject
+	});
 }

@@ -35,6 +35,7 @@ var renderPlateBoundaries = false;
 var renderPlateMovements = false;
 var renderAirCurrents = false;
 var renderRivers = true;
+var renderMoon = false;
 var elevationMultiplier = 80; // Controls how exaggerated the 3D terrain elevation appears
 var useElevationDisplacement = true; // Binary parameter: use stored displacement values (true) or sphere positions (false)
 var riverElevationDeltaThreshold = 0.1; // Minimum elevation difference for white waterfall rivers
@@ -549,6 +550,12 @@ function generatePlanetRenderData(topology, random, action) {
 		}, 2, "Building River Visuals")
 		.getResult(function (result) {
 			renderData.Rivers = result;
+		})
+		.executeSubaction(function (action) {
+			buildMoonRenderObject(action);
+		}, 1, "Building Moon for Material Testing")
+		.getResult(function (result) {
+			renderData.moon = result;
 		});
 
 	action.provideResult(renderData);
@@ -867,16 +874,17 @@ function displayPlanet(newPlanet) {
     scene.add(planet.renderData.surface.renderObject);
     
     // Add test cube for debugging
-    if (planet.renderData.surface.testCube) {
+    /* if (planet.renderData.surface.testCube) {
         scene.add(planet.renderData.surface.testCube);
         console.log("Added test cube to scene");
-    }
+    } */
     setSurfaceRenderMode(surfaceRenderMode, true);
     showHideSunlight(renderSunlight);
     showHidePlateBoundaries(renderPlateBoundaries);
     showHidePlateMovements(renderPlateMovements);
     showHideAirCurrents(renderAirCurrents);
     showHideRivers(renderRivers);
+    showHideMoon(renderMoon);
     updateCamera();
     updateUI();
 
