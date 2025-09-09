@@ -102,7 +102,6 @@ var debugOverlay = {
         
         var tile = this.selectedTileData;
         var info = [];
-        console.log(tileall )
         info.push('<div style="color: #00ff00; font-weight: bold; margin-bottom: 5px;">SELECTED TILE</div>');
         info.push('<div style="border-bottom: 1px solid #333; margin-bottom: 5px;"></div>');
         info.push('<div><span style="color: #888;">ID:</span> <span style="color: #fff;">' + tile.id + '</span></div>');

@@ -765,7 +765,8 @@ function relaxMesh(mesh, multiplier, action) {
 	action.executeSubaction(function (action) {
 		for (var i = 0; i < mesh.nodes.length; ++i) {
 			plane.setFromNormalAndCoplanarPoint(mesh.nodes[i].p, origin);
-			pointShifts[i] = mesh.nodes[i].p.clone().add(plane.projectPoint(pointShifts[i])).normalize();
+			var target = new THREE.Vector3();
+			pointShifts[i] = mesh.nodes[i].p.clone().add(plane.projectPoint(pointShifts[i], target)).normalize();
 		}
 	}, mesh.nodes.length / 10);
 

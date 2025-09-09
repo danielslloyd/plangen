@@ -18,7 +18,6 @@ window.logElevationChange = function(tile, functionName, newElevation) {
 var scene = null;
 var camera = null;
 var renderer = null;
-var projector = null;
 var directionalLight = null;
 var activeAction = null;
 var planet = null;
@@ -522,6 +521,9 @@ function generatePlanetRenderData(topology, random, action) {
 			buildSurfaceRenderObject(topology.tiles, topology.watersheds, random, action);
 		}, 8, "Building Surface Visuals")
 		.getResult(function (result) {
+			console.log("Received surface result:", result);
+			console.log("Result properties:", Object.keys(result));
+			console.log("Result.renderObject:", result.renderObject);
 			renderData.surface = result;
 		})
 		.executeSubaction(function (action) {
@@ -841,6 +843,12 @@ function displayPlanet(newPlanet) {
     if (planet) {
         tileSelection = null;
         scene.remove(planet.renderData.surface.renderObject);
+        
+        // Remove test cube if it exists
+        if (planet.renderData.surface.testCube) {
+            scene.remove(planet.renderData.surface.testCube);
+        }
+        
         // Remove existing path render object
         if (planet.pathRenderObject) {
             for (let i = planet.pathRenderObject.length - 1; i >= 0; i--) {
@@ -857,6 +865,12 @@ function displayPlanet(newPlanet) {
     }
     planet = newPlanet;
     scene.add(planet.renderData.surface.renderObject);
+    
+    // Add test cube for debugging
+    if (planet.renderData.surface.testCube) {
+        scene.add(planet.renderData.surface.testCube);
+        console.log("Added test cube to scene");
+    }
     setSurfaceRenderMode(surfaceRenderMode, true);
     showHideSunlight(renderSunlight);
     showHidePlateBoundaries(renderPlateBoundaries);

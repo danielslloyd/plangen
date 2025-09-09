@@ -1,7 +1,13 @@
 function setFromVertex(event) {
     if (planet) {
-        var rayCaster = projector.pickingRay(new Vector3(mouseX, mouseY, 0), camera);
-        var intersection = planet.partition.intersectRay(rayCaster.ray);
+        var mouse = new THREE.Vector2();
+        mouse.x = mouseX;
+        mouse.y = mouseY;
+        
+        var raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(mouse, camera);
+        
+        var intersection = planet.partition.intersectRay(raycaster.ray);
         if (intersection !== false) {
             fromVertex = intersection;
         } else {
@@ -21,8 +27,14 @@ function setFromVertex(event) {
 
 function setToVertex(event) {
     if (planet) {
-        var rayCaster = projector.pickingRay(new Vector3(mouseX, mouseY, 0), camera);
-        var intersection = planet.partition.intersectRay(rayCaster.ray);
+        var mouse = new THREE.Vector2();
+        mouse.x = mouseX;
+        mouse.y = mouseY;
+        
+        var raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(mouse, camera);
+        
+        var intersection = planet.partition.intersectRay(raycaster.ray);
         if (intersection !== false) {
             toVertex = intersection;
         } else {

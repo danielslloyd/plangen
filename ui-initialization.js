@@ -5,16 +5,33 @@ $(document).ready(function onDocumentReady() {
 		antialias: true,
 		alpha: true
 	});
-	projector = new THREE.Projector();
+	// Projector removed in r125, using Raycaster directly in click handlers
 
-	renderer.setFaceCulling(THREE.CullFaceFront, THREE.FrontFaceDirectionCW);
+	// Disable face culling to ensure all faces are visible
+	renderer.shadowMap.enabled = false; // Disable shadows for debugging
+	renderer.setClearColor(0x000033, 1); // Dark blue background instead of black
 
-	var ambientLight = new THREE.AmbientLight(0xFFFFFF);
+	// Add multiple debug lights for better illumination
+	var ambientLight = new THREE.AmbientLight(0xFFFFFF, 0.8); // Bright ambient light
 	scene.add(ambientLight);
 
-	directionalLight = new THREE.DirectionalLight(0xFFFFFF);
+	// Main directional light
+	directionalLight = new THREE.DirectionalLight(0xFFFFFF, 0.6);
 	directionalLight.position.set(-3, 3, 7).normalize();
 	scene.add(directionalLight);
+	
+	// Additional lights from different angles
+	var light2 = new THREE.DirectionalLight(0xFFFFFF, 0.4);
+	light2.position.set(3, -3, -7).normalize();
+	scene.add(light2);
+	
+	var light3 = new THREE.DirectionalLight(0xFFFFFF, 0.3);
+	light3.position.set(0, 10, 0).normalize();
+	scene.add(light3);
+	
+	var light4 = new THREE.DirectionalLight(0xFFFFFF, 0.3);
+	light4.position.set(0, -10, 0).normalize();
+	scene.add(light4);
 
 	requestAnimationFrame(render);
 

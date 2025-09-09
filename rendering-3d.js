@@ -71,11 +71,11 @@ function updateCamera() {
 
 	var transformation = new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(cameraLatitude, cameraLongitude, 0, "YXZ"));
 	camera.position.set(0, -50, 1050);
-	camera.position.lerp(new Vector3(0, 0, 2000), Math.pow(zoom, 2.0));
+	camera.position.lerp(new THREE.Vector3(0, 0, 2000), Math.pow(zoom, 2.0));
 	camera.position.applyMatrix4(transformation);
 	camera.up.set(0, 1, 0);
 	camera.up.applyMatrix4(transformation);
-	camera.lookAt(new Vector3(0, 0, 1000).applyMatrix4(transformation));
+	camera.lookAt(new THREE.Vector3(0, 0, 1000).applyMatrix4(transformation));
 	camera.updateProjectionMatrix();
 }
 
@@ -109,7 +109,9 @@ function buildTileWedgeColors1(f, c, d, bc) //used for snow cap effect
 function createTileSelectRenderObject(tile, color) {
     var outerColor = new THREE.Color(0x000000);
     var innerColor = color || new THREE.Color(0xFFFFFF);
-    var geometry = new THREE.Geometry();
+    var geometry = new THREE.BufferGeometry();
+    geometry.vertices = [];
+    geometry.faces = [];
     // Use global elevation multiplier parameter
     
     // Calculate tile center position with elevation
@@ -146,8 +148,23 @@ function createTileSelectRenderObject(tile, color) {
         geometry.vertices.push(cornerPosition);
         geometry.faces.push(new THREE.Face3(i + 1, (i + 1) % tile.corners.length + 1, 0, tile.normal, [outerColor, outerColor, innerColor]));
     }
+    
+    // Debug selected tile geometry before conversion
+    console.log("=== SELECTED TILE GEOMETRY (before conversion) ===");
+    console.log("Vertices:", geometry.vertices.length);
+    console.log("Faces:", geometry.faces.length);
+    
+    // Convert legacy geometry to BufferGeometry
+    convertLegacyGeometry(geometry);
+    
+    // Debug selected tile geometry after conversion
+    console.log("=== SELECTED TILE GEOMETRY (after conversion) ===");
+    console.log("Position attribute:", geometry.getAttribute('position'));
+    console.log("Color attribute:", geometry.getAttribute('color'));
+    console.log("Index:", geometry.getIndex());
+    
     geometry.boundingSphere = tile.boundingSphere.clone();
-    var material = new THREE.MeshLambertMaterial({ vertexColors: THREE.VertexColors });
+    var material = new THREE.MeshLambertMaterial({ vertexColors: true });
     material.transparent = true;
     material.opacity = 0.5;
     material.polygonOffset = true;
@@ -209,7 +226,10 @@ function deselectTile() {
 
 
 function buildEdgeCostsRenderObject(edges) {
-    var geometry = new THREE.Geometry();
+    var geometry = new THREE.BufferGeometry();
+    geometry.vertices = [];
+    geometry.faces = [];
+    geometry.colors = [];
     var minCost = 0.2 //Math.min(...edges.map(edge => edge.cost));
     var maxCost = 50 //Math.max(...edges.map(edge => edge.cost));
 
@@ -238,8 +258,26 @@ function buildEdgeCostsRenderObject(edges) {
         //geometry.colors.push(colorFromTo, colorFromTo);
     }
 
-    var material = new THREE.LineBasicMaterial({ vertexColors: THREE.VertexColors, linewidth: 1 });
-    var renderObject = new THREE.Line(geometry, material, THREE.LinePieces);
+    // Convert legacy geometry for line rendering
+    if (geometry.vertices && geometry.vertices.length > 0) {
+        var positions = [];
+        var colors = [];
+        for (var i = 0; i < geometry.vertices.length; i++) {
+            var vertex = geometry.vertices[i];
+            positions.push(vertex.x, vertex.y, vertex.z);
+            if (geometry.colors && geometry.colors[i]) {
+                var color = geometry.colors[i];
+                colors.push(color.r, color.g, color.b);
+            } else {
+                colors.push(1, 1, 1);
+            }
+        }
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    }
+    
+    var material = new THREE.LineBasicMaterial({ vertexColors: true });
+    var renderObject = new THREE.LineSegments(geometry, material);
     return renderObject;
 }
 

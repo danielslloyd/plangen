@@ -15,10 +15,14 @@ function zoomHandler(event) {
 function clickHandler(event) {
 	//console.log(event);
 	if (planet) {
-		var x = event.pageX / renderer.domElement.width * 2 - 1;
-		var y = 1 - event.pageY / renderer.domElement.height * 2;
-		var rayCaster = projector.pickingRay(new Vector3(x, y, 0), camera);
-		var intersection = planet.partition.intersectRay(rayCaster.ray);
+		var mouse = new THREE.Vector2();
+		mouse.x = (event.pageX / renderer.domElement.clientWidth) * 2 - 1;
+		mouse.y = -(event.pageY / renderer.domElement.clientHeight) * 2 + 1;
+		
+		var raycaster = new THREE.Raycaster();
+		raycaster.setFromCamera(mouse, camera);
+		
+		var intersection = planet.partition.intersectRay(raycaster.ray);
 		if (intersection !== false) {
 			//console.log(intersection);
 			selectTile(intersection); }

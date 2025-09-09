@@ -1,40 +1,131 @@
+// Three.js r125 compatibility shims
+THREE.Face3 = function(a, b, c, normal, color, materialIndex) {
+	this.a = a;
+	this.b = b;
+	this.c = c;
+	this.normal = normal;
+	this.color = color;
+	this.materialIndex = materialIndex;
+};
+
+// Compatibility function to convert legacy vertices/faces to BufferGeometry
+function convertLegacyGeometry(geometry, faceColors) {
+	if (!geometry.vertices || !geometry.faces) {
+		console.log("convertLegacyGeometry: No vertices or faces to convert");
+		return;
+	}
+	
+	console.log("convertLegacyGeometry: Converting", geometry.vertices.length, "vertices and", geometry.faces.length, "faces");
+	
+	var vertices = [];
+	var colors = [];
+	var normals = [];
+	var indices = [];
+	
+	// Convert vertices to flat array
+	for (var i = 0; i < geometry.vertices.length; i++) {
+		var vertex = geometry.vertices[i];
+		vertices.push(vertex.x, vertex.y, vertex.z);
+	}
+	
+	// Convert faces and handle colors
+	for (var i = 0; i < geometry.faces.length; i++) {
+		var face = geometry.faces[i];
+		if (face.a !== undefined && face.b !== undefined && face.c !== undefined) {
+			// Try reversing face winding to fix inside-out faces
+			indices.push(face.c, face.b, face.a);
+			
+			// Handle face colors - each face can have vertex colors or a single color
+			if (face.color && Array.isArray(face.color)) {
+				// Face has per-vertex colors
+				for (var j = 0; j < 3; j++) {
+					if (face.color[j]) {
+						colors[face.a * 3 + j] = face.color[j].r;
+						colors[face.b * 3 + j] = face.color[j].g; 
+						colors[face.c * 3 + j] = face.color[j].b;
+					}
+				}
+			} else if (face.color) {
+				// Face has single color
+				var faceColor = face.color;
+				colors[face.a * 3] = faceColor.r; colors[face.a * 3 + 1] = faceColor.g; colors[face.a * 3 + 2] = faceColor.b;
+				colors[face.b * 3] = faceColor.r; colors[face.b * 3 + 1] = faceColor.g; colors[face.b * 3 + 2] = faceColor.b;
+				colors[face.c * 3] = faceColor.r; colors[face.c * 3 + 1] = faceColor.g; colors[face.c * 3 + 2] = faceColor.b;
+			} else if (faceColors && faceColors[i]) {
+				// Use external face colors array
+				var extColor = faceColors[i];
+				colors[face.a * 3] = extColor.r; colors[face.a * 3 + 1] = extColor.g; colors[face.a * 3 + 2] = extColor.b;
+				colors[face.b * 3] = extColor.r; colors[face.b * 3 + 1] = extColor.g; colors[face.b * 3 + 2] = extColor.b;
+				colors[face.c * 3] = extColor.r; colors[face.c * 3 + 1] = extColor.g; colors[face.c * 3 + 2] = extColor.b;
+			}
+		}
+	}
+	
+	// Fill any missing colors with white
+	for (var i = 0; i < vertices.length; i++) {
+		if (colors[i] === undefined) {
+			colors[i] = 1.0;
+		}
+	}
+	
+	// Set buffer attributes
+	geometry.setIndex(indices);
+	geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+	geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+	geometry.computeVertexNormals();
+}
+
 function buildSurfaceRenderObject(tiles, watersheds, random, action) {
-	var planetGeometry = new THREE.Geometry();
-	var waterGeometry = new THREE.Geometry();
-	var terrainColors = [];
-	var plateColors = [];
-	var elevationColors = [];
-	var temperatureColors = [];
-	var moistureColors = [];
-	var wheatColors = [];
-	var cornColors = [];
-	var riceColors = [];
-	var fishColors = [];
-	var calorieColors = [];
-	var portColors = [];
-	var shoreColors = [];
-	var shoreAColors = [];
-	var shoreZColors = [];
+	console.log("=== MODERN BUFFER GEOMETRY CREATION ===");
+	console.log("tiles.length:", tiles.length);
+	
+	// Calculate geometry requirements (simple triangle fan per tile)
+	var totalVertices = 0;
+	var totalFaces = 0;
+	
+	for (var i = 0; i < tiles.length; i++) {
+		var cornersCount = tiles[i].corners.length;
+		totalVertices += 1 + cornersCount; // 1 center + N corners
+		totalFaces += cornersCount; // N triangles (triangle fan)
+	}
+	
+	console.log("Estimated vertices:", totalVertices);
+	console.log("Estimated faces:", totalFaces);
+	
+	// Pre-allocate typed arrays for BufferGeometry
+	var positions = new Float32Array(totalVertices * 3);
+	var colors = new Float32Array(totalVertices * 3);
+	var indices = new Uint32Array(totalFaces * 3);
+	
+	var vertexIndex = 0;
+	var triangleIndex = 0;
+	
 	var minShore = Math.min.apply(0, tiles.map((data) => data.shore));
 	var maxShore = Math.max.apply(0, tiles.map((data) => data.shore));
 	var minBody = Math.min.apply(0, tiles.map((data) => data.body.id));
 	var maxBody = Math.max.apply(0, tiles.map((data) => data.body.id));
 	let maxSediment = Math.max(...tiles.map(t => t.sediment? t.sediment:0));
 
-	// Corner elevation medians are now calculated in terrain generation phase
-
 	var i = 0;
 	action.executeSubaction(function (action) {
 		if (i >= tiles.length) return;
 
-		var tile = tiles[i];
-		var terrainColor;
+		if (i % 100 === 0) {
+			console.log("Processing tile", i, "of", tiles.length);
+		}
 
+		var tile = tiles[i];
+		
+		// Calculate sophisticated terrain color using original algorithm
+		var terrainColor;
 		var elevationColor;
+		
+		// First calculate elevation color for land areas
 		if (tile.elevation <= 0) elevationColor = new THREE.Color(0x224488).lerp(new THREE.Color(0xAADDFF), Math.max(0, Math.min((tile.elevation + 3 / 4) / (3 / 4), 1)));
 		else elevationColor = new THREE.Color(0x997755).lerp(new THREE.Color(0x222222), Math.max(0, Math.min(tile.elevation, 1)));
 
 		if (tile.elevation <= 0 || tile.lake) {
+			// Water areas - sophisticated depth and temperature-based coloring
 			if (tile.elevation <= 0) {
 				var normalizedDepth = Math.min(-tile.elevation, 1);
 			} else {
@@ -43,268 +134,191 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action) {
 				} else if (tile.lake.log === 'kept no drain') {
 					var normalizedDepth = 0.5
 				} else var normalizedDepth = 1
-			}//Math.min(0.2 + 4 * (tile.lake.level - tile.elevation), 1) }
-			if ((tile.temperature < 0 || (normalizedElevation - normalizedTemperature / 1.5 > 0.75)) && tile.lake) {
+			}
+			
+			if ((tile.temperature < 0 || (Math.min(tile.elevation, 1) - Math.min(Math.max(tile.temperature, 0), 1) / 1.5 > 0.75)) && tile.lake) {
 				terrainColor = new THREE.Color(0xDDEEFF) // glacier
 			} else if (tile.biome === "ocean" || tile.lake) {
-				terrainColor = new THREE.Color(0x27efff).lerp(new THREE.Color(0x072995), Math.pow(normalizedDepth, 1 / 3)).lerp(new THREE.Color(0x072995).lerp(new THREE.Color(0x222D5E), Math.pow(normalizedDepth, 1 / 5)), 1 - 1.1 * tile.temperature);
+				// Complex ocean color with depth and temperature
+				terrainColor = new THREE.Color(0x27efff)
+					.lerp(new THREE.Color(0x072995), Math.pow(normalizedDepth, 1 / 3))
+					.lerp(new THREE.Color(0x072995).lerp(new THREE.Color(0x222D5E), Math.pow(normalizedDepth, 1 / 5)), 1 - 1.1 * tile.temperature);
 			} else if (tile.biome === "seaIce") {
-				terrainColor = new THREE.Color(0x9EE1FF); //.lerp(colorDeviance, 0.10);
+				terrainColor = new THREE.Color(0x9EE1FF);
 			} else {
-				terrainColor = new THREE.Color(0xFF0000);
+				terrainColor = new THREE.Color(0xFF0000); // Error case
 			}
 		} else {
+			// Land areas - complex blend based on elevation, moisture, temperature
 			var normalizedElevation = Math.min(tile.elevation, 1);
 			var normalizedMoisture = Math.min(tile.moisture, 1);
 			var normalizedTemperature = Math.min(Math.max(tile.temperature, 0), 1);
 
-			terrainColor = new THREE.Color(0xCCCC66).lerp(new THREE.Color(0x005000), Math.pow(normalizedMoisture, .25)).lerp(new THREE.Color(0x777788), Math.pow(normalizedElevation, 2)).lerp(new THREE.Color(0x555544), (1 - tile.temperature));
+			// Base terrain color - sophisticated blend
+			terrainColor = new THREE.Color(0xCCCC66) // Base yellowish color
+				.lerp(new THREE.Color(0x005000), Math.pow(normalizedMoisture, .25))  // Green for moisture
+				.lerp(new THREE.Color(0x777788), Math.pow(normalizedElevation, 2))   // Gray for elevation
+				.lerp(new THREE.Color(0x555544), (1 - tile.temperature));           // Brown for cold
+			
+			// Additional elevation blending for realistic mountain appearance
 			terrainColor = terrainColor.lerp(elevationColor, Math.pow(Math.max(normalizedElevation - .4, 0), .7) - normalizedMoisture);
 			terrainColor = terrainColor.lerp(new THREE.Color(0x808079), (normalizedTemperature) ^ .01)
 
-			if (tile.biome === "glacier" || tile.temperature < 0) { // && normalizedMoisture > 0.1)
-				terrainColor = new THREE.Color(0xDDEEFF);//(0xDDEEFF)
+			// Special biome overrides
+			if (tile.biome === "glacier" || tile.temperature < 0) {
+				terrainColor = new THREE.Color(0xDDEEFF); // Snow/glacier
 			}
 			else if (tile.biome === "lake") {
-				//terrainColor =            new THREE.Color(0x04e8fc).lerp(new THREE.Color(0x072965), Math.sqrt(normalizedElevation)).lerp(new THREE.Color(0x2D2D5E),1-tile.temperature);//.lerp(colorDeviance, 0.10);//colder seas are greyer//
-				terrainColor = new THREE.Color(0x00FFFF)
-				//console.log("lake")
+				terrainColor = new THREE.Color(0x00FFFF); // Lake cyan
 			}
 		}
 
-		if (tile.error) { terrainColor = new THREE.Color(0xFF00FF) }
-		tile.terrainColor = terrainColor
-
-		var plateColor = tile.plate.color.clone();
-
-		var temperatureColor;
-		if (tile.temperature <= 0) temperatureColor = new THREE.Color(0x0000FF).lerp(new THREE.Color(0xBBDDFF), Math.max(0, Math.min((tile.temperature + 2 / 3) / (2 / 3), 1)));
-		else temperatureColor = new THREE.Color(0xFFFF00).lerp(new THREE.Color(0xFF0000), Math.max(0, Math.min((tile.temperature) / (3 / 3), 1)));
-
-		var moistureColor = new THREE.Color(0xFFCC00).lerp(new THREE.Color(0x0066FF), Math.max(0, Math.min(tile.rain, 1)));
-
-		//wheat color
-		var wheatColor = terrainColor.clone()
-		wheatColor = wheatColor.lerp(new THREE.Color(0xFF00FF), tile.wheat / 100);
-
-		//corn color		
-		var cornColor = terrainColor.clone()
-		cornColor = cornColor.lerp(new THREE.Color(0xFF00FF), tile.corn / 100);
-
-		//rice color		
-		var riceColor = terrainColor.clone()
-		riceColor = riceColor.lerp(new THREE.Color(0xFF00FF), tile.rice / 100);
-
-		//fish color		
-		var fishColor = terrainColor.clone()
-		if (tile.fish>0) {
-			fishColor = fishColor.lerp(new THREE.Color(0xFF00FF), tile.fish);
-		}
-		var calorieColor = terrainColor.clone()
-		if (tile.upstreamWeight) {
-			calorieColor = calorieColor.lerp(new THREE.Color(0xFF00FF), tile.upstreamWeight);
-		}
-
-		var portColor = elevationColor.clone()
-		if (tile.elevation > 0) {
-			var shrDim = maxShore / 4
-			if (tile.shore < 3) {
-				if (Math.abs(tile.shoreA - tile.shore) >= 4) {
-					portColor = portColor.lerp(new THREE.Color(0xFF00FF), Math.abs(tile.shoreA - tile.shore) / 8)
-				}
-				if (Math.abs(tile.shoreZ - tile.shore) >= 3) {
-					portColor = portColor.lerp(new THREE.Color(0x00FF00), Math.abs(tile.shoreZ - tile.shore) / 6)
-				}
-			}
-		}
-
-		var shoreColor = terrainColor.clone()
-/* 		if (tile.shore >= 0) {
-			if (!tile.tiles.some(n => n.shore > tile.shore)) {
-				shoreColor = new THREE.Color(0xFF00FF)
-			} else {
-				shoreColor = new THREE.Color(0x008800).lerp(new THREE.Color(0xFFFF00), Math.min(1, tile.shore / (maxShore / 2))).lerp(new THREE.Color(0xBB0000), tile.shore / maxShore)
-			}
-		}
-		else {
-			shoreColor = new THREE.Color(0x00FFFF).lerp(new THREE.Color(0x0000FF), tile.shore / minShore)
-		}; */
-		
-		//visualize tile.id layouts (dodecahedron?)
-		//let maxID = Math.max(...tiles.map(t => t.id));
-		//shoreColor = new THREE.Color(0x005500).lerp(new THREE.Color(0xFFFF00), tile.id/maxID);
-		
-		//visualize sediment
-		//console.log(maxSediment);
-		//shoreColor = shoreColor.lerp(new THREE.Color(0xFF00FF), (tile.sediment? tile.sediment:0)/maxSediment);
-
-		//if (tile.fish) {
-		//	shoreColor = shoreColor.lerp(new THREE.Color(0xFF00FF), tile.fish);
-		//}
-
-		//features
-		//if (tile.feature) {
-		//	shoreColor = tile.feature.color;
-		//}
-
-		//gold
-		//if (tile.gold) {
-		//	shoreColor = shoreColor.lerp(new THREE.Color(0xFF00FF), tile.gold);
-		//}
-
-		//timber
-		//if (tile.timber) {
-		//	shoreColor = shoreColor.lerp(new THREE.Color(0xFF00FF), tile.timber);
-		//}
-		//
-		////gold and oil
+		// Resource visualization (optional - shows resource deposits)
 		if (tile.oil || tile.gold || tile.bauxite || tile.copper || tile.iron) {
-			//shoreColor = new THREE.Color(0xFFFFFF);
-			if (tile.gold>0) {
-				shoreColor = new THREE.Color(0xFFFF00);
+			if (tile.gold > 0) {
+				terrainColor = new THREE.Color(0xFFFF00); // Gold
 			} else if (tile.oil > 0) {
-				shoreColor = new THREE.Color(0x000000);
+				terrainColor = new THREE.Color(0x000000); // Oil (black)
 			} else if (tile.bauxite > 0) {
-				shoreColor = new THREE.Color(0xFFA500);
+				terrainColor = new THREE.Color(0xFFA500); // Bauxite (orange)
 			} else if (tile.copper > 0) {
-				shoreColor = new THREE.Color(0xFF00FF);
+				terrainColor = new THREE.Color(0xFF00FF); // Copper (magenta)
 			} else if (tile.iron > 0) {
-				shoreColor = new THREE.Color(0xFF0000);
+				terrainColor = new THREE.Color(0xFF0000); // Iron (red)
 			}
 		}
 
-		//slope
-		//if (tile.slope && tile.elevation>0) {
-			//shoreColor = shoreColor.lerp(new THREE.Color(0xFF00FF), tile.slope);
-		//}
-		//fibNoise
-		//if (tile.fibNoise) {
-		//	shoreColor = shoreColor.lerp(new THREE.Color(0xFF00FF), (1+Math.sin(tile.fibNoise*Math.PI*6))/2);
-		//}
-
-
-		var shoreAColor = terrainColor.clone()
-		if (tile.body.id > 0) {
-			shoreAColor = new THREE.Color(0x005500).lerp(new THREE.Color(0xFFFF00), tile.body.id / maxBody)
+		// Error tiles for debugging
+		if (tile.error) { 
+			terrainColor = new THREE.Color(0xFF00FF) // Bright magenta
 		}
-		else if (tile.body.id < 0) {
-			shoreAColor = new THREE.Color(0x00FFFF).lerp(new THREE.Color(0x0000FF), tile.body.id / minBody)
-		};
-
-		var shoreZColor = terrainColor.clone()
 		
-		if (tile.watershed && tile.watershed.id >= 0 && !tile.lake) {
-			shoreZColor = tile.watershed.color;
-			//shoreZColor = new THREE.Color(0xFF0000).lerp(new THREE.Color(0x00FF00), tile.watershed.hash).lerp(new THREE.Color(0xFFFF88), tile.watershed.id % 0.758033988749895)
-
-		};
-
-		var baseIndex = planetGeometry.vertices.length;
-		// Use global elevation multiplier parameter
+		// Store tile center index
+		var centerIndex = vertexIndex;
 		
-		// Calculate tile center position with elevation
-		// Store original position and calculate elevation
-		var centerPosOriginal = tile.averagePosition.clone();
-		var centerPos = centerPosOriginal.clone();
-		
+		// Add center vertex
+		var centerPos = tile.averagePosition.clone();
 		if (tile.elevation > 0) {
 			var centerDistance = centerPos.length();
 			centerPos.normalize().multiplyScalar(centerDistance + (useElevationDisplacement ? tile.elevationDisplacement : 0));
 		}
 		
+		// Add center position
+		positions[vertexIndex * 3] = centerPos.x;
+		positions[vertexIndex * 3 + 1] = centerPos.y;
+		positions[vertexIndex * 3 + 2] = centerPos.z;
 		
-		planetGeometry.vertices.push(centerPos);
+		// Add center color  
+		colors[vertexIndex * 3] = terrainColor.r;
+		colors[vertexIndex * 3 + 1] = terrainColor.g;
+		colors[vertexIndex * 3 + 2] = terrainColor.b;
 		
-		for (var j = 0; j < tile.corners.length; ++j) {
+		vertexIndex++;
+		
+		// Add corner vertices and create triangle fan
+		for (var j = 0; j < tile.corners.length; j++) {
 			var corner = tile.corners[j];
-			var cornerPosOriginal = corner.position.clone();
-			var cornerPosition = cornerPosOriginal.clone();
+			var cornerPos = corner.position.clone();
 			
-			// Check if any adjacent tile is ocean (elevation <= 0)
+			// Apply elevation to corners
 			var hasOceanTile = false;
-			for (var k = 0; k < corner.tiles.length; ++k) {
+			for (var k = 0; k < corner.tiles.length; k++) {
 				if (corner.tiles[k].elevation <= 0) {
 					hasOceanTile = true;
 					break;
 				}
 			}
 			
-			// Apply elevation exaggeration only if no adjacent tiles are ocean and median elevation is positive
 			if (!hasOceanTile && corner.elevationMedian > 0) {
-				var cornerDistance = cornerPosition.length();
-				cornerPosition.normalize().multiplyScalar(cornerDistance + (useElevationDisplacement ? corner.elevationDisplacement : 0));
+				var cornerDistance = cornerPos.length();
+				cornerPos.normalize().multiplyScalar(cornerDistance + (useElevationDisplacement ? corner.elevationDisplacement : 0));
 			}
 			
+			// Add corner position
+			positions[vertexIndex * 3] = cornerPos.x;
+			positions[vertexIndex * 3 + 1] = cornerPos.y;
+			positions[vertexIndex * 3 + 2] = cornerPos.z;
 			
-			planetGeometry.vertices.push(cornerPosition);
+			// Add corner color (same as center for now)
+			colors[vertexIndex * 3] = terrainColor.r;
+			colors[vertexIndex * 3 + 1] = terrainColor.g;
+			colors[vertexIndex * 3 + 2] = terrainColor.b;
 			
-			// Calculate border position (between tile center and corner)
-			var borderPosition = centerPos.clone().sub(cornerPosition).multiplyScalar(0.1).add(cornerPosition);
-			planetGeometry.vertices.push(borderPosition);
-
-			var i0 = j * 2;
-			var i1 = ((j + 1) % tile.corners.length) * 2;
-			buildTileWedge(planetGeometry.faces, baseIndex, i0, i1, tile.normal);
-
-			//if (tile.elevation > 0.85) buildTileWedgeColors1(terrainColors, terrainColor, new THREE.Color(0xDDEEFF), terrainColor.clone().multiplyScalar(0.9)); //0.5 the smaller this number, the darker the border
-			//else buildTileWedgeColors1(terrainColors, terrainColor, terrainColor, terrainColor.clone().multiplyScalar(0.9)); //0.5 the smaller this number, the darker the border
-
-			buildTileWedgeColors(terrainColors, terrainColor, terrainColor.clone().multiplyScalar(0.95)); //0.5 the smaller this number, the darker the border
-			buildTileWedgeColors(plateColors, plateColor, plateColor.clone().multiplyScalar(1));
-			buildTileWedgeColors(elevationColors, elevationColor, elevationColor.clone().multiplyScalar(0.9));
-			buildTileWedgeColors(temperatureColors, temperatureColor, temperatureColor.clone().multiplyScalar(1));
-			buildTileWedgeColors(moistureColors, moistureColor, moistureColor.clone().multiplyScalar(1));
-			buildTileWedgeColors(wheatColors, wheatColor, wheatColor.clone().multiplyScalar(0.95));
-			buildTileWedgeColors(cornColors, cornColor, cornColor.clone().multiplyScalar(0.95));
-			buildTileWedgeColors(riceColors, riceColor, riceColor.clone().multiplyScalar(0.95));
-			buildTileWedgeColors(fishColors, fishColor, fishColor.clone().multiplyScalar(0.95));
-			buildTileWedgeColors(calorieColors, calorieColor, calorieColor.clone().multiplyScalar(0.95));
-			buildTileWedgeColors(portColors, portColor, portColor.clone().multiplyScalar(0.95));
-			buildTileWedgeColors(shoreColors, shoreColor, shoreColor.clone().multiplyScalar(1));
-			buildTileWedgeColors(shoreAColors, shoreAColor, shoreAColor.clone().multiplyScalar(1));
-			buildTileWedgeColors(shoreZColors, shoreZColor, shoreZColor.clone().multiplyScalar(1));
-			for (var k = planetGeometry.faces.length - 3; k < planetGeometry.faces.length; ++k) planetGeometry.faces[k].vertexColors = terrainColors[k];
+			// Create triangle: center -> corner[j] -> corner[j+1]
+			var nextJ = (j + 1) % tile.corners.length;
+			indices[triangleIndex * 3] = centerIndex;
+			indices[triangleIndex * 3 + 1] = vertexIndex;
+			indices[triangleIndex * 3 + 2] = centerIndex + 1 + nextJ;
+			
+			triangleIndex++;
+			vertexIndex++;
 		}
-		//if (i<=1) console.log(tile)
+		
 		++i;
 
 		action.loop(i / tiles.length);
 	});
 
-	planetGeometry.dynamic = true;
-	// Bounding sphere radius = base sphere (1000) + maximum possible elevation (elevationMultiplier * 1.0) + buffer
-	planetGeometry.boundingSphere = new THREE.Sphere(new Vector3(0, 0, 0), 1000 + elevationMultiplier + 50);
-	var planetMaterial = new THREE.MeshLambertMaterial({
-		color: new THREE.Color(0x000000),
-		ambient: new THREE.Color(0xFFFFFF),
-		vertexColors: THREE.VertexColors,
+	// Create BufferGeometry directly (no conversion needed)
+	console.log("=== CREATING MODERN BUFFER GEOMETRY ===");
+	console.log("Final vertexIndex:", vertexIndex);
+	console.log("Final triangleIndex:", triangleIndex);
+	
+	var planetGeometry = new THREE.BufferGeometry();
+	
+	// Set buffer attributes directly
+	planetGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+	planetGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+	planetGeometry.setIndex(new THREE.BufferAttribute(indices, 1));
+	
+	// Compute normals for proper lighting
+	planetGeometry.computeVertexNormals();
+	planetGeometry.computeBoundingBox();
+	
+	console.log("=== MODERN GEOMETRY VALIDATION ===");
+	console.log("Position attribute:", planetGeometry.getAttribute('position'));
+	console.log("Color attribute:", planetGeometry.getAttribute('color'));
+	console.log("Index:", planetGeometry.getIndex());
+	if (planetGeometry.getAttribute('position')) {
+		console.log("Vertex count:", planetGeometry.getAttribute('position').count);
+	}
+	if (planetGeometry.getIndex()) {
+		console.log("Index count:", planetGeometry.getIndex().count);
+		console.log("Face count:", planetGeometry.getIndex().count / 3);
+	}
+	console.log("Bounding box:", planetGeometry.boundingBox);
+	console.log("=== END VALIDATION ===");
+	
+	// Create material - start with vertex colors to see the terrain  
+	var planetMaterial = new THREE.MeshBasicMaterial({
+		vertexColors: true,
+		wireframe: false,
+		side: THREE.DoubleSide
 	});
-	//var waterMaterial = new THREE.MeshPhysicalMaterial({ color: new THREE.Color(0x000000),reflectivity: 0.7, ambient: new THREE.Color(0xFFFFFF), vertexColors: THREE.VertexColors, });
+	
+	console.log("Using vertex color material for terrain visualization");
 	var planetRenderObject = new THREE.Mesh(planetGeometry, planetMaterial);
+	console.log("Created planetRenderObject:", planetRenderObject);
+	
+	// Add a simple test cube to verify basic rendering works
+	var testGeometry = new THREE.BoxGeometry(100, 100, 100);
+	var testMaterial = new THREE.MeshBasicMaterial({ color: 0x00FFFF, wireframe: true });
+	var testCube = new THREE.Mesh(testGeometry, testMaterial);
+	testCube.position.set(1500, 0, 0); // Position it off to the side
+	console.log("Adding test cube at position:", testCube.position);
 
 	action.provideResult({
 		geometry: planetGeometry,
-		terrainColors: terrainColors,
-		plateColors: plateColors,
-		elevationColors: elevationColors,
-		temperatureColors: temperatureColors,
-		moistureColors: moistureColors,
-		wheatColors: wheatColors,
-		cornColors: cornColors,
-		riceColors: riceColors,
-		fishColors: fishColors,
-		calorieColors: calorieColors,
-		portColors: portColors,
-		shoreColors: shoreColors,
-		shoreAColors: shoreAColors,
-		shoreZColors: shoreZColors,
 		material: planetMaterial,
 		renderObject: planetRenderObject,
+		testCube: testCube  // Add test cube for debugging
 	});
 }
 
 function buildPlateBoundariesRenderObject(borders, action) {
-	var geometry = new THREE.Geometry();
+	var geometry = new THREE.BufferGeometry();
+	geometry.vertices = [];
+	geometry.faces = [];
 
 	var i = 0;
 	action.executeSubaction(function (action) {
@@ -344,9 +358,12 @@ function buildPlateBoundariesRenderObject(borders, action) {
 		action.loop(i / borders.length);
 	});
 
+	// Convert legacy geometry to BufferGeometry
+	convertLegacyGeometry(geometry);
+	
 	geometry.boundingSphere = new THREE.Sphere(new Vector3(0, 0, 0), 1000 + elevationMultiplier + 60);
 	var material = new THREE.MeshBasicMaterial({
-		vertexColors: THREE.VertexColors,
+		vertexColors: true,
 	});
 	var renderObject = new THREE.Mesh(geometry, material);
 
@@ -358,7 +375,9 @@ function buildPlateBoundariesRenderObject(borders, action) {
 }
 
 function buildPlateMovementsRenderObject(tiles, action) {
-	var geometry = new THREE.Geometry();
+	var geometry = new THREE.BufferGeometry();
+	geometry.vertices = [];
+	geometry.faces = [];
 
 	var i = 0;
 	action.executeSubaction(function (action) {
@@ -388,9 +407,12 @@ function buildPlateMovementsRenderObject(tiles, action) {
 		action.loop(i / tiles.length);
 	});
 
+	// Convert legacy geometry to BufferGeometry
+	convertLegacyGeometry(geometry);
+
 	geometry.boundingSphere = new THREE.Sphere(new Vector3(0, 0, 0), 1000 + elevationMultiplier + 60);
 	var material = new THREE.MeshBasicMaterial({
-		vertexColors: THREE.VertexColors,
+		vertexColors: true,
 	});
 	var renderObject = new THREE.Mesh(geometry, material);
 
@@ -402,7 +424,9 @@ function buildPlateMovementsRenderObject(tiles, action) {
 }
 
 function buildAirCurrentsRenderObject(corners, action) {
-	var geometry = new THREE.Geometry();
+	var geometry = new THREE.BufferGeometry();
+	geometry.vertices = [];
+	geometry.faces = [];
 
 	var i = 0;
 	action.executeSubaction(function (action) {
@@ -424,6 +448,9 @@ function buildAirCurrentsRenderObject(corners, action) {
 		action.loop(i / corners.length);
 	});
 
+	// Convert legacy geometry to BufferGeometry
+	convertLegacyGeometry(geometry);
+
 	geometry.boundingSphere = new THREE.Sphere(new Vector3(0, 0, 0), 1000 + elevationMultiplier + 60);
 	//var material = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xFFFFFF), });
 	var material = new THREE.MeshPhongMaterial({
@@ -441,7 +468,9 @@ function buildAirCurrentsRenderObject(corners, action) {
 }
 
 function buildRiversRenderObject(tiles, action) {
-	var geometry = new THREE.Geometry();
+	var geometry = new THREE.BufferGeometry();
+	geometry.vertices = [];
+	geometry.faces = [];
 	var i = 0;
 	action.executeSubaction(function (action) {
 		if (i >= tiles.length) return;
@@ -459,9 +488,12 @@ function buildRiversRenderObject(tiles, action) {
 		action.loop(i / tiles.length);
 	});
 
+	// Convert legacy geometry to BufferGeometry
+	convertLegacyGeometry(geometry);
+
 	geometry.boundingSphere = new THREE.Sphere(new Vector3(0, 0, 0), 1000 + elevationMultiplier + 60);
 	var material = new THREE.MeshBasicMaterial({
-		vertexColors: THREE.VertexColors
+		vertexColors: true
 	});
 	//var material = new THREE.MeshPhongMaterial({	color: new THREE.Color(0x00AAFF),
 	//							opacity: 1,
