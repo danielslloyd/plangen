@@ -879,12 +879,14 @@ function displayPlanet(newPlanet) {
         console.log("Added test cube to scene");
     } */
     setSurfaceRenderMode(surfaceRenderMode, true);
+    console.log("displayPlanet: About to call overlay functions");
     showHideSunlight(renderSunlight);
     showHidePlateBoundaries(renderPlateBoundaries);
     showHidePlateMovements(renderPlateMovements);
     showHideAirCurrents(renderAirCurrents);
     showHideRivers(renderRivers);
     showHideMoon(renderMoon);
+    console.log("displayPlanet: Finished calling overlay functions");
     updateCamera();
     updateUI();
 

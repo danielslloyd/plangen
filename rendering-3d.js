@@ -199,6 +199,7 @@ function selectTile(tile) {
         debugOverlay.updateSelectedTile(tile);
     }
 
+    console.log(tile);
 	//console.log(tile.id,'elevation:',tile.elevation,'neighbors elevation:',tile.tiles.map(n => n.elevation));
     // Highlight all tiles in the upstream array
     if (tile.upstream || tile.downstream) {

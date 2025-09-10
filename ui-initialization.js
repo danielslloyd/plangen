@@ -51,19 +51,16 @@ $(document).ready(function onDocumentReady() {
 	ui.helpPanel = $("#helpPanel");
 
 	ui.controlPanel = $("#controlPanel");
-	ui.surfaceDisplayButtons = {
-		terrain: $("#showTerrainButton"),
-		plates: $("#showPlatesButton"),
-		elevation: $("#showElevationButton"),
-		temperature: $("#showTemperatureButton"),
-		moisture: $("#showMoistureButton"),
-	};
-
-	ui.surfaceDisplayButtons.terrain.click(setSurfaceRenderMode.bind(null, "terrain"));
-	ui.surfaceDisplayButtons.plates.click(setSurfaceRenderMode.bind(null, "plates"));
-	ui.surfaceDisplayButtons.elevation.click(setSurfaceRenderMode.bind(null, "elevation"));
-	ui.surfaceDisplayButtons.temperature.click(setSurfaceRenderMode.bind(null, "temperature"));
-	ui.surfaceDisplayButtons.moisture.click(setSurfaceRenderMode.bind(null, "moisture"));
+	ui.colorOverlayDropdown = $("#colorOverlayDropdown");
+	
+	// Populate color overlay dropdown with registered overlays
+	populateColorOverlayDropdown();
+	
+	// Set up change handler for dropdown
+	ui.colorOverlayDropdown.change(function() {
+		var selectedOverlay = $(this).val();
+		applyColorOverlay(selectedOverlay);
+	});
 
 	// Projection buttons
 	ui.projectGlobe = $("#projectGlobe");
@@ -77,6 +74,11 @@ $(document).ready(function onDocumentReady() {
 	ui.showPlateBoundariesButton = $("#showPlateBoundariesButton");
 	ui.showRiversButton = $("#showRiversButton");
 	ui.showAirCurrentsButton = $("#showAirCurrentsButton");
+	
+	console.log("UI button elements found:");
+	console.log("  showRiversButton:", ui.showRiversButton.length);
+	console.log("  showPlateBoundariesButton:", ui.showPlateBoundariesButton.length);
+	console.log("  showAirCurrentsButton:", ui.showAirCurrentsButton.length);
 
 	ui.showSunlightButton.click(showHideSunlight);
 	ui.showPlateBoundariesButton.click(showHidePlateBoundaries);
@@ -214,7 +216,10 @@ $(document).ready(function onDocumentReady() {
 	hideAdvancedSettings();
 	setPlateCount(50);
 
-	setSurfaceRenderMode(surfaceRenderMode, true);
+	// Initialize the dropdown after it's populated
+	setTimeout(function() {
+		setSurfaceRenderMode(surfaceRenderMode, true);
+	}, 100);
 	// Initialize projection button states
 	if (elevationMultiplier > 0) {
 		ui.projectRaisedGlobe.addClass("toggled");
@@ -345,47 +350,16 @@ function hideAdvancedSettings() {
 }
 
 function setSurfaceRenderMode(mode, force) {
-	if (mode !== surfaceRenderMode || force === true) {
-		if (mode !== "wheat" && mode !== "rice" && mode !== "fish" && mode !== "corn" && mode !== "calorie" && mode !== "shore" && mode !== "shoreA" && mode !== "shoreZ" && mode !== "port") {
-			$("#surfaceDisplayList>button").removeClass("toggled");
-			ui.surfaceDisplayButtons[mode].addClass("toggled");
-		}
-
-		surfaceRenderMode = mode;
-
-		if (!planet) return;
-
-		var colors;
-		if (mode === "terrain") colors = planet.renderData.surface.terrainColors;
-		else if (mode === "plates") colors = planet.renderData.surface.plateColors;
-		else if (mode === "elevation") colors = planet.renderData.surface.elevationColors;
-		else if (mode === "temperature") colors = planet.renderData.surface.temperatureColors;
-		else if (mode === "moisture") colors = planet.renderData.surface.moistureColors;
-		else if (mode === "wheat") colors = planet.renderData.surface.wheatColors;
-		else if (mode === "corn") colors = planet.renderData.surface.cornColors;
-		else if (mode === "rice") colors = planet.renderData.surface.riceColors;
-		else if (mode === "fish") colors = planet.renderData.surface.fishColors;
-		else if (mode === "calorie") colors = planet.renderData.surface.calorieColors;
-		else if (mode === "port") colors = planet.renderData.surface.portColors;
-		else if (mode === "shore") colors = planet.renderData.surface.shoreColors;
-		else if (mode === "shoreA") colors = planet.renderData.surface.shoreAColors;
-		else if (mode === "shoreZ") colors = planet.renderData.surface.shoreZColors;
-		else return;
-
-		var faces = planet.renderData.surface.geometry.faces;
-		if (faces && faces.length > 0) {
-			// Legacy geometry system with faces
-			for (var i = 0; i < faces.length; ++i) faces[i].vertexColors = colors[i];
-			planet.renderData.surface.geometry.colorsNeedUpdate = true;
-		} else {
-			// BufferGeometry system - recalculate colors on demand
-			if (typeof recalculateBufferGeometryColors === 'function' && planet.topology && planet.topology.tiles) {
-				recalculateBufferGeometryColors(planet.topology.tiles, planet.renderData.surface.geometry, mode);
-			} else {
-				console.log("Cannot switch render modes - missing topology data or recalculation function");
-			}
-		}
+	// Update the dropdown to match the new mode
+	if (ui.colorOverlayDropdown) {
+		ui.colorOverlayDropdown.val(mode);
 	}
+	
+	// Apply the color overlay
+	applyColorOverlay(mode);
+	
+	// Update the global variable for compatibility
+	surfaceRenderMode = mode;
 }
 
 function showHideSunlight(show) {
@@ -415,12 +389,28 @@ function showHideSunlight(show) {
 }
 
 function showHidePlateBoundaries(show) {
+	console.log("showHidePlateBoundaries called with:", show);
 	if (typeof (show) === "boolean") renderPlateBoundaries = show;
 	else renderPlateBoundaries = !renderPlateBoundaries;
 	if (renderPlateBoundaries) ui.showPlateBoundariesButton.addClass("toggled");
 	if (!renderPlateBoundaries) ui.showPlateBoundariesButton.removeClass("toggled");
 
-	if (!planet) return;
+	if (!planet) {
+		console.log("Planet not available for plate boundaries");
+		return;
+	}
+	if (!planet.renderData) {
+		console.log("Planet renderData not available for plate boundaries");
+		return;
+	}
+	if (!planet.renderData.plateBoundaries) {
+		console.log("Planet renderData.plateBoundaries not available");
+		return;
+	}
+	if (!planet.renderData.plateBoundaries.renderObject) {
+		console.log("Planet renderData.plateBoundaries.renderObject not available");
+		return;
+	}
 
 	if (renderPlateBoundaries) planet.renderData.surface.renderObject.add(planet.renderData.plateBoundaries.renderObject);
 	else planet.renderData.surface.renderObject.remove(planet.renderData.plateBoundaries.renderObject);
@@ -439,27 +429,78 @@ function showHidePlateMovements(show) {
 }
 
 function showHideAirCurrents(show) {
+	console.log("showHideAirCurrents called with:", show);
 	if (typeof (show) === "boolean") renderAirCurrents = show;
 	else renderAirCurrents = !renderAirCurrents;
 	if (renderAirCurrents) ui.showAirCurrentsButton.addClass("toggled");
 	if (!renderAirCurrents) ui.showAirCurrentsButton.removeClass("toggled");
 
-	if (!planet) return;
+	if (!planet) {
+		console.log("Planet not available for air currents");
+		return;
+	}
+	if (!planet.renderData) {
+		console.log("Planet renderData not available for air currents");
+		return;
+	}
+	if (!planet.renderData.airCurrents) {
+		console.log("Planet renderData.airCurrents not available");
+		return;
+	}
+	if (!planet.renderData.airCurrents.renderObject) {
+		console.log("Planet renderData.airCurrents.renderObject not available");
+		return;
+	}
 
 	if (renderAirCurrents) planet.renderData.surface.renderObject.add(planet.renderData.airCurrents.renderObject);
 	else planet.renderData.surface.renderObject.remove(planet.renderData.airCurrents.renderObject);
 }
 
 function showHideRivers(show) {
+	console.log("showHideRivers called with:", show, "- renderRivers was:", renderRivers);
 	if (typeof (show) === "boolean") renderRivers = show;
 	else renderRivers = !renderRivers;
+	console.log("renderRivers is now:", renderRivers);
 	if (renderRivers) ui.showRiversButton.addClass("toggled");
 	if (!renderRivers) ui.showRiversButton.removeClass("toggled");
 
-	if (!planet) return;
+	console.log("Rivers debug - planet exists:", !!planet);
+	if (planet) {
+		console.log("Rivers debug - renderData exists:", !!planet.renderData);
+		if (planet.renderData) {
+			console.log("Rivers debug - renderData keys:", Object.keys(planet.renderData));
+			if (planet.renderData.Rivers) {
+				console.log("Rivers debug - Rivers object exists:", !!planet.renderData.Rivers);
+				console.log("Rivers debug - Rivers keys:", Object.keys(planet.renderData.Rivers));
+				console.log("Rivers debug - Rivers.renderObject exists:", !!planet.renderData.Rivers.renderObject);
+			}
+		}
+	}
+	
+	if (!planet) {
+		console.log("Planet not available for rivers");
+		return;
+	}
+	if (!planet.renderData) {
+		console.log("Planet renderData not available for rivers");
+		return;
+	}
+	if (!planet.renderData.Rivers) {
+		console.log("Planet renderData.Rivers not available");
+		return;
+	}
+	if (!planet.renderData.Rivers.renderObject) {
+		console.log("Planet renderData.Rivers.renderObject not available");
+		return;
+	}
 
-	if (renderRivers) planet.renderData.surface.renderObject.add(planet.renderData.Rivers.renderObject);
-	else planet.renderData.surface.renderObject.remove(planet.renderData.Rivers.renderObject);
+	if (renderRivers) {
+		console.log("Adding rivers to scene");
+		planet.renderData.surface.renderObject.add(planet.renderData.Rivers.renderObject);
+	} else {
+		console.log("Removing rivers from scene");
+		planet.renderData.surface.renderObject.remove(planet.renderData.Rivers.renderObject);
+	}
 }
 
 function showHideMoon(show) {
@@ -471,10 +512,49 @@ function showHideMoon(show) {
 	if (renderMoon) {
 		scene.add(planet.renderData.moon.renderObject);
 		console.log("Added moon to scene for material testing");
+		
+		// Add all debugging test objects if they exist
+		if (planet.renderData.moon.testObjects) {
+			console.log("Adding", planet.renderData.moon.testObjects.length, "debugging test objects to scene");
+			for (var i = 0; i < planet.renderData.moon.testObjects.length; i++) {
+				var testObj = planet.renderData.moon.testObjects[i];
+				scene.add(testObj.object);
+				console.log("  - Added", testObj.name, "at position:", testObj.object.position);
+			}
+		}
 	} else {
 		scene.remove(planet.renderData.moon.renderObject);
 		console.log("Removed moon from scene");
+		
+		// Remove all debugging test objects if they exist
+		if (planet.renderData.moon.testObjects) {
+			console.log("Removing debugging test objects from scene");
+			for (var i = 0; i < planet.renderData.moon.testObjects.length; i++) {
+				var testObj = planet.renderData.moon.testObjects[i];
+				scene.remove(testObj.object);
+				console.log("  - Removed", testObj.name);
+			}
+		}
 	}
+}
+
+function populateColorOverlayDropdown() {
+	var dropdown = ui.colorOverlayDropdown;
+	dropdown.empty(); // Clear existing options
+	
+	var overlays = getColorOverlays();
+	for (var i = 0; i < overlays.length; i++) {
+		var overlay = overlays[i];
+		var option = $('<option>', {
+			value: overlay.id,
+			text: overlay.name,
+			title: overlay.description
+		});
+		dropdown.append(option);
+	}
+	
+	// Set default to terrain
+	dropdown.val("terrain");
 }
 
 function toggleElevationExaggeration() {

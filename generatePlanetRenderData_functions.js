@@ -351,9 +351,13 @@ function buildPlateMovementsRenderObject(tiles, action) {
 }
 
 function buildAirCurrentsRenderObject(corners, action) {
-	var geometry = new THREE.BufferGeometry();
-	geometry.vertices = [];
-	geometry.faces = [];
+	console.log("Building air currents with direct BufferGeometry");
+	
+	// Arrays to collect geometry data
+	var positions = [];
+	var colors = [];
+	var indices = [];
+	var vertexIndex = 0;
 
 	var i = 0;
 	action.executeSubaction(function (action) {
@@ -361,30 +365,95 @@ function buildAirCurrentsRenderObject(corners, action) {
 
 		var corner = corners[i];
 		
-		// Calculate position to hover above maximum possible terrain elevation
-		var arrowPosition = corner.position.clone();
-		var distance = arrowPosition.length();
-		// Hover at fixed height above maximum terrain (elevationMultiplier + 10)
-		arrowPosition.normalize().multiplyScalar(distance + elevationMultiplier + 10);
+		// Skip corners without significant air current
+		if (!corner.airCurrent || corner.airCurrent.length() < 0.1) {
+			++i;
+			action.loop(i / corners.length);
+			return;
+		}
 		
-		//buildArrow(geometry, position, direction, normal, baseWidth, color)
-		buildArrow(geometry, arrowPosition, corner.airCurrent.clone().multiplyScalar(0.5), corner.position.clone().normalize(), Math.min(corner.airCurrent.length(), 4));
+		// Position air currents at high altitude (same approach as working test objects)
+		var arrowPosition = corner.position.clone();
+		var airCurrentAltitude = 1200; // High altitude like working test objects
+		arrowPosition.normalize().multiplyScalar(airCurrentAltitude);
+		
+		// Create simple arrow as triangular shape
+		var airDirection = corner.airCurrent.clone().normalize();
+		var airStrength = Math.min(corner.airCurrent.length(), 8); // Limit arrow size
+		
+		// Create perpendicular vector for arrow width
+		var perpendicular = new THREE.Vector3();
+		perpendicular.crossVectors(airDirection, corner.position.clone().normalize());
+		perpendicular.normalize().multiplyScalar(airStrength * 0.3);
+		
+		// Arrow tip (pointing in air current direction)
+		var tipPos = arrowPosition.clone().add(airDirection.clone().multiplyScalar(airStrength * 2));
+		
+		// Arrow base (two points on either side)
+		var baseLeft = arrowPosition.clone().add(perpendicular);
+		var baseRight = arrowPosition.clone().sub(perpendicular);
+		
+		// Create triangle for arrow
+		positions.push(tipPos.x, tipPos.y, tipPos.z);
+		positions.push(baseLeft.x, baseLeft.y, baseLeft.z);
+		positions.push(baseRight.x, baseRight.y, baseRight.z);
+		
+		// White/cyan color for visibility (varying intensity based on air strength)
+		var intensity = Math.min(airStrength / 4, 1);
+		colors.push(1, 1, 1); // Tip - white
+		colors.push(0.5 + intensity * 0.5, 1, 1); // Base left - cyan
+		colors.push(0.5 + intensity * 0.5, 1, 1); // Base right - cyan
+		
+		// Create triangle indices
+		indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2);
+		vertexIndex += 3;
 
 		++i;
-
 		action.loop(i / corners.length);
 	});
 
-	// Convert legacy geometry to BufferGeometry
-	convertLegacyGeometry(geometry);
+	// Create BufferGeometry using Three.js r68 compatible approach
+	var geometry = new THREE.BufferGeometry();
+	
+	console.log("Air currents geometry created with", positions.length / 3, "vertices and", indices.length / 3, "triangles");
+	
+	if (positions.length === 0) {
+		console.log("WARNING: No air current data found - creating fallback test geometry");
+		// Create a simple test triangle for debugging  
+		positions.push(150, 0, 0, 0, 150, 0, 0, 0, 150);
+		colors.push(1, 1, 1, 1, 1, 0, 1, 0, 1);
+		indices.push(0, 1, 2);
+	}
+	
+	if (positions.length > 0) {
+		// Convert arrays to typed arrays for Three.js r68
+		var positionArray = new Float32Array(positions);
+		var colorArray = new Float32Array(colors);
+		
+		// Use setAttribute for Three.js r125
+		geometry.setAttribute('position', new THREE.BufferAttribute(positionArray, 3));
+		geometry.setAttribute('color', new THREE.BufferAttribute(colorArray, 3));
+		
+		// Set indices if we have them
+		if (indices.length > 0) {
+			geometry.setIndex(indices);
+		}
+		
+		// Compute normals and bounding sphere
+		geometry.computeVertexNormals();
+		geometry.computeBoundingSphere();
+		
+		console.log("Air currents BufferGeometry created successfully with r68 compatible approach");
+	}
 
-	geometry.boundingSphere = new THREE.Sphere(new Vector3(0, 0, 0), 1000 + elevationMultiplier + 60);
-	//var material = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xFFFFFF), });
-	var material = new THREE.MeshPhongMaterial({
-		color: new THREE.Color(0xFFFFFF),
-		opacity: 0.5,
+	// Use material with vertex colors and transparency
+	var material = new THREE.MeshBasicMaterial({
+		vertexColors: true,
 		transparent: true,
+		opacity: 0.8,
+		side: THREE.DoubleSide
 	});
+
 	var renderObject = new THREE.Mesh(geometry, material);
 
 	action.provideResult({
@@ -395,36 +464,95 @@ function buildAirCurrentsRenderObject(corners, action) {
 }
 
 function buildRiversRenderObject(tiles, action) {
-	var geometry = new THREE.BufferGeometry();
-	geometry.vertices = [];
-	geometry.faces = [];
+	console.log("Building rivers with direct BufferGeometry");
+	
+	// Arrays to collect geometry data
+	var positions = [];
+	var colors = [];
+	var indices = [];
+	var vertexIndex = 0;
+	
 	var i = 0;
 	action.executeSubaction(function (action) {
 		if (i >= tiles.length) return;
+		
 		var tile = tiles[i];
 		if (tile.river && tile.riverSources) {
-			// New inflow-based river rendering: draw arrows entirely within the tile
-			// For each significant source, draw: source border → tile center → drain border
+			console.log("Tile", tile.id, "has river with", tile.riverSources.length, "sources");
+			// For each significant source, create simple river line segments
 			for (var j = 0; j < tile.riverSources.length; j++) {
 				var source = tile.riverSources[j];
-				buildInflowRiverArrows(geometry, source, tile, tile.drain, 5, riverElevationDeltaThreshold);
+				
+				// Create a simple line from source to tile center to drain
+				var sourcePos = source.averagePosition ? source.averagePosition.clone() : tile.averagePosition.clone();
+				var tileCenter = tile.averagePosition.clone();
+				var drainPos = tile.drain ? tile.drain.averagePosition.clone() : tileCenter.clone();
+				
+				// Position rivers well above terrain (same approach as working test objects)
+				var riverAltitude = 1100; // High altitude like working cyan triangle
+				sourcePos.normalize().multiplyScalar(riverAltitude);
+				tileCenter.normalize().multiplyScalar(riverAltitude);
+				drainPos.normalize().multiplyScalar(riverAltitude);
+				
+				// Create simple triangle for river segment
+				positions.push(sourcePos.x, sourcePos.y, sourcePos.z);
+				positions.push(tileCenter.x, tileCenter.y, tileCenter.z);
+				positions.push(drainPos.x, drainPos.y, drainPos.z);
+				
+				// Bright blue color for visibility
+				colors.push(0, 0.5, 1); // Source - bright blue
+				colors.push(0, 0.7, 1); // Center - brighter blue
+				colors.push(0, 0.3, 1); // Drain - slightly darker blue
+				
+				// Create triangle indices
+				indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2);
+				vertexIndex += 3;
 			}
 		}
 		++i;
-
 		action.loop(i / tiles.length);
 	});
 
-	// Convert legacy geometry to BufferGeometry
-	convertLegacyGeometry(geometry);
+	// Create BufferGeometry using Three.js r68 compatible approach  
+	var geometry = new THREE.BufferGeometry();
+	
+	console.log("Rivers geometry created with", positions.length / 3, "vertices and", indices.length / 3, "triangles");
+	
+	if (positions.length === 0) {
+		console.log("WARNING: No river data found - creating fallback test geometry");
+		// Create a simple test triangle for debugging
+		positions.push(100, 0, 0, 0, 100, 0, 0, 0, 100);
+		colors.push(0, 1, 1, 1, 0, 1, 1, 1, 0);
+		indices.push(0, 1, 2);
+	}
+	
+	if (positions.length > 0) {
+		// Convert arrays to typed arrays for Three.js r68
+		var positionArray = new Float32Array(positions);
+		var colorArray = new Float32Array(colors);
+		
+		// Use setAttribute for Three.js r125
+		geometry.setAttribute('position', new THREE.BufferAttribute(positionArray, 3));
+		geometry.setAttribute('color', new THREE.BufferAttribute(colorArray, 3));
+		
+		// Set indices if we have them
+		if (indices.length > 0) {
+			geometry.setIndex(indices);
+		}
+		
+		// Compute normals and bounding sphere
+		geometry.computeVertexNormals();
+		geometry.computeBoundingSphere();
+		
+		console.log("Rivers BufferGeometry created successfully with r68 compatible approach");
+	}
 
-	geometry.boundingSphere = new THREE.Sphere(new Vector3(0, 0, 0), 1000 + elevationMultiplier + 60);
+	// Use simple material with vertex colors
 	var material = new THREE.MeshBasicMaterial({
-		vertexColors: true
+		vertexColors: true,
+		side: THREE.DoubleSide
 	});
-	//var material = new THREE.MeshPhongMaterial({	color: new THREE.Color(0x00AAFF),
-	//							opacity: 1,
-	//						shininess: 100});
+
 	var renderObject = new THREE.Mesh(geometry, material);
 
 	action.provideResult({
@@ -812,35 +940,16 @@ function calculatePlatesColor(tile) {
 }
 
 // Function to recalculate colors for BufferGeometry based on render mode
-function recalculateBufferGeometryColors(tiles, geometry, renderMode) {
+function recalculateBufferGeometryColors(tiles, geometry, overlayId) {
 	var colorAttribute = geometry.getAttribute('color');
 	if (!colorAttribute) {
 		console.error("No color attribute found in geometry");
 		return;
 	}
 
-	// Select color calculation function based on render mode
-	var calculateColor;
-	switch(renderMode) {
-		case "terrain":
-			calculateColor = calculateTerrainColor;
-			break;
-		case "elevation":
-			calculateColor = calculateElevationColor;
-			break;
-		case "temperature":
-			calculateColor = calculateTemperatureColor;
-			break;
-		case "moisture":
-			calculateColor = calculateMoistureColor;
-			break;
-		case "plates":
-			calculateColor = calculatePlatesColor;
-			break;
-		default:
-			calculateColor = calculateTerrainColor;
-			break;
-	}
+	// Get color calculation function from overlay registry
+	var overlay = getColorOverlay(overlayId);
+	var calculateColor = overlay ? overlay.colorFunction : calculateTerrainColor;
 
 	var vertexIndex = 0;
 	
@@ -869,13 +978,13 @@ function buildMoonRenderObject(action) {
 	console.log("Creating moon render object for material testing");
 	
 	// Create simple sphere geometry for the moon
-	var moonRadius = 200;
+	var moonRadius = 100;
 	var moonGeometry = new THREE.SphereGeometry(moonRadius, 32, 16);
 	
 	// Create material for testing - start with Phong to see lighting effects
-	var moonMaterial = new THREE.MeshPhongMaterial({
-		color: 0xCCCCCC,    // Light gray base color
-		shininess: 10,       // Low shininess for moon-like appearance  
+	var moonMaterial = new THREE.MeshBasicMaterial({
+		color: 0x888888,    // Light gray base color
+		shininess: 100,       // Low shininess for moon-like appearance  
 		specular: 0x222222   // Dark specular for realistic moon surface
 	});
 	
@@ -885,11 +994,136 @@ function buildMoonRenderObject(action) {
 	// Position moon relative to planet (distance ~1500, slightly offset)
 	moonRenderObject.position.set(1500, 300, 800);
 	
+	// Add test geometry using the same approach as the working moon
+	console.log("Adding test geometry using THREE.BoxGeometry (same pattern as moon)");
+	
+	// COMPREHENSIVE DEBUGGING: Create multiple test objects to isolate positioning/material issues
+	console.log("Creating comprehensive debugging test objects");
+	
+	var planetRadius = 1000;
+	var testObjects = [];
+	
+	// TEST 1: High Altitude Rivers (solid cyan, way above terrain)
+	var test1Geometry = new THREE.BufferGeometry();
+	var test1Vertices = new Float32Array([
+		1200, 0, 0,     // tip (high altitude)
+		1180, 20, 0,    // base left
+		1180, -20, 0    // base right
+	]);
+	test1Geometry.setAttribute('position', new THREE.BufferAttribute(test1Vertices, 3));
+	test1Geometry.computeVertexNormals();
+	var test1Material = new THREE.MeshBasicMaterial({ color: 0x00FFFF, side: THREE.DoubleSide }); // Bright cyan
+	var test1Object = new THREE.Mesh(test1Geometry, test1Material);
+	test1Object.position.set(0, 0, 0);
+	testObjects.push({ name: "High Altitude Rivers", object: test1Object });
+	
+	// TEST 2: Wireframe Debug (same position as test 1, but wireframe)
+	var test2Geometry = test1Geometry.clone();
+	var test2Material = new THREE.MeshBasicMaterial({ color: 0xFFFF00, wireframe: true }); // Yellow wireframe
+	var test2Object = new THREE.Mesh(test2Geometry, test2Material);
+	test2Object.position.set(0, 100, 0); // Offset slightly
+	testObjects.push({ name: "Wireframe Debug", object: test2Object });
+	
+	// TEST 3: Massive Scale Test (10x larger triangles)
+	var test3Geometry = new THREE.BufferGeometry();
+	var test3Vertices = new Float32Array([
+		1150, 0, 0,     // Much larger triangle
+		1100, 100, 0,   // 
+		1100, -100, 0   //
+	]);
+	test3Geometry.setAttribute('position', new THREE.BufferAttribute(test3Vertices, 3));
+	test3Geometry.computeVertexNormals();
+	var test3Material = new THREE.MeshBasicMaterial({ color: 0xFF00FF, side: THREE.DoubleSide }); // Magenta
+	var test3Object = new THREE.Mesh(test3Geometry, test3Material);
+	test3Object.position.set(0, 0, 100); // Offset
+	testObjects.push({ name: "Massive Scale", object: test3Object });
+	
+	// TEST 4: Line Segments (using LineBasicMaterial)
+	var test4Geometry = new THREE.BufferGeometry();
+	var test4Vertices = new Float32Array([
+		1100, 0, 0,     // Line start
+		1300, 0, 0      // Line end
+	]);
+	test4Geometry.setAttribute('position', new THREE.BufferAttribute(test4Vertices, 3));
+	var test4Material = new THREE.LineBasicMaterial({ color: 0x00FF00, linewidth: 5 }); // Green line
+	var test4Object = new THREE.Line(test4Geometry, test4Material);
+	test4Object.position.set(0, 0, -100); // Offset
+	testObjects.push({ name: "Line Segments", object: test4Object });
+	
+	// TEST 5: Box Reference (using working approach)
+	var test5Geometry = new THREE.BoxGeometry(50, 50, 50);
+	var test5Material = new THREE.MeshBasicMaterial({ color: 0xFFFFFF }); // White box
+	var test5Object = new THREE.Mesh(test5Geometry, test5Material);
+	test5Object.position.set(1200, 50, 50); // Near test 1
+	testObjects.push({ name: "Box Reference", object: test5Object });
+	
+	console.log("Created", testObjects.length, "debugging test objects");
+	for (var i = 0; i < testObjects.length; i++) {
+		console.log("  -", testObjects[i].name, "at position:", testObjects[i].object.position);
+	}
+	
 	console.log("Created moon at position:", moonRenderObject.position);
 	
 	action.provideResult({
 		geometry: moonGeometry,
 		material: moonMaterial,
-		renderObject: moonRenderObject
+		renderObject: moonRenderObject,
+		testObjects: testObjects  // Include all test objects for debugging
 	});
 }
+
+// Modular Color Overlay System
+var colorOverlayRegistry = {};
+
+// Register a color overlay function
+function registerColorOverlay(id, name, description, colorFunction) {
+	colorOverlayRegistry[id] = {
+		id: id,
+		name: name,
+		description: description,
+		colorFunction: colorFunction
+	};
+}
+
+// Get all registered overlays
+function getColorOverlays() {
+	return Object.values(colorOverlayRegistry);
+}
+
+// Get specific overlay by ID
+function getColorOverlay(id) {
+	return colorOverlayRegistry[id];
+}
+
+// Apply a color overlay to the planet
+function applyColorOverlay(overlayId) {
+	var overlay = getColorOverlay(overlayId);
+	if (!overlay) {
+		console.error("Color overlay not found:", overlayId);
+		return;
+	}
+	
+	if (!planet || !planet.topology || !planet.topology.tiles) {
+		console.error("Cannot apply color overlay - missing planet data");
+		return;
+	}
+	
+	recalculateBufferGeometryColors(planet.topology.tiles, planet.renderData.surface.geometry, overlayId);
+}
+
+// Register the existing color overlays
+registerColorOverlay("terrain", "Realistic Terrain", "Realistic biome-based terrain coloring", calculateTerrainColor);
+registerColorOverlay("elevation", "Elevation Map", "Height-based visualization from brown (low) to white (high)", calculateElevationColor);
+registerColorOverlay("temperature", "Temperature Map", "Thermal visualization from blue (cold) to red (hot)", calculateTemperatureColor);
+registerColorOverlay("moisture", "Moisture Map", "Precipitation visualization from brown (dry) to green (wet)", calculateMoistureColor);
+registerColorOverlay("plates", "Tectonic Plates", "Tectonic plate boundaries and colors", calculatePlatesColor);
+
+// Example: Add new overlays - demonstrating how easy it is to extend
+registerColorOverlay("simple", "Simple Land/Water", "Basic land (green) vs water (blue) visualization", function(tile) {
+	return tile.elevation <= 0 ? new THREE.Color(0x0066CC) : new THREE.Color(0x00AA44);
+});
+
+registerColorOverlay("heat", "Heat Map", "Red-hot visualization based on elevation and temperature", function(tile) {
+	var intensity = Math.max(0, Math.min(1, (tile.elevation || 0) + (tile.temperature || 0) * 0.5));
+	return new THREE.Color(intensity, 0, 0);
+});

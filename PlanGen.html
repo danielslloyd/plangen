@@ -95,14 +95,12 @@
 				--><button id="projectMercatorMap" title="Project as Mercator Map">Mercator Map (J)</button><!--
 			--></div>
 
-			<h2 style="top: 4.5em;">Surface Display Options</h2>
-			<div id="surfaceDisplayList" class="toggleButtonList onlyOne" style="position: absolute; left: 0.5em; right: 0.5em; top: 6.0em; height: 1.5em; margin: 0;"><!--
-				--><button id="showTerrainButton" title="Show Terrain">Terrain (5)</button><!--
-				--><button id="showPlatesButton" title="Show Tectonic Plates">Plates (6)</button><!--
-				--><button id="showElevationButton" title="Show Elevation">Elevation (7)</button><!--
-				--><button id="showTemperatureButton" title="Show Temperature">Temps (8)</button><!--
-				--><button id="showMoistureButton" title="Show Moisture">Moisture (9)</button><!--
-			--></div>
+			<h2 style="top: 4.5em;">Surface Color Overlay</h2>
+			<div style="position: absolute; left: 0.5em; right: 0.5em; top: 6.0em; height: 1.5em; margin: 0;">
+				<select id="colorOverlayDropdown" title="Select color overlay mode" style="width: 100%; height: 100%; background-color: rgba(16, 32, 64, 1); color: #FFFFFF; border: none; border-radius: 0.25em; padding: 0.25em; font-size: 80%;">
+					<!-- Options will be populated dynamically -->
+				</select>
+			</div>
 
 			<h2 style="top: 8.5em;">Overlay Display Options</h2>
 			<div id="extrasDisplayList" class="toggleButtonList" style="position: absolute; left: 0.5em; right: 0.5em; top: 10.0em; height: 1.5em; margin: 0;"><!--
