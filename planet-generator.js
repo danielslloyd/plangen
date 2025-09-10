@@ -47,7 +47,7 @@ var pressedKeys = {};
 var disableKeys = false;
 var ui = {};
 var watersheds = [];
-var riverThreshold = .88 //percentile of flow to start rivers
+var riverThreshold = .5 //percentile of flow to start rivers (was .88, lowered for debugging)
 var logTimers = false; // Enable/disable console timer logging for performance analysis
 var loadSeed = null;//1724331434621;//< lake error//1723240716239;//
 
@@ -208,8 +208,11 @@ function generatePlanet(icosahedronSubdivision, topologyDistortionRate, plateCou
 			ctime('4. Terrain Generation');
 			generatePlanetTerrain(planet, plateCount, oceanicRate, heatLevel, moistureLevel, random, action);
 		}, 8, "Generating Terrain")
-		.executeSubaction(function (action) {
+		.getResult(function (result) {
 			ctimeEnd('4. Terrain Generation');
+			console.log('✅ Terrain Generation Complete - Rivers and air currents should now be available');
+		})
+		.executeSubaction(function (action) {
 			ctime('5. Render Data');
 			generatePlanetRenderData(planet.topology, random, action);
 		}, 1, "Building Visuals")

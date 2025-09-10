@@ -351,110 +351,118 @@ function buildPlateMovementsRenderObject(tiles, action) {
 }
 
 function buildAirCurrentsRenderObject(corners, action) {
-	console.log("Building air currents with direct BufferGeometry");
+	console.log("Building air currents with synchronous processing");
 	
-	// Arrays to collect geometry data
+	// Use line-based arrows for cleaner air current visualization
 	var positions = [];
 	var colors = [];
-	var indices = [];
-	var vertexIndex = 0;
 
-	var i = 0;
-	action.executeSubaction(function (action) {
-		if (i >= corners.length) return;
-
+	var totalCorners = corners.length;
+	var cornersWithAirCurrent = 0;
+	var cornersAboveThreshold = 0;
+	
+	// Process all corners synchronously
+	for (var i = 0; i < corners.length; i++) {
 		var corner = corners[i];
 		
+		if (corner.airCurrent) cornersWithAirCurrent++;
+		if (corner.airCurrent && corner.airCurrent.length() >= 0.05) cornersAboveThreshold++;
+		
 		// Skip corners without significant air current
-		if (!corner.airCurrent || corner.airCurrent.length() < 0.1) {
-			++i;
-			action.loop(i / corners.length);
-			return;
+		if (!corner.airCurrent || corner.airCurrent.length() < 0.05) {
+			continue;
 		}
 		
-		// Position air currents at high altitude (same approach as working test objects)
-		var arrowPosition = corner.position.clone();
-		var airCurrentAltitude = 1200; // High altitude like working test objects
-		arrowPosition.normalize().multiplyScalar(airCurrentAltitude);
+		// Position air currents at atmospheric level (above terrain but not too high)
+		var basePosition = corner.position.clone();
+		var airCurrentAltitude = 1050; // Just above terrain
+		basePosition.normalize().multiplyScalar(airCurrentAltitude);
 		
-		// Create simple arrow as triangular shape
+		// Calculate arrow properties
 		var airDirection = corner.airCurrent.clone().normalize();
-		var airStrength = Math.min(corner.airCurrent.length(), 8); // Limit arrow size
+		var airStrength = Math.min(corner.airCurrent.length() * 20, 25); // Scale for visibility
 		
-		// Create perpendicular vector for arrow width
-		var perpendicular = new THREE.Vector3();
-		perpendicular.crossVectors(airDirection, corner.position.clone().normalize());
-		perpendicular.normalize().multiplyScalar(airStrength * 0.3);
+		// Create arrow shaft (line from base to tip)
+		var tipPosition = basePosition.clone().add(airDirection.clone().multiplyScalar(airStrength));
 		
-		// Arrow tip (pointing in air current direction)
-		var tipPos = arrowPosition.clone().add(airDirection.clone().multiplyScalar(airStrength * 2));
+		// Arrow shaft
+		positions.push(basePosition.x, basePosition.y, basePosition.z);
+		positions.push(tipPosition.x, tipPosition.y, tipPosition.z);
 		
-		// Arrow base (two points on either side)
-		var baseLeft = arrowPosition.clone().add(perpendicular);
-		var baseRight = arrowPosition.clone().sub(perpendicular);
+		// Create perpendicular vectors for arrowhead
+		var perpendicular1 = new THREE.Vector3();
+		var perpendicular2 = new THREE.Vector3();
 		
-		// Create triangle for arrow
-		positions.push(tipPos.x, tipPos.y, tipPos.z);
-		positions.push(baseLeft.x, baseLeft.y, baseLeft.z);
-		positions.push(baseRight.x, baseRight.y, baseRight.z);
+		// Find two perpendicular directions for arrowhead
+		var upVector = corner.position.clone().normalize(); // Surface normal
+		perpendicular1.crossVectors(airDirection, upVector).normalize();
+		perpendicular2.crossVectors(airDirection, perpendicular1).normalize();
 		
-		// White/cyan color for visibility (varying intensity based on air strength)
-		var intensity = Math.min(airStrength / 4, 1);
-		colors.push(1, 1, 1); // Tip - white
-		colors.push(0.5 + intensity * 0.5, 1, 1); // Base left - cyan
-		colors.push(0.5 + intensity * 0.5, 1, 1); // Base right - cyan
+		// Create arrowhead lines
+		var arrowheadSize = airStrength * 0.3;
+		var arrowheadBack = airDirection.clone().multiplyScalar(-arrowheadSize * 0.7);
 		
-		// Create triangle indices
-		indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2);
-		vertexIndex += 3;
+		// Arrowhead line 1
+		var arrowhead1 = tipPosition.clone().add(arrowheadBack).add(perpendicular1.clone().multiplyScalar(arrowheadSize * 0.5));
+		positions.push(tipPosition.x, tipPosition.y, tipPosition.z);
+		positions.push(arrowhead1.x, arrowhead1.y, arrowhead1.z);
+		
+		// Arrowhead line 2
+		var arrowhead2 = tipPosition.clone().add(arrowheadBack).add(perpendicular2.clone().multiplyScalar(arrowheadSize * 0.5));
+		positions.push(tipPosition.x, tipPosition.y, tipPosition.z);
+		positions.push(arrowhead2.x, arrowhead2.y, arrowhead2.z);
+		
+		// Arrowhead line 3
+		var arrowhead3 = tipPosition.clone().add(arrowheadBack).add(perpendicular1.clone().multiplyScalar(-arrowheadSize * 0.5));
+		positions.push(tipPosition.x, tipPosition.y, tipPosition.z);
+		positions.push(arrowhead3.x, arrowhead3.y, arrowhead3.z);
+		
+		// Arrowhead line 4
+		var arrowhead4 = tipPosition.clone().add(arrowheadBack).add(perpendicular2.clone().multiplyScalar(-arrowheadSize * 0.5));
+		positions.push(tipPosition.x, tipPosition.y, tipPosition.z);
+		positions.push(arrowhead4.x, arrowhead4.y, arrowhead4.z);
+		
+		// Color based on air current strength (white to cyan gradient)
+		var intensity = Math.min(corner.airCurrent.length() * 5, 1);
+		var arrowColor = [0.8 + intensity * 0.2, 0.9 + intensity * 0.1, 1]; // Light blue to white
+		
+		// Add colors for all line segments (10 vertices = 5 line segments)
+		for (var j = 0; j < 10; j++) {
+			colors.push(arrowColor[0], arrowColor[1], arrowColor[2]);
+		}
+	}
 
-		++i;
-		action.loop(i / corners.length);
-	});
-
-	// Create BufferGeometry using Three.js r68 compatible approach
+	// Create BufferGeometry for line rendering  
 	var geometry = new THREE.BufferGeometry();
 	
-	console.log("Air currents geometry created with", positions.length / 3, "vertices and", indices.length / 3, "triangles");
-	
-	if (positions.length === 0) {
-		console.log("WARNING: No air current data found - creating fallback test geometry");
-		// Create a simple test triangle for debugging  
-		positions.push(150, 0, 0, 0, 150, 0, 0, 0, 150);
-		colors.push(1, 1, 1, 1, 1, 0, 1, 0, 1);
-		indices.push(0, 1, 2);
-	}
+	console.log("=== AIR CURRENT DEBUG STATS ===");
+	console.log("Total corners:", totalCorners);
+	console.log("Corners with airCurrent:", cornersWithAirCurrent);
+	console.log("Corners above threshold (>= 0.05):", cornersAboveThreshold);
+	console.log("Air currents created with", positions.length / 20, "arrows (", positions.length / 2, "line segments)");
 	
 	if (positions.length > 0) {
-		// Convert arrays to typed arrays for Three.js r68
-		var positionArray = new Float32Array(positions);
-		var colorArray = new Float32Array(colors);
+		// Create buffer attributes
+		geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+		geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
 		
-		// Use setAttribute for Three.js r125
-		geometry.setAttribute('position', new THREE.BufferAttribute(positionArray, 3));
-		geometry.setAttribute('color', new THREE.BufferAttribute(colorArray, 3));
-		
-		// Set indices if we have them
-		if (indices.length > 0) {
-			geometry.setIndex(indices);
-		}
-		
-		// Compute normals and bounding sphere
-		geometry.computeVertexNormals();
+		// Compute bounding sphere
 		geometry.computeBoundingSphere();
 		
-		console.log("Air currents BufferGeometry created successfully with r68 compatible approach");
+		console.log("Air currents BufferGeometry created successfully");
+	} else {
+		console.log("No air current data found - empty geometry created");
 	}
 
-	// Use material with vertex colors and transparency
-	var material = new THREE.MeshBasicMaterial({
+	// Use LineSegments with vertex colors for clean arrow visualization
+	var material = new THREE.LineBasicMaterial({
 		vertexColors: true,
+		linewidth: 1,
 		transparent: true,
-		opacity: 0.8,
-		side: THREE.DoubleSide
+		opacity: 0.7
 	});
 
-	var renderObject = new THREE.Mesh(geometry, material);
+	var renderObject = new THREE.LineSegments(geometry, material);
 
 	action.provideResult({
 		geometry: geometry,
@@ -464,96 +472,112 @@ function buildAirCurrentsRenderObject(corners, action) {
 }
 
 function buildRiversRenderObject(tiles, action) {
-	console.log("Building rivers with direct BufferGeometry");
+	console.log("Building rivers with modern BufferGeometry approach");
 	
-	// Arrays to collect geometry data
+	// Use LineSegments for cleaner river visualization
 	var positions = [];
 	var colors = [];
-	var indices = [];
-	var vertexIndex = 0;
 	
-	var i = 0;
-	action.executeSubaction(function (action) {
-		if (i >= tiles.length) return;
-		
+	var totalRiverTiles = 0;
+	var totalTiles = tiles.length;
+	
+	// Process all tiles synchronously
+	for (var i = 0; i < tiles.length; i++) {
 		var tile = tiles[i];
-		if (tile.river && tile.riverSources) {
-			console.log("Tile", tile.id, "has river with", tile.riverSources.length, "sources");
-			// For each significant source, create simple river line segments
+		if (tile.river) totalRiverTiles++;
+		
+		if (tile.river && tile.riverSources && tile.drain) {
+			// Create river flow lines from each source through tile to drain
 			for (var j = 0; j < tile.riverSources.length; j++) {
 				var source = tile.riverSources[j];
 				
-				// Create a simple line from source to tile center to drain
-				var sourcePos = source.averagePosition ? source.averagePosition.clone() : tile.averagePosition.clone();
-				var tileCenter = tile.averagePosition.clone();
-				var drainPos = tile.drain ? tile.drain.averagePosition.clone() : tileCenter.clone();
+				// Calculate proper elevated positions following terrain
+				var sourcePos = source.averagePosition.clone();
+				var tilePos = tile.averagePosition.clone();
+				var drainPos = tile.drain.averagePosition.clone();
 				
-				// Position rivers well above terrain (same approach as working test objects)
-				var riverAltitude = 1100; // High altitude like working cyan triangle
-				sourcePos.normalize().multiplyScalar(riverAltitude);
-				tileCenter.normalize().multiplyScalar(riverAltitude);
-				drainPos.normalize().multiplyScalar(riverAltitude);
+				// Apply elevation with small offset above terrain
+				if (source.elevation > 0) {
+					var sourceDistance = sourcePos.length();
+					sourcePos.normalize().multiplyScalar(sourceDistance + source.elevation * elevationMultiplier + 3);
+				} else {
+					sourcePos.multiplyScalar(1.003);
+				}
 				
-				// Create simple triangle for river segment
+				if (tile.elevation > 0) {
+					var tileDistance = tilePos.length();
+					tilePos.normalize().multiplyScalar(tileDistance + tile.elevation * elevationMultiplier + 3);
+				} else {
+					tilePos.multiplyScalar(1.003);
+				}
+				
+				if (tile.drain.elevation > 0) {
+					var drainDistance = drainPos.length();
+					drainPos.normalize().multiplyScalar(drainDistance + tile.drain.elevation * elevationMultiplier + 3);
+				} else {
+					drainPos.multiplyScalar(1.003);
+				}
+				
+				// Create two line segments: source->tile and tile->drain
+				// Source to tile segment
 				positions.push(sourcePos.x, sourcePos.y, sourcePos.z);
-				positions.push(tileCenter.x, tileCenter.y, tileCenter.z);
+				positions.push(tilePos.x, tilePos.y, tilePos.z);
+				
+				// Tile to drain segment
+				positions.push(tilePos.x, tilePos.y, tilePos.z);
 				positions.push(drainPos.x, drainPos.y, drainPos.z);
 				
-				// Bright blue color for visibility
-				colors.push(0, 0.5, 1); // Source - bright blue
-				colors.push(0, 0.7, 1); // Center - brighter blue
-				colors.push(0, 0.3, 1); // Drain - slightly darker blue
+				// Calculate elevation drops for waterfall detection
+				var sourceTileDrop = (source.elevation || 0) - (tile.elevation || 0);
+				var tileDrainDrop = (tile.elevation || 0) - (tile.drain.elevation || 0);
+				var waterfallThreshold = riverElevationDeltaThreshold || 0.1;
 				
-				// Create triangle indices
-				indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2);
-				vertexIndex += 3;
+				// Color based on elevation drop (waterfalls are white, normal rivers are blue)
+				var sourceColor = sourceTileDrop >= waterfallThreshold ? [1, 1, 1] : [0.2, 0.6, 1];
+				var drainColor = tileDrainDrop >= waterfallThreshold ? [1, 1, 1] : [0.2, 0.6, 1];
+				
+				// Add colors for source->tile segment
+				colors.push(sourceColor[0], sourceColor[1], sourceColor[2]); // Source
+				colors.push(sourceColor[0], sourceColor[1], sourceColor[2]); // Tile
+				
+				// Add colors for tile->drain segment
+				colors.push(drainColor[0], drainColor[1], drainColor[2]); // Tile
+				colors.push(drainColor[0], drainColor[1], drainColor[2]); // Drain
 			}
 		}
-		++i;
-		action.loop(i / tiles.length);
-	});
+	}
 
-	// Create BufferGeometry using Three.js r68 compatible approach  
+	// Create BufferGeometry for line rendering
 	var geometry = new THREE.BufferGeometry();
 	
-	console.log("Rivers geometry created with", positions.length / 3, "vertices and", indices.length / 3, "triangles");
-	
-	if (positions.length === 0) {
-		console.log("WARNING: No river data found - creating fallback test geometry");
-		// Create a simple test triangle for debugging
-		positions.push(100, 0, 0, 0, 100, 0, 0, 0, 100);
-		colors.push(0, 1, 1, 1, 0, 1, 1, 1, 0);
-		indices.push(0, 1, 2);
-	}
+	console.log("=== RIVER DEBUG STATS ===");
+	console.log("Total tiles:", totalTiles);
+	console.log("Tiles with river=true:", totalRiverTiles);
+	console.log("Rivers created with", positions.length / 6, "river segments (", positions.length / 3, "vertices)");
+	console.log("River threshold (percentile):", riverThreshold);
 	
 	if (positions.length > 0) {
-		// Convert arrays to typed arrays for Three.js r68
-		var positionArray = new Float32Array(positions);
-		var colorArray = new Float32Array(colors);
+		// Create buffer attributes
+		geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+		geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
 		
-		// Use setAttribute for Three.js r125
-		geometry.setAttribute('position', new THREE.BufferAttribute(positionArray, 3));
-		geometry.setAttribute('color', new THREE.BufferAttribute(colorArray, 3));
-		
-		// Set indices if we have them
-		if (indices.length > 0) {
-			geometry.setIndex(indices);
-		}
-		
-		// Compute normals and bounding sphere
-		geometry.computeVertexNormals();
+		// Compute bounding sphere
 		geometry.computeBoundingSphere();
 		
-		console.log("Rivers BufferGeometry created successfully with r68 compatible approach");
+		console.log("Rivers BufferGeometry created successfully");
+	} else {
+		console.log("No river data found - empty geometry created");
 	}
 
-	// Use simple material with vertex colors
-	var material = new THREE.MeshBasicMaterial({
+	// Use LineSegments with vertex colors for clean river lines
+	var material = new THREE.LineBasicMaterial({
 		vertexColors: true,
-		side: THREE.DoubleSide
+		linewidth: 2,
+		transparent: true,
+		opacity: 0.8
 	});
 
-	var renderObject = new THREE.Mesh(geometry, material);
+	var renderObject = new THREE.LineSegments(geometry, material);
 
 	action.provideResult({
 		geometry: geometry,
@@ -1060,6 +1084,25 @@ function buildMoonRenderObject(action) {
 	console.log("Created", testObjects.length, "debugging test objects");
 	for (var i = 0; i < testObjects.length; i++) {
 		console.log("  -", testObjects[i].name, "at position:", testObjects[i].object.position);
+	}
+	
+	// DEBUGGING: Add rivers to moon object for visibility testing
+	console.log("=== MOON DEBUGGING: Adding Rivers ===");
+	if (planet && planet.renderData && planet.renderData.Rivers && planet.renderData.Rivers.renderObject) {
+		console.log("Adding rivers render object to moon for debugging");
+		moonRenderObject.add(planet.renderData.Rivers.renderObject);
+		testObjects.push({ name: "Rivers Debug via Moon", object: planet.renderData.Rivers.renderObject });
+	} else {
+		console.log("Rivers render object not available for moon debugging");
+	}
+	
+	// DEBUGGING: Add air currents to moon object for visibility testing
+	if (planet && planet.renderData && planet.renderData.airCurrents && planet.renderData.airCurrents.renderObject) {
+		console.log("Adding air currents render object to moon for debugging");
+		moonRenderObject.add(planet.renderData.airCurrents.renderObject);
+		testObjects.push({ name: "Air Currents Debug via Moon", object: planet.renderData.airCurrents.renderObject });
+	} else {
+		console.log("Air currents render object not available for moon debugging");
 	}
 	
 	console.log("Created moon at position:", moonRenderObject.position);
