@@ -87,40 +87,41 @@ function updateCamera() {
 	camera.updateProjectionMatrix();
 }
 
-function buildArrow(geometry, position, direction, normal, baseWidth, color) {
-	if (direction.lengthSq() === 0) return;
+function buildArrow(positions, colors, indices, vertexIndex, position, direction, normal, baseWidth, color) {
+	if (direction.lengthSq() === 0) return vertexIndex;
+	
 	var sideOffset = direction.clone().cross(normal).setLength(baseWidth / 2);
-	var baseIndex = geometry.vertices.length;
-	geometry.vertices.push(position.clone().add(sideOffset), position.clone().add(direction), position.clone().sub(sideOffset));
-	geometry.faces.push(new THREE.Face3(baseIndex, baseIndex + 2, baseIndex + 1, normal, [color, color, color]));
+	
+	// Create triangle vertices: base left, tip, base right  
+	var baseLeft = position.clone().add(sideOffset);
+	var tip = position.clone().add(direction);
+	var baseRight = position.clone().sub(sideOffset);
+	
+	// Add vertices to positions array
+	positions.push(baseLeft.x, baseLeft.y, baseLeft.z);
+	positions.push(tip.x, tip.y, tip.z); 
+	positions.push(baseRight.x, baseRight.y, baseRight.z);
+	
+	// Add colors (same color for all vertices)
+	colors.push(color.r, color.g, color.b);
+	colors.push(color.r, color.g, color.b);
+	colors.push(color.r, color.g, color.b);
+	
+	// Add triangle indices (counter-clockwise)
+	indices.push(vertexIndex, vertexIndex + 2, vertexIndex + 1);
+	
+	return vertexIndex + 3;
 }
 
-/* function buildTileWedge(f, b, s, t, n) {
-	f.push(new THREE.Face3(b + s + 2, b + t + 2, b, n));
-	f.push(new THREE.Face3(b + s + 1, b + t + 1, b + t + 2, n));
-	f.push(new THREE.Face3(b + s + 1, b + t + 2, b + s + 2, n));
-}
-
-function buildTileWedgeColors(f, c, bc) {
-	f.push([c, c, c]); //colors inner wedge with gradient from c to c
-	f.push([bc, bc, c]); //colors half of the border wedge, gradient from c to bc
-	f.push([bc, c, c]); //colors other half of the border wedge, gradient from c to bc
-}
-
-function buildTileWedgeColors1(f, c, d, bc) //used for snow cap effect
-{
-	f.push([c, c, d]); //colors inner wedge with gradient from c to c
-	f.push([bc, bc, c]); //colors half of the border wedge, gradient from c to bc
-	f.push([bc, c, c]); //colors other half of the border wedge, gradient from c to bc
-} */
+// Legacy buildTileWedge functions removed - unused after r125 migration
 
 function createTileSelectRenderObject(tile, color) {
-    var outerColor = new THREE.Color(0x000000);
-    var innerColor = color || new THREE.Color(0xFFFFFF);
-    var geometry = new THREE.BufferGeometry();
-    geometry.vertices = [];
-    geometry.faces = [];
-    // Use global elevation multiplier parameter
+    var outerColor = {r: 0, g: 0, b: 0};
+    var innerColor = color ? {r: color.r, g: color.g, b: color.b} : {r: 1, g: 1, b: 1};
+    
+    var positions = [];
+    var colors = [];
+    var indices = [];
     
     // Calculate tile center position with elevation
     var centerPos = tile.averagePosition.clone();
@@ -130,8 +131,12 @@ function createTileSelectRenderObject(tile, color) {
     } else {
         centerPos.multiplyScalar(1.0005); // slight offset for water tiles
     }
-    geometry.vertices.push(centerPos);
     
+    // Add center vertex (index 0)
+    positions.push(centerPos.x, centerPos.y, centerPos.z);
+    colors.push(innerColor.r, innerColor.g, innerColor.b);
+    
+    // Add corner vertices and build triangles
     for (var i = 0; i < tile.corners.length; ++i) {
         var corner = tile.corners[i];
         var cornerPosition = corner.position.clone();
@@ -153,23 +158,26 @@ function createTileSelectRenderObject(tile, color) {
             cornerPosition.multiplyScalar(1.0005); // slight offset for water/coastal corners
         }
         
-        geometry.vertices.push(cornerPosition);
-        geometry.faces.push(new THREE.Face3(i + 1, (i + 1) % tile.corners.length + 1, 0, tile.normal, [outerColor, outerColor, innerColor]));
+        // Add corner vertex
+        positions.push(cornerPosition.x, cornerPosition.y, cornerPosition.z);
+        colors.push(outerColor.r, outerColor.g, outerColor.b);
+        
+        // Create triangle: current corner -> next corner -> center
+        // This matches Face3(i + 1, (i + 1) % tile.corners.length + 1, 0)
+        var currentCornerIndex = i + 1;
+        var nextCornerIndex = (i + 1) % tile.corners.length + 1;
+        var centerIndex = 0;
+        
+        indices.push(currentCornerIndex, nextCornerIndex, centerIndex);
     }
     
-    // Debug selected tile geometry before conversion
-    console.log("=== SELECTED TILE GEOMETRY (before conversion) ===");
-    console.log("Vertices:", geometry.vertices.length);
-    console.log("Faces:", geometry.faces.length);
-    
-    // Convert legacy geometry to BufferGeometry
-    convertLegacyGeometry(geometry);
-    
-    // Debug selected tile geometry after conversion
-    console.log("=== SELECTED TILE GEOMETRY (after conversion) ===");
-    console.log("Position attribute:", geometry.getAttribute('position'));
-    console.log("Color attribute:", geometry.getAttribute('color'));
-    console.log("Index:", geometry.getIndex());
+    // Create BufferGeometry directly
+    var geometry = new THREE.BufferGeometry();
+    if (positions.length > 0) {
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+        geometry.setIndex(indices);
+    }
     
     geometry.boundingSphere = tile.boundingSphere.clone();
     var material = new THREE.MeshLambertMaterial({ vertexColors: true });

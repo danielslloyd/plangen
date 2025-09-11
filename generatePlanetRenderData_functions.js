@@ -1,79 +1,4 @@
-// Three.js r125 compatibility shims
-THREE.Face3 = function(a, b, c, normal, color, materialIndex) {
-	this.a = a;
-	this.b = b;
-	this.c = c;
-	this.normal = normal;
-	this.color = color;
-	this.materialIndex = materialIndex;
-};
-
-// Compatibility function to convert legacy vertices/faces to BufferGeometry
-function convertLegacyGeometry(geometry, faceColors) {
-	if (!geometry.vertices || !geometry.faces) {
-		console.log("convertLegacyGeometry: No vertices or faces to convert");
-		return;
-	}
-	
-	console.log("convertLegacyGeometry: Converting", geometry.vertices.length, "vertices and", geometry.faces.length, "faces");
-	
-	var vertices = [];
-	var colors = [];
-	var normals = [];
-	var indices = [];
-	
-	// Convert vertices to flat array
-	for (var i = 0; i < geometry.vertices.length; i++) {
-		var vertex = geometry.vertices[i];
-		vertices.push(vertex.x, vertex.y, vertex.z);
-	}
-	
-	// Convert faces and handle colors
-	for (var i = 0; i < geometry.faces.length; i++) {
-		var face = geometry.faces[i];
-		if (face.a !== undefined && face.b !== undefined && face.c !== undefined) {
-			// Try reversing face winding to fix inside-out faces
-			indices.push(face.c, face.b, face.a);
-			
-			// Handle face colors - each face can have vertex colors or a single color
-			if (face.color && Array.isArray(face.color)) {
-				// Face has per-vertex colors
-				for (var j = 0; j < 3; j++) {
-					if (face.color[j]) {
-						colors[face.a * 3 + j] = face.color[j].r;
-						colors[face.b * 3 + j] = face.color[j].g; 
-						colors[face.c * 3 + j] = face.color[j].b;
-					}
-				}
-			} else if (face.color) {
-				// Face has single color
-				var faceColor = face.color;
-				colors[face.a * 3] = faceColor.r; colors[face.a * 3 + 1] = faceColor.g; colors[face.a * 3 + 2] = faceColor.b;
-				colors[face.b * 3] = faceColor.r; colors[face.b * 3 + 1] = faceColor.g; colors[face.b * 3 + 2] = faceColor.b;
-				colors[face.c * 3] = faceColor.r; colors[face.c * 3 + 1] = faceColor.g; colors[face.c * 3 + 2] = faceColor.b;
-			} else if (faceColors && faceColors[i]) {
-				// Use external face colors array
-				var extColor = faceColors[i];
-				colors[face.a * 3] = extColor.r; colors[face.a * 3 + 1] = extColor.g; colors[face.a * 3 + 2] = extColor.b;
-				colors[face.b * 3] = extColor.r; colors[face.b * 3 + 1] = extColor.g; colors[face.b * 3 + 2] = extColor.b;
-				colors[face.c * 3] = extColor.r; colors[face.c * 3 + 1] = extColor.g; colors[face.c * 3 + 2] = extColor.b;
-			}
-		}
-	}
-	
-	// Fill any missing colors with white
-	for (var i = 0; i < vertices.length; i++) {
-		if (colors[i] === undefined) {
-			colors[i] = 1.0;
-		}
-	}
-	
-	// Set buffer attributes
-	geometry.setIndex(indices);
-	geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-	geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-	geometry.computeVertexNormals();
-}
+// Legacy Three.js r68 compatibility code removed - now using direct BufferGeometry creation
 
 function buildSurfaceRenderObject(tiles, watersheds, random, action) {
 	
@@ -239,9 +164,10 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action) {
 }
 
 function buildPlateBoundariesRenderObject(borders, action) {
-	var geometry = new THREE.BufferGeometry();
-	geometry.vertices = [];
-	geometry.faces = [];
+	var positions = [];
+	var colors = [];
+	var indices = [];
+	var vertexIndex = 0;
 
 	var i = 0;
 	action.executeSubaction(function (action) {
@@ -257,23 +183,42 @@ function buildPlateBoundariesRenderObject(borders, action) {
 			var tilePoint0 = border.tiles[0].averagePosition;
 			var tilePoint1 = border.tiles[1].averagePosition;
 
-			var baseIndex = geometry.vertices.length;
-			geometry.vertices.push(borderPoint0.clone().add(offset));
-			geometry.vertices.push(borderPoint1.clone().add(offset));
-			geometry.vertices.push(tilePoint0.clone().sub(borderPoint0).multiplyScalar(0.2).add(borderPoint0).add(offset));
-			geometry.vertices.push(tilePoint0.clone().sub(borderPoint1).multiplyScalar(0.2).add(borderPoint1).add(offset));
-			geometry.vertices.push(tilePoint1.clone().sub(borderPoint0).multiplyScalar(0.2).add(borderPoint0).add(offset));
-			geometry.vertices.push(tilePoint1.clone().sub(borderPoint1).multiplyScalar(0.2).add(borderPoint1).add(offset));
+			// Create 6 vertices for the boundary visualization
+			var vertices = [
+				borderPoint0.clone().add(offset),
+				borderPoint1.clone().add(offset),
+				tilePoint0.clone().sub(borderPoint0).multiplyScalar(0.2).add(borderPoint0).add(offset),
+				tilePoint0.clone().sub(borderPoint1).multiplyScalar(0.2).add(borderPoint1).add(offset),
+				tilePoint1.clone().sub(borderPoint0).multiplyScalar(0.2).add(borderPoint0).add(offset),
+				tilePoint1.clone().sub(borderPoint1).multiplyScalar(0.2).add(borderPoint1).add(offset)
+			];
 
 			var pressure = Math.max(-1, Math.min((border.corners[0].pressure + border.corners[1].pressure) / 2, 1));
 			var shear = Math.max(0, Math.min((border.corners[0].shear + border.corners[1].shear) / 2, 1));
-			var innerColor = (pressure <= 0) ? new THREE.Color(1 + pressure, 1, 0) : new THREE.Color(1, 1 - pressure, 0);
-			var outerColor = new THREE.Color(0, shear / 2, shear);
+			var innerColor = (pressure <= 0) ? {r: 1 + pressure, g: 1, b: 0} : {r: 1, g: 1 - pressure, b: 0};
+			var outerColor = {r: 0, g: shear / 2, b: shear};
 
-			geometry.faces.push(new THREE.Face3(baseIndex + 0, baseIndex + 1, baseIndex + 2, normal, [innerColor, innerColor, outerColor]));
-			geometry.faces.push(new THREE.Face3(baseIndex + 1, baseIndex + 3, baseIndex + 2, normal, [innerColor, outerColor, outerColor]));
-			geometry.faces.push(new THREE.Face3(baseIndex + 1, baseIndex + 0, baseIndex + 5, normal, [innerColor, innerColor, outerColor]));
-			geometry.faces.push(new THREE.Face3(baseIndex + 0, baseIndex + 4, baseIndex + 5, normal, [innerColor, outerColor, outerColor]));
+			// Add vertices to positions array
+			for (var v = 0; v < vertices.length; v++) {
+				positions.push(vertices[v].x, vertices[v].y, vertices[v].z);
+			}
+			
+			// Add vertex colors
+			colors.push(innerColor.r, innerColor.g, innerColor.b); // vertex 0
+			colors.push(innerColor.r, innerColor.g, innerColor.b); // vertex 1  
+			colors.push(outerColor.r, outerColor.g, outerColor.b); // vertex 2
+			colors.push(outerColor.r, outerColor.g, outerColor.b); // vertex 3
+			colors.push(outerColor.r, outerColor.g, outerColor.b); // vertex 4
+			colors.push(outerColor.r, outerColor.g, outerColor.b); // vertex 5
+
+			// Add 4 triangles using indices (matching original Face3 pattern)
+			var baseIdx = vertexIndex;
+			indices.push(baseIdx + 0, baseIdx + 1, baseIdx + 2); // Face3(0, 1, 2)
+			indices.push(baseIdx + 1, baseIdx + 3, baseIdx + 2); // Face3(1, 3, 2)  
+			indices.push(baseIdx + 1, baseIdx + 0, baseIdx + 5); // Face3(1, 0, 5)
+			indices.push(baseIdx + 0, baseIdx + 4, baseIdx + 5); // Face3(0, 4, 5)
+			
+			vertexIndex += 6;
 		}
 
 		++i;
@@ -281,8 +226,13 @@ function buildPlateBoundariesRenderObject(borders, action) {
 		action.loop(i / borders.length);
 	});
 
-	// Convert legacy geometry to BufferGeometry
-	convertLegacyGeometry(geometry);
+	// Create BufferGeometry directly
+	var geometry = new THREE.BufferGeometry();
+	if (positions.length > 0) {
+		geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+		geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+		geometry.setIndex(indices);
+	}
 	
 	geometry.boundingSphere = new THREE.Sphere(new Vector3(0, 0, 0), 1000 + elevationMultiplier + 60);
 	var material = new THREE.MeshBasicMaterial({
@@ -298,9 +248,10 @@ function buildPlateBoundariesRenderObject(borders, action) {
 }
 
 function buildPlateMovementsRenderObject(tiles, action) {
-	var geometry = new THREE.BufferGeometry();
-	geometry.vertices = [];
-	geometry.faces = [];
+	var positions = [];
+	var colors = [];
+	var indices = [];
+	var vertexIndex = 0;
 
 	var i = 0;
 	action.executeSubaction(function (action) {
@@ -309,7 +260,11 @@ function buildPlateMovementsRenderObject(tiles, action) {
 		var tile = tiles[i];
 		var plate = tile.plate;
 		var movement = plate.calculateMovement(tile.position);
-		var plateMovementColor = new THREE.Color(1 - plate.r, 1 - plate.color.g, 1 - plate.color.b);
+		var plateMovementColor = {
+			r: 1 - plate.r, 
+			g: 1 - plate.color.g, 
+			b: 1 - plate.color.b
+		};
 
 		// Calculate elevated position for arrow start
 		var arrowPosition = tile.position.clone();
@@ -321,7 +276,7 @@ function buildPlateMovementsRenderObject(tiles, action) {
 			arrowPosition.multiplyScalar(1.002);
 		}
 		
-		buildArrow(geometry, arrowPosition, movement.clone().multiplyScalar(0.5), tile.position.clone().normalize(), Math.min(movement.length(), 4), plateMovementColor);
+		vertexIndex = buildArrow(positions, colors, indices, vertexIndex, arrowPosition, movement.clone().multiplyScalar(0.5), tile.position.clone().normalize(), Math.min(movement.length(), 4), plateMovementColor);
 
 		tile.plateMovement = movement;
 
@@ -330,8 +285,13 @@ function buildPlateMovementsRenderObject(tiles, action) {
 		action.loop(i / tiles.length);
 	});
 
-	// Convert legacy geometry to BufferGeometry
-	convertLegacyGeometry(geometry);
+	// Create BufferGeometry directly
+	var geometry = new THREE.BufferGeometry();
+	if (positions.length > 0) {
+		geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+		geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+		geometry.setIndex(indices);
+	}
 
 	geometry.boundingSphere = new THREE.Sphere(new Vector3(0, 0, 0), 1000 + elevationMultiplier + 60);
 	var material = new THREE.MeshBasicMaterial({
@@ -844,91 +804,7 @@ function buildSegmentedArrowWithWaterfalls(geometry, fromTile, toTile, direction
 	}
 }
 
-function buildInflowRiverArrows(geometry, sourceTile, centerTile, drainTile, baseWidth, waterfallThreshold) {
-	// Draw two arrows entirely within the centerTile:
-	// 1. From source border to tile center
-	// 2. From tile center to drain border
-	
-	// Find the borders
-	var sourceBorder = findBorderBetweenTiles(sourceTile, centerTile);
-	var drainBorder = findBorderBetweenTiles(centerTile, drainTile);
-	
-	if (!sourceBorder || !drainBorder) {
-		// Fallback to old rendering if borders not found
-		console.warn("Could not find borders for inflow river rendering");
-		return;
-	}
-	
-	// Calculate positions
-	var centerPos = centerTile.averagePosition.clone();
-	
-	// Source border position (where water flows in)
-	var sourceBorderPos;
-	if (sourceBorder.midpoint) {
-		sourceBorderPos = sourceBorder.midpoint.clone();
-	} else {
-		// Fallback to corner average
-		sourceBorderPos = sourceBorder.corners[0].position.clone().add(sourceBorder.corners[1].position).multiplyScalar(0.5);
-	}
-	
-	// Drain border position (where water flows out)
-	var drainBorderPos;
-	if (drainBorder.midpoint) {
-		drainBorderPos = drainBorder.midpoint.clone();
-	} else {
-		// Fallback to corner average
-		drainBorderPos = drainBorder.corners[0].position.clone().add(drainBorder.corners[1].position).multiplyScalar(0.5);
-	}
-	
-	// Apply elevation displacement
-	if (centerTile.elevation > 0) {
-		var centerDistance = centerPos.length();
-		centerPos.normalize().multiplyScalar(centerDistance + (useElevationDisplacement ? centerTile.elevationDisplacement : 0) + 2);
-	} else {
-		centerPos.multiplyScalar(1.002);
-	}
-	
-	// Apply elevation to source border
-	var sourceBorderElevation = calculateBorderElevation(sourceTile, centerTile);
-	if (sourceBorderElevation > 0) {
-		var sourceBorderDistance = sourceBorderPos.length();
-		var sourceBorderDisplacement = sourceBorder.elevationDisplacement || sourceBorderElevation * elevationMultiplier;
-		sourceBorderPos.normalize().multiplyScalar(sourceBorderDistance + (useElevationDisplacement ? sourceBorderDisplacement : 0) + 2);
-	} else {
-		sourceBorderPos.multiplyScalar(1.002);
-	}
-	
-	// Apply elevation to drain border  
-	var drainBorderElevation = calculateBorderElevation(centerTile, drainTile);
-	if (drainBorderElevation > 0) {
-		var drainBorderDistance = drainBorderPos.length();
-		var drainBorderDisplacement = drainBorder.elevationDisplacement || drainBorderElevation * elevationMultiplier;
-		drainBorderPos.normalize().multiplyScalar(drainBorderDistance + (useElevationDisplacement ? drainBorderDisplacement : 0) + 2);
-	} else {
-		drainBorderPos.multiplyScalar(1.002);
-	}
-	
-	// Calculate elevation drops for waterfall detection
-	var inflowDrop = Math.max(0, sourceBorderElevation) - Math.max(0, centerTile.elevation);
-	var outflowDrop = Math.max(0, centerTile.elevation) - Math.max(0, drainBorderElevation);
-	
-	// Determine colors
-	var inflowColor = inflowDrop >= waterfallThreshold ? new THREE.Color(0xFFFFFF) : new THREE.Color(0x003F85);
-	var outflowColor = outflowDrop >= waterfallThreshold ? new THREE.Color(0xFFFFFF) : new THREE.Color(0x003F85);
-	
-	// Build the two arrow segments
-	var inflowSegment = centerPos.clone().sub(sourceBorderPos);
-	var outflowSegment = drainBorderPos.clone().sub(centerPos);
-	
-	// Draw arrows: source border → center → drain border
-	buildArrow(geometry, sourceBorderPos, inflowSegment, centerTile.averagePosition.clone().normalize(), baseWidth, inflowColor);
-	
-	// Always draw outflow arrow since it's contained within the center tile
-	// (No longer need to check if drain is ocean since arrow stays in current tile)
-	if (drainTile) {
-		buildArrow(geometry, centerPos, outflowSegment, centerTile.averagePosition.clone().normalize(), baseWidth, outflowColor);
-	}
-}
+// Legacy buildInflowRiverArrows function removed - now using direct triangle rendering
 
 // Color calculation functions for different render modes
 function calculateTerrainColor(tile) {
