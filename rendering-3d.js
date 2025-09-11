@@ -95,7 +95,7 @@ function buildArrow(geometry, position, direction, normal, baseWidth, color) {
 	geometry.faces.push(new THREE.Face3(baseIndex, baseIndex + 2, baseIndex + 1, normal, [color, color, color]));
 }
 
-function buildTileWedge(f, b, s, t, n) {
+/* function buildTileWedge(f, b, s, t, n) {
 	f.push(new THREE.Face3(b + s + 2, b + t + 2, b, n));
 	f.push(new THREE.Face3(b + s + 1, b + t + 1, b + t + 2, n));
 	f.push(new THREE.Face3(b + s + 1, b + t + 2, b + s + 2, n));
@@ -112,7 +112,7 @@ function buildTileWedgeColors1(f, c, d, bc) //used for snow cap effect
 	f.push([c, c, d]); //colors inner wedge with gradient from c to c
 	f.push([bc, bc, c]); //colors half of the border wedge, gradient from c to bc
 	f.push([bc, c, c]); //colors other half of the border wedge, gradient from c to bc
-}
+} */
 
 function createTileSelectRenderObject(tile, color) {
     var outerColor = new THREE.Color(0x000000);

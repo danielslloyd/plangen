@@ -72,7 +72,7 @@ XorShift128.prototype.reseed = function XorShift128_reseed(x, y, z, w) {
 	this.w = (w ? w >>> 0 : 88675123);
 };
 
-function saveToFileSystem(content) {
+/* function saveToFileSystem(content) {
 	var requestFileSystem = window.requestFileSystem || window.webkitRequestFileSystem;
 	requestFileSystem(window.TEMPORARY, content.length,
 		function (fs) {
@@ -96,7 +96,7 @@ function saveToFileSystem(content) {
 				function (error) { });
 		},
 		function (error) { });
-}
+} */
 
 function slerp(p0, p1, t) {
 	var omega = Math.acos(p0.dot(p1));
