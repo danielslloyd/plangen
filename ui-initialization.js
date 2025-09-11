@@ -464,7 +464,7 @@ function showHideRivers(show) {
 	if (renderRivers) ui.showRiversButton.addClass("toggled");
 	if (!renderRivers) ui.showRiversButton.removeClass("toggled");
 
-	console.log("Rivers debug - planet exists:", !!planet);
+/* 	console.log("Rivers debug - planet exists:", !!planet);
 	if (planet) {
 		console.log("Rivers debug - renderData exists:", !!planet.renderData);
 		if (planet.renderData) {
@@ -475,7 +475,7 @@ function showHideRivers(show) {
 				console.log("Rivers debug - Rivers.renderObject exists:", !!planet.renderData.Rivers.renderObject);
 			}
 		}
-	}
+	} */
 	
 	if (!planet) {
 		console.log("Planet not available for rivers");

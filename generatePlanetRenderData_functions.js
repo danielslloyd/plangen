@@ -76,8 +76,6 @@ function convertLegacyGeometry(geometry, faceColors) {
 }
 
 function buildSurfaceRenderObject(tiles, watersheds, random, action) {
-	console.log("=== MODERN BUFFER GEOMETRY CREATION ===");
-	console.log("tiles.length:", tiles.length);
 	
 	// Calculate geometry requirements (simple triangle fan per tile)
 	var totalVertices = 0;
@@ -89,8 +87,6 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action) {
 		totalFaces += cornersCount; // N triangles (triangle fan)
 	}
 	
-	console.log("Estimated vertices:", totalVertices);
-	console.log("Estimated faces:", totalFaces);
 	
 	// Pre-allocate typed arrays for BufferGeometry
 	var positions = new Float32Array(totalVertices * 3);
@@ -225,9 +221,7 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action) {
 		color: 0xFFFFFF  // White base color doesn't affect vertex colors
 	});
 	
-	//console.log("Using vertex color material for terrain visualization");
 	var planetRenderObject = new THREE.Mesh(planetGeometry, planetMaterial);
-	console.log("Created planetRenderObject:", planetRenderObject);
 	
  	// Add a simple test cube to verify basic rendering works
 /* 	var testGeometry = new THREE.BoxGeometry(100, 100, 100);
@@ -353,11 +347,8 @@ function buildPlateMovementsRenderObject(tiles, action) {
 }
 
 function buildAirCurrentsRenderObject(corners, action) {
-	console.log("Building air currents with single triangle per arrow");
-	
 	// Use global Average Border Length (ABL) for sizing
 	var ABL = averageBorderLength;
-	console.log("Using global ABL for air current sizing:", ABL);
 	
 	// Arrays for r125 BufferGeometry triangle rendering
 	var airCurrentPositions = [];
@@ -377,7 +368,6 @@ function buildAirCurrentsRenderObject(corners, action) {
 			maxWindStrength = Math.max(maxWindStrength, corner.airCurrent.length());
 		}
 	}
-	console.log("Maximum wind strength for normalization:", maxWindStrength);
 	
 	// Process all corners synchronously
 	for (var i = 0; i < corners.length; i++) {
@@ -450,13 +440,6 @@ function buildAirCurrentsRenderObject(corners, action) {
 	// Create BufferGeometry for triangle rendering  
 	var geometry = new THREE.BufferGeometry();
 	
-	console.log("=== AIR CURRENT DEBUG STATS ===");
-	console.log("Total corners:", totalCorners);
-	console.log("Corners with airCurrent:", cornersWithAirCurrent);
-	console.log("Corners above threshold (>= 0.05):", cornersAboveThreshold);
-	console.log("Max wind strength:", maxWindStrength);
-	console.log("ABL used for sizing:", ABL);
-	console.log("Air currents created with", airCurrentIndices.length / 3, "triangles (", airCurrentVertexIndex, "vertices)");
 	
 	if (airCurrentPositions.length > 0) {
 		// Create buffer attributes
@@ -467,10 +450,6 @@ function buildAirCurrentsRenderObject(corners, action) {
 		// Compute normals and bounding sphere
 		geometry.computeVertexNormals();
 		geometry.computeBoundingSphere();
-		
-		console.log("Air currents single triangle BufferGeometry created successfully");
-	} else {
-		console.log("No air current data found - empty geometry created");
 	}
 
 	// Use MeshBasicMaterial with vertex colors for triangle rendering
@@ -491,11 +470,8 @@ function buildAirCurrentsRenderObject(corners, action) {
 }
 
 function buildRiversRenderObject(tiles, action) {
-	console.log("Building rivers with directional flow triangles");
-	
 	// Use global Average Border Length (ABL) for sizing
 	var ABL = averageBorderLength;
-	console.log("Using global ABL for river sizing:", ABL);
 	
 	// Arrays for r125 BufferGeometry triangle rendering
 	var riverPositions = [];
@@ -650,13 +626,6 @@ function buildRiversRenderObject(tiles, action) {
 	// Create BufferGeometry for triangle rendering
 	var geometry = new THREE.BufferGeometry();
 	
-	console.log("=== RIVER DEBUG STATS ===");
-	console.log("Total tiles:", totalTiles);
-	console.log("Tiles with river=true:", totalRiverTiles);
-	console.log("Inflow triangles created:", totalInflowTriangles);
-	console.log("Outflow triangles created:", totalOutflowTriangles);
-	console.log("Total river triangles:", riverIndices.length / 3, "(", riverVertexIndex, "vertices)");
-	console.log("River threshold (percentile):", riverThreshold);
 	
 	if (riverPositions.length > 0) {
 		// Create buffer attributes
@@ -667,10 +636,6 @@ function buildRiversRenderObject(tiles, action) {
 		// Compute normals and bounding sphere
 		geometry.computeVertexNormals();
 		geometry.computeBoundingSphere();
-		
-		console.log("Rivers directional triangle BufferGeometry created successfully");
-	} else {
-		console.log("No river data found - empty geometry created");
 	}
 
 	// Use MeshBasicMaterial with vertex colors for triangle rendering
@@ -1104,119 +1069,25 @@ function recalculateBufferGeometryColors(tiles, geometry, overlayId) {
 
 // Function to create a simple moon for material testing
 function buildMoonRenderObject(action) {
-	console.log("Creating moon render object for material testing");
-	
 	// Create simple sphere geometry for the moon
 	var moonRadius = 100;
 	var moonGeometry = new THREE.SphereGeometry(moonRadius, 32, 16);
 	
-	// Create material for testing - start with Phong to see lighting effects
+	// Create moon material
 	var moonMaterial = new THREE.MeshBasicMaterial({
-		color: 0x888888,    // Light gray base color
-		shininess: 100,       // Low shininess for moon-like appearance  
-		specular: 0x222222   // Dark specular for realistic moon surface
+		color: 0x888888    // Light gray color
 	});
 	
 	// Create moon mesh
 	var moonRenderObject = new THREE.Mesh(moonGeometry, moonMaterial);
 	
-	// Position moon relative to planet (distance ~1500, slightly offset)
+	// Position moon relative to planet
 	moonRenderObject.position.set(1500, 300, 800);
-	
-	// Add test geometry using the same approach as the working moon
-	console.log("Adding test geometry using THREE.BoxGeometry (same pattern as moon)");
-	
-	// COMPREHENSIVE DEBUGGING: Create multiple test objects to isolate positioning/material issues
-	console.log("Creating comprehensive debugging test objects");
-	
-	var planetRadius = 1000;
-	var testObjects = [];
-	
-	// TEST 1: High Altitude Rivers (solid cyan, way above terrain)
-	var test1Geometry = new THREE.BufferGeometry();
-	var test1Vertices = new Float32Array([
-		1200, 0, 0,     // tip (high altitude)
-		1180, 20, 0,    // base left
-		1180, -20, 0    // base right
-	]);
-	test1Geometry.setAttribute('position', new THREE.BufferAttribute(test1Vertices, 3));
-	test1Geometry.computeVertexNormals();
-	var test1Material = new THREE.MeshBasicMaterial({ color: 0x00FFFF, side: THREE.DoubleSide }); // Bright cyan
-	var test1Object = new THREE.Mesh(test1Geometry, test1Material);
-	test1Object.position.set(0, 0, 0);
-	testObjects.push({ name: "High Altitude Rivers", object: test1Object });
-	
-	// TEST 2: Wireframe Debug (same position as test 1, but wireframe)
-	var test2Geometry = test1Geometry.clone();
-	var test2Material = new THREE.MeshBasicMaterial({ color: 0xFFFF00, wireframe: true }); // Yellow wireframe
-	var test2Object = new THREE.Mesh(test2Geometry, test2Material);
-	test2Object.position.set(0, 100, 0); // Offset slightly
-	testObjects.push({ name: "Wireframe Debug", object: test2Object });
-	
-	// TEST 3: Massive Scale Test (10x larger triangles)
-	var test3Geometry = new THREE.BufferGeometry();
-	var test3Vertices = new Float32Array([
-		1150, 0, 0,     // Much larger triangle
-		1100, 100, 0,   // 
-		1100, -100, 0   //
-	]);
-	test3Geometry.setAttribute('position', new THREE.BufferAttribute(test3Vertices, 3));
-	test3Geometry.computeVertexNormals();
-	var test3Material = new THREE.MeshBasicMaterial({ color: 0xFF00FF, side: THREE.DoubleSide }); // Magenta
-	var test3Object = new THREE.Mesh(test3Geometry, test3Material);
-	test3Object.position.set(0, 0, 100); // Offset
-	testObjects.push({ name: "Massive Scale", object: test3Object });
-	
-	// TEST 4: Line Segments (using LineBasicMaterial)
-	var test4Geometry = new THREE.BufferGeometry();
-	var test4Vertices = new Float32Array([
-		1100, 0, 0,     // Line start
-		1300, 0, 0      // Line end
-	]);
-	test4Geometry.setAttribute('position', new THREE.BufferAttribute(test4Vertices, 3));
-	var test4Material = new THREE.LineBasicMaterial({ color: 0x00FF00, linewidth: 5 }); // Green line
-	var test4Object = new THREE.Line(test4Geometry, test4Material);
-	test4Object.position.set(0, 0, -100); // Offset
-	testObjects.push({ name: "Line Segments", object: test4Object });
-	
-	// TEST 5: Box Reference (using working approach)
-	var test5Geometry = new THREE.BoxGeometry(50, 50, 50);
-	var test5Material = new THREE.MeshBasicMaterial({ color: 0xFFFFFF }); // White box
-	var test5Object = new THREE.Mesh(test5Geometry, test5Material);
-	test5Object.position.set(1200, 50, 50); // Near test 1
-	testObjects.push({ name: "Box Reference", object: test5Object });
-	
-	console.log("Created", testObjects.length, "debugging test objects");
-	for (var i = 0; i < testObjects.length; i++) {
-		console.log("  -", testObjects[i].name, "at position:", testObjects[i].object.position);
-	}
-	
-	// DEBUGGING: Add rivers to moon object for visibility testing
-	console.log("=== MOON DEBUGGING: Adding Rivers ===");
-	if (planet && planet.renderData && planet.renderData.Rivers && planet.renderData.Rivers.renderObject) {
-		console.log("Adding rivers render object to moon for debugging");
-		moonRenderObject.add(planet.renderData.Rivers.renderObject);
-		testObjects.push({ name: "Rivers Debug via Moon", object: planet.renderData.Rivers.renderObject });
-	} else {
-		console.log("Rivers render object not available for moon debugging");
-	}
-	
-	// DEBUGGING: Add air currents to moon object for visibility testing
-	if (planet && planet.renderData && planet.renderData.airCurrents && planet.renderData.airCurrents.renderObject) {
-		console.log("Adding air currents render object to moon for debugging");
-		moonRenderObject.add(planet.renderData.airCurrents.renderObject);
-		testObjects.push({ name: "Air Currents Debug via Moon", object: planet.renderData.airCurrents.renderObject });
-	} else {
-		console.log("Air currents render object not available for moon debugging");
-	}
-	
-	console.log("Created moon at position:", moonRenderObject.position);
 	
 	action.provideResult({
 		geometry: moonGeometry,
 		material: moonMaterial,
-		renderObject: moonRenderObject,
-		testObjects: testObjects  // Include all test objects for debugging
+		renderObject: moonRenderObject
 	});
 }
 

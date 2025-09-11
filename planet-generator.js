@@ -21,7 +21,6 @@ var averageBorderLength = 10; // Default fallback value
 // Calculate Average Border Length from topology borders
 function calculateAverageBorderLength(borders) {
 	if (!borders || borders.length === 0) {
-		console.warn("No borders available for ABL calculation, using default value:", averageBorderLength);
 		return averageBorderLength;
 	}
 	
@@ -44,12 +43,10 @@ function calculateAverageBorderLength(borders) {
 	}
 	
 	if (validBorders === 0) {
-		console.warn("No valid borders found for ABL calculation, using default value:", averageBorderLength);
 		return averageBorderLength;
 	}
 	
 	var calculatedABL = totalLength / validBorders;
-	console.log("Calculated ABL from", validBorders, "valid borders. Average border length:", calculatedABL);
 	return calculatedABL;
 }
 
@@ -85,7 +82,7 @@ var pressedKeys = {};
 var disableKeys = false;
 var ui = {};
 var watersheds = [];
-var riverThreshold = .5 //percentile of flow to start rivers (was .88, lowered for debugging)
+var riverThreshold = .88 //percentile of flow to start rivers (was .88, lowered for debugging)
 var logTimers = false; // Enable/disable console timer logging for performance analysis
 var loadSeed = null;//1724331434621;//< lake error//1723240716239;//
 
