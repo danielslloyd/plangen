@@ -527,7 +527,7 @@ function buildRiversRenderObject(tiles, action) {
 				}
 				
 				// Calculate outflow triangle color (waterfall detection)
-				var outflowDrop = (tile.elevation || 0) - (tile.drain.elevation || 0);
+				var outflowDrop = (tile.elevation || 0) - (Math.max(0,tile.drain.elevation || 0));
 				var outflowColor = outflowDrop >= waterfallThreshold ? 
 					{ r: 1, g: 1, b: 1 } : { r: 0.2, g: 0.6, b: 1 };
 				

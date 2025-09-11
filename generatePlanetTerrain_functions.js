@@ -747,91 +747,83 @@ function erodeElevation(planet, action) {
 	}
 	
 	function redirectParallelRivers(landTiles) {
-		// Simplified approach: find qualifying river tiles and raise their drain elevation to force redirection
+		// Find qualifying river tiles
 		var flows = landTiles.filter(t => t.outflow > 0).sort((a, b) => parseFloat(a.outflow) - parseFloat(b.outflow));
 		const riverThresholdValue = flows[Math.floor(flows.length * riverThreshold)].outflow;
 		
 		// Get all tiles that qualify as rivers
 		let qualifyingRivers = landTiles.filter(t => t.outflow > riverThresholdValue && t.drain);
 		
-		//console.log(`Processing ${qualifyingRivers.length} qualifying rivers for redirection`);
-		
 		let redirectionCount = 0;
-		
-		let excludedTiles = new Set(); // Track tiles to skip
+		let processedPairs = new Set(); // Track processed tile pairs to avoid duplicates
 		
 		// Process each qualifying river tile
 		for (let i = 0; i < qualifyingRivers.length; i++) {
-			let tile = qualifyingRivers[i];
-			// Skip if this tile has been excluded due to a previous redirection
-			if (excludedTiles.has(tile)) {
-				continue;
-			}
+			let tileA = qualifyingRivers[i];
 			
-			// Check for neighboring river tiles that are neither upstream nor downstream
-			let hasParallelNeighbor = false;
-			for (let neighbor of tile.tiles) {
-				if (qualifyingRivers.includes(neighbor) && !excludedTiles.has(neighbor)) {
-					// Check if neighbor is upstream or downstream
-					let isUpstream = tile.upstream && tile.upstream.includes(neighbor);
-					let isDownstream = tile.downstream && tile.downstream.includes(neighbor);
+			// Check each neighbor for parallel drainage (draining to different tiles)
+			for (let tileB of tileA.tiles) {
+				if (!qualifyingRivers.includes(tileB)) continue;
+				
+				// Skip if we've already processed this pair
+				let pairKey = [tileA.id, tileB.id].sort().join('-');
+				if (processedPairs.has(pairKey)) continue;
+				processedPairs.add(pairKey);
+				
+				// Check if they drain to different tiles (excluding upstream/downstream relationship)
+				if (tileA.drain && tileB.drain && tileA.drain !== tileB.drain) {
+					// Check if they are upstream or downstream of each other
+					let isUpstream = (tileA.upstream && tileA.upstream.includes(tileB)) || 
+									 (tileB.upstream && tileB.upstream.includes(tileA));
+					let isDownstream = (tileA.downstream && tileA.downstream.includes(tileB)) || 
+									   (tileB.downstream && tileB.downstream.includes(tileA));
 					
+					// Only process if they are NOT upstream/downstream of each other
 					if (!isUpstream && !isDownstream) {
-						hasParallelNeighbor = true;
-						break;
-					}
-				}
-			}
-			
-			if (hasParallelNeighbor) {
-				
-				// Calculate minimum elevation needed to prevent drainage into tile.drain
-				let sourcesOfDrain = landTiles.filter(t => t.drain === tile.drain);
-				let minNeighborElevations = [];
-				
-				// For each source, find its lowest neighbor (excluding tile.drain)
-				sourcesOfDrain.forEach(source => {
-					let otherNeighbors = source.tiles.filter(neighbor => neighbor !== tile.drain && neighbor.elevation !== undefined);
-					if (otherNeighbors.length > 0) {
-						let minOtherNeighbor = Math.min(...otherNeighbors.map(n => n.elevation));
-						minNeighborElevations.push(minOtherNeighbor);
-					}
-				});
-				
-				// Permanently raise drain elevation to force redirection
-				if (minNeighborElevations.length > 0) {
-					let lowestAlternative = Math.min(...minNeighborElevations);
-					let newElevation = lowestAlternative + 0.001;
-					
-					//console.log(`Permanently raising drain elevation from ${tile.drain.elevation.toFixed(4)} to ${newElevation.toFixed(4)} to force redirection`);
-					tile.drain.elevation = newElevation;
-					//logElevationChange(tile.drain, 'redirectParallelRivers', newElevation);
-			
-					redirectionCount++;
-				} else {
-					// Fallback to small bump if we can't calculate alternatives
-					//console.log(`Using fallback elevation bump for drain at ${tile.drain.elevation.toFixed(4)}`);
-					tile.drain.elevation = tile.drain.elevation + 0.01;
-					//logElevationChange(tile.drain, 'redirectParallelRivers', tile.drain.elevation);
-			
-					redirectionCount++;
-				}
-				
-				// Remove all downstream tiles from consideration
-				if (tile.downstream) {
-					for (let downstreamTile of tile.downstream) {
-						excludedTiles.add(downstreamTile);
+						// Identify A = higher elevation tile, B = lower elevation tile
+						let higherTile = tileA.elevation > tileB.elevation ? tileA : tileB;
+						let lowerTile = tileA.elevation > tileB.elevation ? tileB : tileA;
+						
+						// 1) Raise elevation of higherTile.drain until it's no longer the drain
+						let currentDrain = higherTile.drain;
+						let alternativeNeighbors = higherTile.tiles.filter(n => n !== currentDrain && n.elevation < higherTile.elevation);
+						
+						if (alternativeNeighbors.length > 0) {
+							// Find the lowest alternative neighbor
+							let lowestAlternative = alternativeNeighbors.reduce((min, neighbor) => 
+								neighbor.elevation < min.elevation ? neighbor : min);
+							
+							// Raise current drain elevation to just above the lowest alternative
+							let newDrainElevation = lowestAlternative.elevation + 0.001;
+							currentDrain.elevation = newDrainElevation;
+							
+							redirectionCount++;
+						}
+						
+						// 2) Lower lowerTile.elevation as much as possible without changing its drain
+						if (lowerTile.drain) {
+							// Find the minimum elevation that keeps lowerTile.drain as the drain
+							let otherNeighbors = lowerTile.tiles.filter(n => n !== lowerTile.drain);
+							if (otherNeighbors.length > 0) {
+								let lowestOtherNeighbor = Math.min(...otherNeighbors.map(n => n.elevation));
+								// Lower lowerTile to just above its drain but below other neighbors
+								let maxAllowedElevation = Math.min(lowestOtherNeighbor - 0.001, lowerTile.elevation);
+								let minRequiredElevation = lowerTile.drain.elevation + 0.001;
+								
+								if (maxAllowedElevation > minRequiredElevation) {
+									lowerTile.elevation = minRequiredElevation;
+									redirectionCount++;
+								}
+							}
+						}
 					}
 				}
 			}
 		}
 		
-		//console.log(`Permanently modified ${redirectionCount} drainage targets, recalculating drainage...`);
-		
-		// Recalculate drainage system with the permanent elevation changes
+		// Recalculate drainage system with the elevation changes
 		if (redirectionCount > 0) {
 			newerDrain(landTiles);
-			//console.log(`Drainage recalculation complete with permanent elevations`);
 		}
 	}
 	
