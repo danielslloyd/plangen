@@ -126,7 +126,8 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action) {
 		var centerPos = tile.averagePosition.clone();
 		if (tile.elevation > 0) {
 			var centerDistance = centerPos.length();
-			centerPos.normalize().multiplyScalar(centerDistance + (useElevationDisplacement ? tile.elevationDisplacement : 0));
+			var displacement = useElevationDisplacement ? tile.elevationDisplacement : 0;
+			centerPos.normalize().multiplyScalar(centerDistance + displacement);
 		}
 		
 		// Add center position
@@ -157,7 +158,8 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action) {
 			
 			if (!hasOceanTile && corner.elevationMedian > 0) {
 				var cornerDistance = cornerPos.length();
-				cornerPos.normalize().multiplyScalar(cornerDistance + (useElevationDisplacement ? corner.elevationDisplacement : 0));
+				var cornerDisplacement = useElevationDisplacement ? corner.elevationDisplacement : 0;
+				cornerPos.normalize().multiplyScalar(cornerDistance + cornerDisplacement);
 			}
 			
 			// Add corner position
@@ -353,6 +355,10 @@ function buildPlateMovementsRenderObject(tiles, action) {
 function buildAirCurrentsRenderObject(corners, action) {
 	console.log("Building air currents with single triangle per arrow");
 	
+	// Use global Average Border Length (ABL) for sizing
+	var ABL = averageBorderLength;
+	console.log("Using global ABL for air current sizing:", ABL);
+	
 	// Arrays for r125 BufferGeometry triangle rendering
 	var airCurrentPositions = [];
 	var airCurrentColors = [];
@@ -362,6 +368,16 @@ function buildAirCurrentsRenderObject(corners, action) {
 	var totalCorners = corners.length;
 	var cornersWithAirCurrent = 0;
 	var cornersAboveThreshold = 0;
+	
+	// Find maximum wind strength for normalization
+	var maxWindStrength = 0;
+	for (var i = 0; i < corners.length; i++) {
+		var corner = corners[i];
+		if (corner.airCurrent) {
+			maxWindStrength = Math.max(maxWindStrength, corner.airCurrent.length());
+		}
+	}
+	console.log("Maximum wind strength for normalization:", maxWindStrength);
 	
 	// Process all corners synchronously
 	for (var i = 0; i < corners.length; i++) {
@@ -380,20 +396,24 @@ function buildAirCurrentsRenderObject(corners, action) {
 		var airCurrentAltitude = 1050; // Just above terrain
 		basePosition.normalize().multiplyScalar(airCurrentAltitude);
 		
-		// Calculate arrow properties
+		// Calculate arrow properties based on SBL
 		var airDirection = corner.airCurrent.clone().normalize();
-		var airStrength = Math.min(corner.airCurrent.length() * 20, 25); // Scale for visibility
+		var airCurrentStrength = corner.airCurrent.length();
+		
+		// Normalize wind strength (0 to 1) and multiply by ABL
+		var normalizedWindStrength = maxWindStrength > 0 ? airCurrentStrength / maxWindStrength : 0;
+		var triangleLength = normalizedWindStrength * ABL;
+		
+		// Base width = 1/8 ABL
+		var triangleWidth = ABL / 8;
 		
 		// Create single triangle pointing in flow direction
-		var tipPosition = basePosition.clone().add(airDirection.clone().multiplyScalar(airStrength));
+		var tipPosition = basePosition.clone().add(airDirection.clone().multiplyScalar(triangleLength));
 		
 		// Create perpendicular vectors for triangle base
 		var upVector = corner.position.clone().normalize(); // Surface normal
 		var perpendicular = new THREE.Vector3();
 		perpendicular.crossVectors(airDirection, upVector).normalize();
-		
-		// Triangle dimensions
-		var triangleWidth = airStrength * 0.4; // Width of triangle base
 		
 		// Color based on air current strength (white to cyan gradient)
 		var intensity = Math.min(corner.airCurrent.length() * 5, 1);
@@ -434,6 +454,8 @@ function buildAirCurrentsRenderObject(corners, action) {
 	console.log("Total corners:", totalCorners);
 	console.log("Corners with airCurrent:", cornersWithAirCurrent);
 	console.log("Corners above threshold (>= 0.05):", cornersAboveThreshold);
+	console.log("Max wind strength:", maxWindStrength);
+	console.log("ABL used for sizing:", ABL);
 	console.log("Air currents created with", airCurrentIndices.length / 3, "triangles (", airCurrentVertexIndex, "vertices)");
 	
 	if (airCurrentPositions.length > 0) {
@@ -471,6 +493,10 @@ function buildAirCurrentsRenderObject(corners, action) {
 function buildRiversRenderObject(tiles, action) {
 	console.log("Building rivers with directional flow triangles");
 	
+	// Use global Average Border Length (ABL) for sizing
+	var ABL = averageBorderLength;
+	console.log("Using global ABL for river sizing:", ABL);
+	
 	// Arrays for r125 BufferGeometry triangle rendering
 	var riverPositions = [];
 	var riverColors = [];
@@ -488,14 +514,18 @@ function buildRiversRenderObject(tiles, action) {
 		if (tile.river) totalRiverTiles++;
 		
 		if (tile.river && tile.riverSources && tile.drain) {
-			// Calculate tile center position with elevation
+			// Calculate tile center position with elevation (respecting elevation toggle)
 			var tileCenterPos = tile.averagePosition.clone();
 			if (tile.elevation > 0) {
 				var tileDistance = tileCenterPos.length();
-				tileCenterPos.normalize().multiplyScalar(tileDistance + tile.elevation * elevationMultiplier + 3);
+				tileCenterPos.normalize().multiplyScalar(tileDistance + (useElevationDisplacement ? tile.elevationDisplacement : 0) + 3);
 			} else {
 				tileCenterPos.multiplyScalar(1.003);
 			}
+			
+			// River triangle dimensions (same for both inflow and outflow)
+			var triangleWidth = ABL / 4; // River base width = 1/4 ABL
+			var waterfallThreshold = riverElevationDeltaThreshold || 0.1;
 			
 			// Create one OUTFLOW triangle: tile center → drain border
 			if (tile.drain) {
@@ -522,7 +552,6 @@ function buildRiversRenderObject(tiles, action) {
 				
 				// Calculate outflow triangle color (waterfall detection)
 				var outflowDrop = (tile.elevation || 0) - (tile.drain.elevation || 0);
-				var waterfallThreshold = riverElevationDeltaThreshold || 0.1;
 				var outflowColor = outflowDrop >= waterfallThreshold ? 
 					{ r: 1, g: 1, b: 1 } : { r: 0.2, g: 0.6, b: 1 };
 				
@@ -532,7 +561,6 @@ function buildRiversRenderObject(tiles, action) {
 				var perpendicular = new THREE.Vector3();
 				perpendicular.crossVectors(outflowDirection, upVector).normalize();
 				
-				var triangleWidth = 8; // Triangle base width
 				var baseLeft = tileCenterPos.clone().add(perpendicular.clone().multiplyScalar(-triangleWidth));
 				var baseRight = tileCenterPos.clone().add(perpendicular.clone().multiplyScalar(triangleWidth));
 				
@@ -663,6 +691,7 @@ function buildRiversRenderObject(tiles, action) {
 }
 
 // Utility functions for terrain-following arrow rendering
+
 
 // Utility function to find the border between two adjacent tiles
 function findBorderBetweenTiles(tile1, tile2) {

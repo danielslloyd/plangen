@@ -15,6 +15,44 @@ window.logElevationChange = function(tile, functionName, newElevation) {
 	console.log('Elevation change logged:', tile.id, functionName, newElevation.toFixed(4));
 };
 
+// Global Average Border Length (ABL) for triangle sizing
+var averageBorderLength = 10; // Default fallback value
+
+// Calculate Average Border Length from topology borders
+function calculateAverageBorderLength(borders) {
+	if (!borders || borders.length === 0) {
+		console.warn("No borders available for ABL calculation, using default value:", averageBorderLength);
+		return averageBorderLength;
+	}
+	
+	var totalLength = 0;
+	var validBorders = 0;
+	
+	for (var i = 0; i < borders.length; i++) {
+		var border = borders[i];
+		if (border.corners && border.corners.length >= 2) {
+			var corner0 = border.corners[0];
+			var corner1 = border.corners[1];
+			if (corner0.position && corner1.position) {
+				var borderLength = corner0.position.distanceTo(corner1.position);
+				if (borderLength > 0) {
+					totalLength += borderLength;
+					validBorders++;
+				}
+			}
+		}
+	}
+	
+	if (validBorders === 0) {
+		console.warn("No valid borders found for ABL calculation, using default value:", averageBorderLength);
+		return averageBorderLength;
+	}
+	
+	var calculatedABL = totalLength / validBorders;
+	console.log("Calculated ABL from", validBorders, "valid borders. Average border length:", calculatedABL);
+	return calculatedABL;
+}
+
 var scene = null;
 var camera = null;
 var renderer = null;
@@ -194,6 +232,9 @@ function generatePlanet(icosahedronSubdivision, topologyDistortionRate, plateCou
 			ctimeEnd('2. Topology Generation');
 			planet.topology = result;
 			planet.topology.watersheds = [];
+			
+			// Calculate Average Border Length (ABL) for triangle sizing
+			averageBorderLength = calculateAverageBorderLength(planet.topology.borders);
 			//console.log(planet.topology);
 		})
 		.executeSubaction(function (action) {
