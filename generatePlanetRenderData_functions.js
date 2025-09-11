@@ -351,11 +351,13 @@ function buildPlateMovementsRenderObject(tiles, action) {
 }
 
 function buildAirCurrentsRenderObject(corners, action) {
-	console.log("Building air currents with synchronous processing");
+	console.log("Building air currents with single triangle per arrow");
 	
-	// Use line-based arrows for cleaner air current visualization
-	var positions = [];
-	var colors = [];
+	// Arrays for r125 BufferGeometry triangle rendering
+	var airCurrentPositions = [];
+	var airCurrentColors = [];
+	var airCurrentIndices = [];
+	var airCurrentVertexIndex = 0;
 
 	var totalCorners = corners.length;
 	var cornersWithAirCurrent = 0;
@@ -382,87 +384,82 @@ function buildAirCurrentsRenderObject(corners, action) {
 		var airDirection = corner.airCurrent.clone().normalize();
 		var airStrength = Math.min(corner.airCurrent.length() * 20, 25); // Scale for visibility
 		
-		// Create arrow shaft (line from base to tip)
+		// Create single triangle pointing in flow direction
 		var tipPosition = basePosition.clone().add(airDirection.clone().multiplyScalar(airStrength));
 		
-		// Arrow shaft
-		positions.push(basePosition.x, basePosition.y, basePosition.z);
-		positions.push(tipPosition.x, tipPosition.y, tipPosition.z);
-		
-		// Create perpendicular vectors for arrowhead
-		var perpendicular1 = new THREE.Vector3();
-		var perpendicular2 = new THREE.Vector3();
-		
-		// Find two perpendicular directions for arrowhead
+		// Create perpendicular vectors for triangle base
 		var upVector = corner.position.clone().normalize(); // Surface normal
-		perpendicular1.crossVectors(airDirection, upVector).normalize();
-		perpendicular2.crossVectors(airDirection, perpendicular1).normalize();
+		var perpendicular = new THREE.Vector3();
+		perpendicular.crossVectors(airDirection, upVector).normalize();
 		
-		// Create arrowhead lines
-		var arrowheadSize = airStrength * 0.3;
-		var arrowheadBack = airDirection.clone().multiplyScalar(-arrowheadSize * 0.7);
-		
-		// Arrowhead line 1
-		var arrowhead1 = tipPosition.clone().add(arrowheadBack).add(perpendicular1.clone().multiplyScalar(arrowheadSize * 0.5));
-		positions.push(tipPosition.x, tipPosition.y, tipPosition.z);
-		positions.push(arrowhead1.x, arrowhead1.y, arrowhead1.z);
-		
-		// Arrowhead line 2
-		var arrowhead2 = tipPosition.clone().add(arrowheadBack).add(perpendicular2.clone().multiplyScalar(arrowheadSize * 0.5));
-		positions.push(tipPosition.x, tipPosition.y, tipPosition.z);
-		positions.push(arrowhead2.x, arrowhead2.y, arrowhead2.z);
-		
-		// Arrowhead line 3
-		var arrowhead3 = tipPosition.clone().add(arrowheadBack).add(perpendicular1.clone().multiplyScalar(-arrowheadSize * 0.5));
-		positions.push(tipPosition.x, tipPosition.y, tipPosition.z);
-		positions.push(arrowhead3.x, arrowhead3.y, arrowhead3.z);
-		
-		// Arrowhead line 4
-		var arrowhead4 = tipPosition.clone().add(arrowheadBack).add(perpendicular2.clone().multiplyScalar(-arrowheadSize * 0.5));
-		positions.push(tipPosition.x, tipPosition.y, tipPosition.z);
-		positions.push(arrowhead4.x, arrowhead4.y, arrowhead4.z);
+		// Triangle dimensions
+		var triangleWidth = airStrength * 0.4; // Width of triangle base
 		
 		// Color based on air current strength (white to cyan gradient)
 		var intensity = Math.min(corner.airCurrent.length() * 5, 1);
-		var arrowColor = [0.8 + intensity * 0.2, 0.9 + intensity * 0.1, 1]; // Light blue to white
+		var triangleColor = {
+			r: 0.8 + intensity * 0.2,
+			g: 0.9 + intensity * 0.1, 
+			b: 1
+		};
 		
-		// Add colors for all line segments (10 vertices = 5 line segments)
-		for (var j = 0; j < 10; j++) {
-			colors.push(arrowColor[0], arrowColor[1], arrowColor[2]);
-		}
+		// Create single triangle: tip at flow direction, base perpendicular
+		var baseLeft = basePosition.clone().add(perpendicular.clone().multiplyScalar(-triangleWidth));
+		var baseRight = basePosition.clone().add(perpendicular.clone().multiplyScalar(triangleWidth));
+		
+		// Add triangle vertices
+		var tipIndex = airCurrentVertexIndex;
+		airCurrentPositions.push(tipPosition.x, tipPosition.y, tipPosition.z);
+		airCurrentColors.push(triangleColor.r, triangleColor.g, triangleColor.b);
+		airCurrentVertexIndex++;
+		
+		var baseLeftIndex = airCurrentVertexIndex;
+		airCurrentPositions.push(baseLeft.x, baseLeft.y, baseLeft.z);
+		airCurrentColors.push(triangleColor.r, triangleColor.g, triangleColor.b);
+		airCurrentVertexIndex++;
+		
+		var baseRightIndex = airCurrentVertexIndex;
+		airCurrentPositions.push(baseRight.x, baseRight.y, baseRight.z);
+		airCurrentColors.push(triangleColor.r, triangleColor.g, triangleColor.b);
+		airCurrentVertexIndex++;
+		
+		// Create single triangle
+		airCurrentIndices.push(tipIndex, baseLeftIndex, baseRightIndex);
 	}
 
-	// Create BufferGeometry for line rendering  
+	// Create BufferGeometry for triangle rendering  
 	var geometry = new THREE.BufferGeometry();
 	
 	console.log("=== AIR CURRENT DEBUG STATS ===");
 	console.log("Total corners:", totalCorners);
 	console.log("Corners with airCurrent:", cornersWithAirCurrent);
 	console.log("Corners above threshold (>= 0.05):", cornersAboveThreshold);
-	console.log("Air currents created with", positions.length / 20, "arrows (", positions.length / 2, "line segments)");
+	console.log("Air currents created with", airCurrentIndices.length / 3, "triangles (", airCurrentVertexIndex, "vertices)");
 	
-	if (positions.length > 0) {
+	if (airCurrentPositions.length > 0) {
 		// Create buffer attributes
-		geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-		geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+		geometry.setAttribute('position', new THREE.Float32BufferAttribute(airCurrentPositions, 3));
+		geometry.setAttribute('color', new THREE.Float32BufferAttribute(airCurrentColors, 3));
+		geometry.setIndex(airCurrentIndices);
 		
-		// Compute bounding sphere
+		// Compute normals and bounding sphere
+		geometry.computeVertexNormals();
 		geometry.computeBoundingSphere();
 		
-		console.log("Air currents BufferGeometry created successfully");
+		console.log("Air currents single triangle BufferGeometry created successfully");
 	} else {
 		console.log("No air current data found - empty geometry created");
 	}
 
-	// Use LineSegments with vertex colors for clean arrow visualization
-	var material = new THREE.LineBasicMaterial({
+	// Use MeshBasicMaterial with vertex colors for triangle rendering
+	var material = new THREE.MeshBasicMaterial({
 		vertexColors: true,
-		linewidth: 1,
+		side: THREE.DoubleSide,
 		transparent: true,
 		opacity: 0.7
 	});
 
-	var renderObject = new THREE.LineSegments(geometry, material);
+	var renderObject = new THREE.Mesh(geometry, material);
 
 	action.provideResult({
 		geometry: geometry,
@@ -472,14 +469,18 @@ function buildAirCurrentsRenderObject(corners, action) {
 }
 
 function buildRiversRenderObject(tiles, action) {
-	console.log("Building rivers with modern BufferGeometry approach");
+	console.log("Building rivers with directional flow triangles");
 	
-	// Use LineSegments for cleaner river visualization
-	var positions = [];
-	var colors = [];
+	// Arrays for r125 BufferGeometry triangle rendering
+	var riverPositions = [];
+	var riverColors = [];
+	var riverIndices = [];
+	var riverVertexIndex = 0;
 	
 	var totalRiverTiles = 0;
 	var totalTiles = tiles.length;
+	var totalInflowTriangles = 0;
+	var totalOutflowTriangles = 0;
 	
 	// Process all tiles synchronously
 	for (var i = 0; i < tiles.length; i++) {
@@ -487,97 +488,172 @@ function buildRiversRenderObject(tiles, action) {
 		if (tile.river) totalRiverTiles++;
 		
 		if (tile.river && tile.riverSources && tile.drain) {
-			// Create river flow lines from each source through tile to drain
+			// Calculate tile center position with elevation
+			var tileCenterPos = tile.averagePosition.clone();
+			if (tile.elevation > 0) {
+				var tileDistance = tileCenterPos.length();
+				tileCenterPos.normalize().multiplyScalar(tileDistance + tile.elevation * elevationMultiplier + 3);
+			} else {
+				tileCenterPos.multiplyScalar(1.003);
+			}
+			
+			// Create one OUTFLOW triangle: tile center → drain border
+			if (tile.drain) {
+				// Find border with drain tile
+				var drainBorder = findBorderBetweenTiles(tile, tile.drain);
+				var drainBorderPos;
+				
+				if (drainBorder && drainBorder.midpoint) {
+					drainBorderPos = drainBorder.midpoint.clone();
+				} else {
+					// Fallback to midpoint between tile centers
+					drainBorderPos = tile.averagePosition.clone().add(tile.drain.averagePosition).multiplyScalar(0.5);
+				}
+				
+				// Apply elevation to drain border
+				var drainBorderElevation = calculateBorderElevation(tile, tile.drain);
+				if (drainBorderElevation > 0) {
+					var drainBorderDistance = drainBorderPos.length();
+					var drainBorderDisplacement = drainBorder ? drainBorder.elevationDisplacement : drainBorderElevation * elevationMultiplier;
+					drainBorderPos.normalize().multiplyScalar(drainBorderDistance + (useElevationDisplacement ? drainBorderDisplacement : 0) + 3);
+				} else {
+					drainBorderPos.multiplyScalar(1.003);
+				}
+				
+				// Calculate outflow triangle color (waterfall detection)
+				var outflowDrop = (tile.elevation || 0) - (tile.drain.elevation || 0);
+				var waterfallThreshold = riverElevationDeltaThreshold || 0.1;
+				var outflowColor = outflowDrop >= waterfallThreshold ? 
+					{ r: 1, g: 1, b: 1 } : { r: 0.2, g: 0.6, b: 1 };
+				
+				// Create outflow triangle: tip at drain border, base perpendicular at tile center
+				var outflowDirection = drainBorderPos.clone().sub(tileCenterPos).normalize();
+				var upVector = tileCenterPos.clone().normalize();
+				var perpendicular = new THREE.Vector3();
+				perpendicular.crossVectors(outflowDirection, upVector).normalize();
+				
+				var triangleWidth = 8; // Triangle base width
+				var baseLeft = tileCenterPos.clone().add(perpendicular.clone().multiplyScalar(-triangleWidth));
+				var baseRight = tileCenterPos.clone().add(perpendicular.clone().multiplyScalar(triangleWidth));
+				
+				// Add outflow triangle vertices
+				var tipIndex = riverVertexIndex;
+				riverPositions.push(drainBorderPos.x, drainBorderPos.y, drainBorderPos.z);
+				riverColors.push(outflowColor.r, outflowColor.g, outflowColor.b);
+				riverVertexIndex++;
+				
+				var baseLeftIndex = riverVertexIndex;
+				riverPositions.push(baseLeft.x, baseLeft.y, baseLeft.z);
+				riverColors.push(outflowColor.r, outflowColor.g, outflowColor.b);
+				riverVertexIndex++;
+				
+				var baseRightIndex = riverVertexIndex;
+				riverPositions.push(baseRight.x, baseRight.y, baseRight.z);
+				riverColors.push(outflowColor.r, outflowColor.g, outflowColor.b);
+				riverVertexIndex++;
+				
+				// Create outflow triangle
+				riverIndices.push(tipIndex, baseLeftIndex, baseRightIndex);
+				totalOutflowTriangles++;
+			}
+			
+			// Create INFLOW triangles: source border → tile center (for each significant inflow)
 			for (var j = 0; j < tile.riverSources.length; j++) {
 				var source = tile.riverSources[j];
 				
-				// Calculate proper elevated positions following terrain
-				var sourcePos = source.averagePosition.clone();
-				var tilePos = tile.averagePosition.clone();
-				var drainPos = tile.drain.averagePosition.clone();
+				// Find border with source tile  
+				var sourceBorder = findBorderBetweenTiles(source, tile);
+				var sourceBorderPos;
 				
-				// Apply elevation with small offset above terrain
-				if (source.elevation > 0) {
-					var sourceDistance = sourcePos.length();
-					sourcePos.normalize().multiplyScalar(sourceDistance + source.elevation * elevationMultiplier + 3);
+				if (sourceBorder && sourceBorder.midpoint) {
+					sourceBorderPos = sourceBorder.midpoint.clone();
 				} else {
-					sourcePos.multiplyScalar(1.003);
+					// Fallback to midpoint between tile centers
+					sourceBorderPos = source.averagePosition.clone().add(tile.averagePosition).multiplyScalar(0.5);
 				}
 				
-				if (tile.elevation > 0) {
-					var tileDistance = tilePos.length();
-					tilePos.normalize().multiplyScalar(tileDistance + tile.elevation * elevationMultiplier + 3);
+				// Apply elevation to source border
+				var sourceBorderElevation = calculateBorderElevation(source, tile);
+				if (sourceBorderElevation > 0) {
+					var sourceBorderDistance = sourceBorderPos.length();
+					var sourceBorderDisplacement = sourceBorder ? sourceBorder.elevationDisplacement : sourceBorderElevation * elevationMultiplier;
+					sourceBorderPos.normalize().multiplyScalar(sourceBorderDistance + (useElevationDisplacement ? sourceBorderDisplacement : 0) + 3);
 				} else {
-					tilePos.multiplyScalar(1.003);
+					sourceBorderPos.multiplyScalar(1.003);
 				}
 				
-				if (tile.drain.elevation > 0) {
-					var drainDistance = drainPos.length();
-					drainPos.normalize().multiplyScalar(drainDistance + tile.drain.elevation * elevationMultiplier + 3);
-				} else {
-					drainPos.multiplyScalar(1.003);
-				}
+				// Calculate inflow triangle color (waterfall detection)
+				var inflowDrop = (source.elevation || 0) - (tile.elevation || 0);
+				var inflowColor = inflowDrop >= waterfallThreshold ? 
+					{ r: 1, g: 1, b: 1 } : { r: 0.2, g: 0.6, b: 1 };
 				
-				// Create two line segments: source->tile and tile->drain
-				// Source to tile segment
-				positions.push(sourcePos.x, sourcePos.y, sourcePos.z);
-				positions.push(tilePos.x, tilePos.y, tilePos.z);
+				// Create inflow triangle: tip at tile center, base perpendicular at source border
+				var inflowDirection = tileCenterPos.clone().sub(sourceBorderPos).normalize();
+				var upVector2 = sourceBorderPos.clone().normalize();
+				var perpendicular2 = new THREE.Vector3();
+				perpendicular2.crossVectors(inflowDirection, upVector2).normalize();
 				
-				// Tile to drain segment
-				positions.push(tilePos.x, tilePos.y, tilePos.z);
-				positions.push(drainPos.x, drainPos.y, drainPos.z);
+				var baseLeft2 = sourceBorderPos.clone().add(perpendicular2.clone().multiplyScalar(-triangleWidth));
+				var baseRight2 = sourceBorderPos.clone().add(perpendicular2.clone().multiplyScalar(triangleWidth));
 				
-				// Calculate elevation drops for waterfall detection
-				var sourceTileDrop = (source.elevation || 0) - (tile.elevation || 0);
-				var tileDrainDrop = (tile.elevation || 0) - (tile.drain.elevation || 0);
-				var waterfallThreshold = riverElevationDeltaThreshold || 0.1;
+				// Add inflow triangle vertices
+				var tipIndex2 = riverVertexIndex;
+				riverPositions.push(tileCenterPos.x, tileCenterPos.y, tileCenterPos.z);
+				riverColors.push(inflowColor.r, inflowColor.g, inflowColor.b);
+				riverVertexIndex++;
 				
-				// Color based on elevation drop (waterfalls are white, normal rivers are blue)
-				var sourceColor = sourceTileDrop >= waterfallThreshold ? [1, 1, 1] : [0.2, 0.6, 1];
-				var drainColor = tileDrainDrop >= waterfallThreshold ? [1, 1, 1] : [0.2, 0.6, 1];
+				var baseLeftIndex2 = riverVertexIndex;
+				riverPositions.push(baseLeft2.x, baseLeft2.y, baseLeft2.z);
+				riverColors.push(inflowColor.r, inflowColor.g, inflowColor.b);
+				riverVertexIndex++;
 				
-				// Add colors for source->tile segment
-				colors.push(sourceColor[0], sourceColor[1], sourceColor[2]); // Source
-				colors.push(sourceColor[0], sourceColor[1], sourceColor[2]); // Tile
+				var baseRightIndex2 = riverVertexIndex;
+				riverPositions.push(baseRight2.x, baseRight2.y, baseRight2.z);
+				riverColors.push(inflowColor.r, inflowColor.g, inflowColor.b);
+				riverVertexIndex++;
 				
-				// Add colors for tile->drain segment
-				colors.push(drainColor[0], drainColor[1], drainColor[2]); // Tile
-				colors.push(drainColor[0], drainColor[1], drainColor[2]); // Drain
+				// Create inflow triangle
+				riverIndices.push(tipIndex2, baseLeftIndex2, baseRightIndex2);
+				totalInflowTriangles++;
 			}
 		}
 	}
 
-	// Create BufferGeometry for line rendering
+	// Create BufferGeometry for triangle rendering
 	var geometry = new THREE.BufferGeometry();
 	
 	console.log("=== RIVER DEBUG STATS ===");
 	console.log("Total tiles:", totalTiles);
 	console.log("Tiles with river=true:", totalRiverTiles);
-	console.log("Rivers created with", positions.length / 6, "river segments (", positions.length / 3, "vertices)");
+	console.log("Inflow triangles created:", totalInflowTriangles);
+	console.log("Outflow triangles created:", totalOutflowTriangles);
+	console.log("Total river triangles:", riverIndices.length / 3, "(", riverVertexIndex, "vertices)");
 	console.log("River threshold (percentile):", riverThreshold);
 	
-	if (positions.length > 0) {
+	if (riverPositions.length > 0) {
 		// Create buffer attributes
-		geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-		geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+		geometry.setAttribute('position', new THREE.Float32BufferAttribute(riverPositions, 3));
+		geometry.setAttribute('color', new THREE.Float32BufferAttribute(riverColors, 3));
+		geometry.setIndex(riverIndices);
 		
-		// Compute bounding sphere
+		// Compute normals and bounding sphere
+		geometry.computeVertexNormals();
 		geometry.computeBoundingSphere();
 		
-		console.log("Rivers BufferGeometry created successfully");
+		console.log("Rivers directional triangle BufferGeometry created successfully");
 	} else {
 		console.log("No river data found - empty geometry created");
 	}
 
-	// Use LineSegments with vertex colors for clean river lines
-	var material = new THREE.LineBasicMaterial({
+	// Use MeshBasicMaterial with vertex colors for triangle rendering
+	var material = new THREE.MeshBasicMaterial({
 		vertexColors: true,
-		linewidth: 2,
+		side: THREE.DoubleSide,
 		transparent: true,
 		opacity: 0.8
 	});
 
-	var renderObject = new THREE.LineSegments(geometry, material);
+	var renderObject = new THREE.Mesh(geometry, material);
 
 	action.provideResult({
 		geometry: geometry,
