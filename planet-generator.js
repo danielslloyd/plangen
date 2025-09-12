@@ -18,6 +18,9 @@ window.logElevationChange = function(tile, functionName, newElevation) {
 // Global Average Border Length (ABL) for triangle sizing
 var averageBorderLength = 10; // Default fallback value
 
+// Global array to track labeled tiles
+var labeledTiles = [];
+
 // Terrain Color Initialization - Generated from Color Picker
 terrainColors = {
 	oceanSurfaceWarm: new THREE.Color("#27efff"),
@@ -54,6 +57,7 @@ var renderPlateMovements = false;
 var renderAirCurrents = false;
 var renderRivers = true;
 var renderMoon = false;
+var renderLabels = true;
 var elevationMultiplier = 80; // Controls how exaggerated the 3D terrain elevation appears
 var useElevationDisplacement = true; // Binary parameter: use stored displacement values (true) or sphere positions (false)
 var riverElevationDeltaThreshold = 0.1; // Minimum elevation difference for white waterfall rivers
@@ -188,8 +192,35 @@ function generatePlanetAsynchronous() {
 }
 function Planet() {}
 
+// Function to collect all tiles with labels into the global labeledTiles array
+function collectLabeledTiles(tiles) {
+	console.log('DEBUG: collectLabeledTiles called with', tiles ? tiles.length : 'null', 'tiles');
+	console.log('DEBUG: Previous labeledTiles array had', labeledTiles.length, 'items');
+	
+	labeledTiles = []; // Clear previous labels
+	if (!tiles) {
+		console.log('DEBUG: No tiles provided to collectLabeledTiles');
+		return labeledTiles;
+	}
+	
+	var foundLabeled = [];
+	for (var i = 0; i < tiles.length; i++) {
+		if (tiles[i].label) {
+			console.log('DEBUG: Found labeled tile:', tiles[i].label, 'elevation:', tiles[i].elevation, 'id:', tiles[i].id || 'no-id');
+			labeledTiles.push(tiles[i]);
+			foundLabeled.push({label: tiles[i].label, elevation: tiles[i].elevation, id: tiles[i].id});
+		}
+	}
+	
+	console.log('DEBUG: collectLabeledTiles result:', labeledTiles.length, 'labeled tiles');
+	console.log('DEBUG: Found labeled tiles:', foundLabeled);
+	console.log('DEBUG: labeledTiles array now contains:', labeledTiles.map(t => ({label: t.label, elevation: t.elevation})));
+	return labeledTiles;
+}
+
 function generatePlanet(icosahedronSubdivision, topologyDistortionRate, plateCount, oceanicRate, heatLevel, moistureLevel, random, action) {
 	console.log('🌍 Starting Planet Generation');
+	console.log('DEBUG: Starting new planet generation - labeledTiles array state:', labeledTiles.length, 'items');
 	ctime('Total Generation Time');
 	var planet = new Planet();
 	var mesh;
@@ -310,6 +341,10 @@ function generatePlanetTerrain(planet, plateCount, oceanicRate, heatLevel, moist
 			ctime('4h. Biomes & Resources');
 			generatePlanetBiomesResources(planet.topology.tiles, 1000, action);
 		}, 1, "Generating Biomes")
+		.executeSubaction(function (action) {
+			// Collect labeled tiles after biomes are generated
+			collectLabeledTiles(planet.topology.tiles);
+		}, 0)
 		.getResult(function (result) {
 			ctimeEnd('4h. Biomes & Resources');
 		});
@@ -402,7 +437,15 @@ function generatePlanetRenderData(topology, random, action) {
 		}, 1, "Building Moon for Material Testing")
 		.getResult(function (result) {
 			renderData.moon = result;
-		});
+		})
+		.executeSubaction(function (action) {
+			console.log('DEBUG: About to build labels render object');
+			renderData.labels = buildLabelsRenderObject();
+			console.log('DEBUG: Labels render object created:', !!renderData.labels);
+			if (renderData.labels) {
+				console.log('DEBUG: Labels render object has', renderData.labels.children.length, 'children');
+			}
+		}, 1, "Building Label Visuals");
 
 	action.provideResult(renderData);
 }
@@ -713,6 +756,17 @@ function displayPlanet(newPlanet) {
         if (planet.edgeCostsRenderObject) {
             scene.remove(planet.edgeCostsRenderObject);
         }
+        
+        // Remove existing labels
+        console.log('DEBUG: Cleaning up previous labels');
+        if (planet.renderData && planet.renderData.labels) {
+            console.log('DEBUG: Removing previous labels from scene - had', planet.renderData.labels.children.length, 'children');
+            scene.remove(planet.renderData.labels);
+            // Note: clearLabelSprites() will be called in buildLabelsRenderObject() for the new planet
+            console.log('DEBUG: Previous labels removed from scene');
+        } else {
+            console.log('DEBUG: No previous labels to clean up');
+        }
     } else {
         sunTimeOffset = Math.PI * 2 * (1 / 12 - Date.now() / 60000);
     }
@@ -732,6 +786,7 @@ function displayPlanet(newPlanet) {
     showHideAirCurrents(renderAirCurrents);
     showHideRivers(renderRivers);
     showHideMoon(renderMoon);
+    showHideLabels(renderLabels);
     console.log("displayPlanet: Finished calling overlay functions");
     updateCamera();
     updateUI();
@@ -753,6 +808,28 @@ function displayPlanet(newPlanet) {
 
     // Add nodes and edges to the graph
     //buildGraph(planet.aStarVertices, planet.aStarEdges);
+}
+
+function showHideLabels(show) {
+	console.log('DEBUG: showHideLabels called with:', show);
+	console.log('DEBUG: renderLabels state:', renderLabels);
+	console.log('DEBUG: planet exists:', !!planet);
+	console.log('DEBUG: planet.renderData exists:', !!(planet && planet.renderData));
+	console.log('DEBUG: planet.renderData.labels exists:', !!(planet && planet.renderData && planet.renderData.labels));
+	
+	renderLabels = show;
+	if (!planet || !planet.renderData || !planet.renderData.labels) {
+		console.log('DEBUG: Cannot show/hide labels - missing planet, renderData, or labels object');
+		return;
+	}
+	
+	if (show) {
+		scene.add(planet.renderData.labels);
+		console.log('DEBUG: Labels added to scene - children count:', planet.renderData.labels.children.length);
+	} else {
+		scene.remove(planet.renderData.labels);
+		console.log('DEBUG: Labels removed from scene');
+	}
 }
 
 function showHideInterface() {

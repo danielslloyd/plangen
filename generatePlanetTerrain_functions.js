@@ -1412,4 +1412,31 @@ function generatePlanetBiomesResources(tiles, planetRadius, action) {
 			});
 		}
 			*/
+	
+	// Add labeling system - find highest elevation tile and label it
+	console.log('DEBUG: Starting label assignment phase');
+	if (tiles && tiles.length > 0) {
+		console.log('DEBUG: Processing', tiles.length, 'tiles for labeling');
+		// Find tile with highest elevation (tiles are already sorted by elevation descending at line 1134)
+		var highestTile = tiles[0];
+		for (var i = 1; i < tiles.length; i++) {
+			if (tiles[i].elevation > highestTile.elevation) {
+				highestTile = tiles[i];
+			}
+		}
+		
+		console.log('DEBUG: Found highest tile with elevation:', highestTile.elevation);
+		console.log('DEBUG: Highest tile ID/position:', highestTile.id || 'no-id', highestTile.averagePosition);
+		
+		// Add label to highest elevation tile
+		if (highestTile && highestTile.elevation > 0) {
+			highestTile.label = 'Mount Everest';
+			console.log('DEBUG: Successfully assigned label "Mount Everest" to tile');
+			console.log('DEBUG: Tile now has label property:', highestTile.label);
+		} else {
+			console.log('DEBUG: No suitable tile found for labeling (highest elevation <= 0)');
+		}
+	} else {
+		console.log('DEBUG: No tiles provided for labeling');
+	}
 }

@@ -403,6 +403,146 @@ function renderPath(path) {
     }
 }
 
+// Label rendering system
+var labelSprites = []; // Array to track all label sprites
+
+function createLabelSprite(text, color, fontSize) {
+	color = color || 'white';
+	fontSize = fontSize || 32;
+	
+	// Create canvas for text
+	var canvas = document.createElement('canvas');
+	var context = canvas.getContext('2d');
+	
+	// Set font and measure text
+	context.font = fontSize + 'px Arial, sans-serif';
+	var textMetrics = context.measureText(text);
+	var textWidth = textMetrics.width;
+	var textHeight = fontSize;
+	
+	// Size canvas with padding
+	var padding = 10;
+	canvas.width = textWidth + padding * 2;
+	canvas.height = textHeight + padding * 2;
+	
+	// Re-set font after canvas resize
+	context.font = fontSize + 'px Arial, sans-serif';
+	context.textAlign = 'center';
+	context.textBaseline = 'middle';
+	
+	// Draw background
+	context.fillStyle = 'rgba(0, 0, 0, 0.7)';
+	context.fillRect(0, 0, canvas.width, canvas.height);
+	
+	// Draw text
+	context.fillStyle = color;
+	context.fillText(text, canvas.width / 2, canvas.height / 2);
+	
+	// Create texture and sprite
+	var texture = new THREE.CanvasTexture(canvas);
+	texture.needsUpdate = true;
+	
+	var spriteMaterial = new THREE.SpriteMaterial({
+		map: texture,
+		transparent: true,
+		alphaTest: 0.1
+	});
+	
+	var sprite = new THREE.Sprite(spriteMaterial);
+	
+	// Scale sprite appropriately
+	var scale = 50;
+	sprite.scale.set(scale, scale * (canvas.height / canvas.width), 1);
+	
+	return sprite;
+}
+
+function buildLabelsRenderObject() {
+	console.log('DEBUG: buildLabelsRenderObject called');
+	console.log('DEBUG: labeledTiles array state:', labeledTiles ? labeledTiles.length : 'null', 'items');
+	
+	// Clear existing label sprites
+	clearLabelSprites();
+	
+	if (!labeledTiles || labeledTiles.length === 0) {
+		console.log('DEBUG: No labeled tiles to render - labeledTiles:', labeledTiles);
+		return null;
+	}
+	
+	console.log('DEBUG: labeledTiles contents:', labeledTiles.map(t => ({
+		label: t.label, 
+		elevation: t.elevation,
+		hasAveragePosition: !!t.averagePosition,
+		hasElevationDisplacement: !!t.elevationDisplacement
+	})));
+	
+	// Create a group to hold all labels
+	var labelsGroup = new THREE.Group();
+	var validTiles = 0;
+	
+	for (var i = 0; i < labeledTiles.length; i++) {
+		var tile = labeledTiles[i];
+		console.log('DEBUG: Processing tile', i, 'with label:', tile.label);
+		
+		if (!tile.label || !tile.averagePosition) {
+			console.log('DEBUG: Skipping tile - missing label or averagePosition');
+			continue;
+		}
+		
+		validTiles++;
+		var sprite = createLabelSprite(tile.label, 'yellow', 24);
+		
+		// Position sprite above the tile
+		var labelPosition = tile.averagePosition.clone();
+		var distance = labelPosition.length();
+		
+		console.log('DEBUG: Tile position distance:', distance, 'elevation:', tile.elevation, 'elevationDisplacement:', tile.elevationDisplacement);
+		console.log('DEBUG: useElevationDisplacement setting:', useElevationDisplacement);
+		
+		// Position label just above the surface, respecting 3D/sphere mode
+		var labelOffset = 10; // Small offset to appear just above surface
+		
+		if (useElevationDisplacement && tile.elevation > 0 && tile.elevationDisplacement) {
+			// 3D mode: position above the elevated terrain
+			labelPosition.normalize().multiplyScalar(distance + tile.elevationDisplacement + labelOffset);
+			console.log('DEBUG: Applied 3D elevation positioning - offset from displaced surface');
+		} else {
+			// Sphere mode: position just above base sphere surface
+			labelPosition.normalize().multiplyScalar(distance + labelOffset);
+			console.log('DEBUG: Applied sphere positioning - offset from base sphere');
+		}
+		
+		sprite.position.copy(labelPosition);
+		sprite.userData.tile = tile; // Store reference to tile
+		
+		labelsGroup.add(sprite);
+		labelSprites.push(sprite);
+		
+		console.log('DEBUG: Added sprite to group, position:', sprite.position);
+	}
+	
+	console.log('DEBUG: Created', labelSprites.length, 'label sprites from', validTiles, 'valid tiles');
+	console.log('DEBUG: Returning labelsGroup with', labelsGroup.children.length, 'children');
+	return labelsGroup;
+}
+
+function clearLabelSprites() {
+	for (var i = 0; i < labelSprites.length; i++) {
+		var sprite = labelSprites[i];
+		if (sprite.parent) {
+			sprite.parent.remove(sprite);
+		}
+		// Clean up texture and material
+		if (sprite.material && sprite.material.map) {
+			sprite.material.map.dispose();
+		}
+		if (sprite.material) {
+			sprite.material.dispose();
+		}
+	}
+	labelSprites = [];
+}
+
 // FPS tracking function
 function updateFPS() {
     fpsCounter.frameCount++;
