@@ -1044,3 +1044,27 @@ registerColorOverlay("heat", "Heat Map", "Red-hot visualization based on elevati
 	var intensity = Math.max(0, Math.min(1, (tile.elevation || 0) + (tile.temperature || 0) * 0.5));
 	return new THREE.Color(intensity, 0, 0);
 });
+
+// Land Regions color overlay - shows K-means clustered land regions
+registerColorOverlay("landRegions", "Land Regions", "Shows clustered land regions in different colors", function(tile) {
+	// Ocean tiles stay blue
+	if (tile.elevation <= 0) {
+		return calculateTerrainColor(tile); // Use standard ocean coloring
+	}
+	
+	// Land tiles get colored by their region
+	if (tile.landRegion && tile.landRegion > 0) {
+		// Generate distinct colors for each region using hue rotation
+		var hue = ((tile.landRegion - 1) * 137.5) % 360; // Golden angle for good distribution
+		var saturation = 0.7;
+		var lightness = 0.6;
+		
+		// Convert HSL to RGB
+		var color = new THREE.Color();
+		color.setHSL(hue / 360, saturation, lightness);
+		return color;
+	}
+	
+	// Fallback for land tiles without region assignment
+	return new THREE.Color(0x888888); // Gray for unassigned land
+});

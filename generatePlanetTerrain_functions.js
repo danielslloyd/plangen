@@ -1439,4 +1439,161 @@ function generatePlanetBiomesResources(tiles, planetRadius, action) {
 	} else {
 		console.log('DEBUG: No tiles provided for labeling');
 	}
+	
+	// Add K-means clustering for geographical features
+	clusterLandFeatures(tiles);
+}
+
+// Sphere-constrained K-means clustering for land features
+function clusterLandFeatures(tiles) {
+	console.log('DEBUG: Starting land feature clustering');
+	
+	if (!tiles || tiles.length === 0) {
+		console.log('DEBUG: No tiles for clustering');
+		return;
+	}
+	
+	// Filter land tiles only
+	var landTiles = tiles.filter(function(tile) {
+		return tile.elevation > 0;
+	});
+	
+	console.log('DEBUG: Found', landTiles.length, 'land tiles for clustering');
+	
+	if (landTiles.length === 0) {
+		console.log('DEBUG: No land tiles found for clustering');
+		return;
+	}
+	
+	// Calculate number of clusters (land tiles / 100, minimum 1)
+	var k = Math.max(1, Math.floor(landTiles.length / 100));
+	console.log('DEBUG: Using', k, 'clusters for', landTiles.length, 'land tiles');
+	
+	// Extract 3D positions from land tiles
+	var positions = landTiles.map(function(tile) {
+		return tile.averagePosition.clone();
+	});
+	
+	// Perform K-means clustering
+	var clusterResult = kMeansSphereClustering(positions, landTiles, k);
+	var clusters = clusterResult.centers;
+	var assignments = clusterResult.assignments;
+	
+	// Store cluster assignments on tiles for color overlay
+	for (var i = 0; i < landTiles.length; i++) {
+		landTiles[i].landRegion = assignments[i] + 1; // 1-based indexing for display
+	}
+	
+	// Assign labels to tiles closest to cluster centers
+	for (var i = 0; i < clusters.length; i++) {
+		var center = clusters[i];
+		var closestTile = findClosestTile(landTiles, center);
+		if (closestTile && !closestTile.label) { // Don't override existing labels (like Mount Everest)
+			closestTile.label = 'Land ' + (i + 1);
+			console.log('DEBUG: Labeled cluster', i + 1, 'at tile with elevation:', closestTile.elevation);
+		}
+	}
+}
+
+// K-means clustering with sphere constraint
+function kMeansSphereClustering(positions, landTiles, k) {
+	var sphereRadius = 1000; // Match planet radius
+	var maxIterations = 50;
+	var convergenceThreshold = 1.0; // Stop when centers move less than this distance
+	
+	// Initialize cluster centers randomly on sphere surface
+	var centers = [];
+	for (var i = 0; i < k; i++) {
+		// Random point on sphere surface
+		var center = new THREE.Vector3(
+			Math.random() - 0.5,
+			Math.random() - 0.5, 
+			Math.random() - 0.5
+		);
+		center.normalize().multiplyScalar(sphereRadius);
+		centers.push(center);
+	}
+	
+	console.log('DEBUG: Initialized', k, 'cluster centers on sphere surface');
+	
+	var finalAssignments = [];
+	
+	// K-means iterations
+	for (var iteration = 0; iteration < maxIterations; iteration++) {
+		// Assign each position to closest cluster
+		var assignments = [];
+		var clusterSums = [];
+		var clusterCounts = [];
+		
+		// Initialize cluster accumulators
+		for (var i = 0; i < k; i++) {
+			clusterSums.push(new THREE.Vector3(0, 0, 0));
+			clusterCounts.push(0);
+		}
+		
+		// Assign positions to clusters
+		for (var i = 0; i < positions.length; i++) {
+			var pos = positions[i];
+			var closestCluster = 0;
+			var minDistance = pos.distanceTo(centers[0]);
+			
+			for (var j = 1; j < k; j++) {
+				var distance = pos.distanceTo(centers[j]);
+				if (distance < minDistance) {
+					minDistance = distance;
+					closestCluster = j;
+				}
+			}
+			
+			assignments.push(closestCluster);
+			clusterSums[closestCluster].add(pos);
+			clusterCounts[closestCluster]++;
+		}
+		
+		// Store the final assignments
+		finalAssignments = assignments;
+		
+		// Calculate new cluster centers
+		var maxMovement = 0;
+		for (var i = 0; i < k; i++) {
+			if (clusterCounts[i] > 0) {
+				var newCenter = clusterSums[i].divideScalar(clusterCounts[i]);
+				
+				// CRITICAL: Constrain center to sphere surface
+				newCenter.normalize().multiplyScalar(sphereRadius);
+				
+				var movement = centers[i].distanceTo(newCenter);
+				maxMovement = Math.max(maxMovement, movement);
+				centers[i] = newCenter;
+			}
+		}
+		
+		// Check for convergence
+		if (maxMovement < convergenceThreshold) {
+			console.log('DEBUG: K-means converged after', iteration + 1, 'iterations');
+			break;
+		}
+	}
+	
+	console.log('DEBUG: K-means clustering completed, returning', centers.length, 'cluster centers and assignments');
+	return {
+		centers: centers,
+		assignments: finalAssignments
+	};
+}
+
+// Find the tile closest to a given 3D position
+function findClosestTile(tiles, position) {
+	var closestTile = null;
+	var minDistance = Infinity;
+	
+	for (var i = 0; i < tiles.length; i++) {
+		var distance = tiles[i].averagePosition.distanceTo(position);
+		if (distance < minDistance) {
+			minDistance = distance;
+			closestTile = tiles[i];
+		}
+	}
+	
+	return closestTile;
 }
