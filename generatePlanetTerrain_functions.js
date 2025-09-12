@@ -187,6 +187,188 @@ function generatePlanetWeather(topology, partitions, heatLevel, moistureLevel, r
 		});
 }
 
+// Group connected tiles into bodies (land/water masses)
+// Moved from planet-generator.js for better organization
+function groupBodies(planet) {
+	// Reset body assignments and body array
+	for (const t of planet.topology.tiles) {
+	  t.body = null;
+	}
+	planet.topology.bodies = [];
+	
+	// Pre-filter tiles into water and land
+	const water = planet.topology.tiles.filter(t => t.elevation < 0);
+	const land = planet.topology.tiles.filter(t => t.elevation >= 0);
+	
+	// Create sets for faster lookups
+	const waterSet = new Set(water);
+	const landSet = new Set(land);
+	
+	// Process water bodies first, then land bodies
+	processBodyType(water, false, waterSet);
+	processBodyType(land, true, landSet);
+	
+	function processBodyType(tiles, isLand, tileSet) {
+	  let bodyTypeCount = 0;
+	  
+	  for (const tile of tiles) {
+		if (tile.body) continue; // Skip tiles already assigned to a body
+		
+		bodyTypeCount++;
+		const bodyId = isLand ? bodyTypeCount : -bodyTypeCount;
+		const bodyIndex = planet.topology.bodies.length;
+		
+		// Create new body
+		const newBody = { 
+		  id: bodyId, 
+		  tiles: [] 
+		};
+		planet.topology.bodies.push(newBody);
+		
+		// Use iterative approach instead of recursive
+		const bodyTiles = findConnectedTiles(tile, isLand, tileSet);
+		
+		// Assign tiles to body
+		for (const bodyTile of bodyTiles) {
+		  bodyTile.body = newBody;
+		  newBody.tiles.push(bodyTile);
+		}
+	  }
+	}
+	
+	function findConnectedTiles(startTile, isLand, tileSet) {
+	  const body = [startTile];
+	  const queue = [startTile];
+	  const visited = new Set([startTile]);
+	  
+	  while (queue.length > 0) {
+		const current = queue.shift();
+		const neighbors = current.tiles || [];
+		
+		for (const neighbor of neighbors) {
+		  // Skip if already visited, already has a body, or wrong type (land/water)
+		  if (visited.has(neighbor) || neighbor.body || !tileSet.has(neighbor)) {
+			continue;
+		  }
+		  
+		  visited.add(neighbor);
+		  queue.push(neighbor);
+		  body.push(neighbor);
+		}
+	  }
+	  
+	  return body;
+	}
+	
+	// Process water bodies based on water-to-land ratio
+	const waterToLandRatioThreshold = 1; // Water body size / bordering land tiles <= 1
+	
+	// For each water body
+	const waterBodies = planet.topology.bodies.filter(body => body.id < 0);
+	
+	for (const waterBody of waterBodies) {
+	  // Find all neighboring land tiles and their bodies
+	  const neighboringLandTiles = new Set();
+	  const neighboringLandBodies = new Set();
+	  
+	  // Check each water tile for land neighbors
+	  for (const waterTile of waterBody.tiles) {
+		const neighbors = waterTile.tiles || [];
+		
+		for (const neighbor of neighbors) {
+		  // If neighbor is land and belongs to a land body
+		  if (neighbor.elevation >= 0 && neighbor.body && neighbor.body.id > 0) {
+			neighboringLandTiles.add(neighbor);
+			neighboringLandBodies.add(neighbor.body);
+		  }
+		}
+	  }
+	  
+	  // Calculate water-to-land ratio
+	  const waterTileCount = waterBody.tiles.length;
+	  const landTileCount = neighboringLandTiles.size;
+	  const waterToLandRatio = waterTileCount / landTileCount;
+	  
+	  // Convert neighboring land bodies to array for easier processing
+	  const landBodiesArray = Array.from(neighboringLandBodies);
+	  
+	  // If ratio is <= threshold and there's exactly one neighboring land body
+	  if (waterToLandRatio <= waterToLandRatioThreshold && landBodiesArray.length === 1) {
+		const landBody = landBodiesArray[0];
+		
+		// Find the lowest elevation among neighboring land tiles
+		let lowestLandElevation = Infinity;
+		for (const landTile of neighboringLandTiles) {
+		  if (landTile.elevation < lowestLandElevation) {
+			lowestLandElevation = landTile.elevation;
+		  }
+		}
+		
+		// Change elevation of water tiles and reassign to land body
+		for (const waterTile of waterBody.tiles) {
+		  // Set elevation based on the lowest land elevation + a small increment based on tile id
+		  waterTile.elevation = lowestLandElevation + 0.0000001 * Math.abs(waterTile.id || 0);
+		  
+		  // Reassign to land body
+		  waterTile.body = landBody;
+		  landBody.tiles.push(waterTile);
+		}
+		
+		// Mark this water body for removal
+		waterBody.tiles = [];
+	  }
+	}
+	
+	// Remove empty water bodies
+	planet.topology.bodies = planet.topology.bodies.filter(body => body.tiles.length > 0);
+	
+	for (b of planet.topology.bodies.filter(b => b.id > 0 && b.tiles.length > 20)) {
+		b.features =[];
+		let featureCount = 0;
+		for (t of b.tiles) {
+			t.s = t.shore;
+		}
+		let blanks = b.tiles.filter(t=>t.s > 0);
+		for (let i = 0; i < 12; i++) { 
+			if (blanks.length > 0) {
+				blanks.sort((a, b) => b.shore - a.shore || b.elevation - a.elevation);
+				featureCount++;
+				b.features.push({id: 'b'+b.id+'f'+featureCount, tiles: [blanks[0]], color: undefined});
+
+				let newFeature = b.features[featureCount-1];
+				let hash = Math.random();
+				if (hash < 0.5) {
+					newFeature.color = new THREE.Color(0xFFFF00).lerp(new THREE.Color(0x009966), hash*2);
+				} else {
+					newFeature.color = new THREE.Color(0x009966).lerp(new THREE.Color(0x800080), (hash-0.5)*2);
+				}
+				
+				blanks[0].s=0;
+				blanks[0].feature = newFeature;
+
+				let lastRing = newFeature.tiles;
+				let nextRing = [...new Set(lastRing.map(nft => nft.tiles).flat().filter(nr => nr.s > 0))];
+				while (nextRing.filter(t=>t.shore > 0).length/nextRing.length>0.95) {
+					for (t of nextRing.filter(t=>t.s > 0)) {
+						newFeature.tiles.push(t);
+						t.s=0;
+						t.feature = newFeature;
+					}
+					lastRing = nextRing;
+					nextRing = [...new Set(lastRing.map(nft => nft.tiles).flat().filter(nr=>!newFeature.tiles.includes(nr)))];
+					//console.log(nextRing.filter(t=>t.s > 0).length,nextRing.length);
+				}
+
+				blanks = b.tiles.filter(t=>t.s > 0);
+			}
+		}
+
+	}
+	
+	//console.log(planet.topology.bodies);
+	return planet.topology.bodies;
+}
+
 function erodeElevation(planet, action) {
 	let tiles = planet.topology.tiles
 	let watersheds = planet.topology.watersheds

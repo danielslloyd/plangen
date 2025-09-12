@@ -1,20 +1,5 @@
 // Legacy Three.js r68 compatibility code removed - now using direct BufferGeometry creation
-
-// Global terrain color settings for picker integration
-var terrainColors = {
-	// Ocean colors (depth + temperature three-step lerp)
-	oceanSurfaceWarm: new THREE.Color(0x27efff),
-	oceanSurfaceCold: new THREE.Color(0x1ba3cc),
-	oceanDeepWarm: new THREE.Color(0x072995),
-	oceanDeepCold: new THREE.Color(0x222d5e),
-	
-	// Land colors (moisture + elevation + temperature lerp)
-	landLowDry: new THREE.Color(0xcccc66),    // A - low elevation, dry
-	landLowWet: new THREE.Color(0x005000),    // B - low elevation, wet  
-	landHighDry: new THREE.Color(0x777788),   // C - high elevation, dry
-	landHighWet: new THREE.Color(0x444455),   // D - high elevation, wet
-	landCold: new THREE.Color(0x555544)       // E - cold temperature
-};
+// Note: terrainColors is now defined in planet-generator.js
 
 function buildSurfaceRenderObject(tiles, watersheds, random, action) {
 	

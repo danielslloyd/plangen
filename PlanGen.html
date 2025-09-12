@@ -52,45 +52,51 @@
 	<body>
 		<div id="viewportFrame" style="background-color:black;"></div>
 		<!--<div id="viewportFrame" style="background-image: url('star-background.png'); background-repeat: repeat;"></div>-->
-		<div id="terrainColorPanel" class="panel" style="position: absolute; left: 1em; top: 1em; width: 26em; height: 28em; display: none;">
-			<h2 style="top: 0.8em; font-size: 110%;">Terrain Color System</h2>
-			
-			<h2 style="position: absolute; top: 3.0em; left: 0.8em; font-size: 100%;">Ocean</h2>
-			<div style="position: absolute; left: 0.8em; right: 0.8em; top: 4.8em; height: 8em;">
-				<!-- Ocean Header Row -->
-				<div style="position: absolute; left: 6em; top: 0; width: 6em; text-align: center; font-size: 90%; color: #FFFFFF;">Warm</div>
-				<div style="position: absolute; left: 12.5em; top: 0; width: 6em; text-align: center; font-size: 90%; color: #FFFFFF;">Cold</div>
-				
-				<!-- Surface Row -->
-				<div style="position: absolute; left: 0; top: 1.8em; width: 5.5em; font-size: 90%; line-height: 2.2em;">Surface</div>
-				<input type="color" id="oceanSurfaceWarm" value="#27efff" style="position: absolute; left: 6em; top: 1.8em; width: 6em; height: 2.2em; cursor: pointer; border: none;">
-				<input type="color" id="oceanSurfaceCold" value="#1ba3cc" style="position: absolute; left: 12.5em; top: 1.8em; width: 6em; height: 2.2em; cursor: pointer; border: none;">
-				
-				<!-- Deep Row -->
-				<div style="position: absolute; left: 0; top: 4.5em; width: 5.5em; font-size: 90%; line-height: 2.2em;">Deep</div>
-				<input type="color" id="oceanDeepWarm" value="#072995" style="position: absolute; left: 6em; top: 4.5em; width: 6em; height: 2.2em; cursor: pointer; border: none;">
-				<input type="color" id="oceanDeepCold" value="#222d5e" style="position: absolute; left: 12.5em; top: 4.5em; width: 6em; height: 2.2em; cursor: pointer; border: none;">
+		<div id="terrainColorPanel" class="panel" style="position: absolute; left: 1em; top: 1em; width: 24em; display: none; padding: 1em;">
+			<!-- Header with Export Button -->
+			<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1em;">
+				<h2 style="margin: 0; font-size: 110%;">Terrain Color System</h2>
+				<button id="exportColorsButton" style="font-size: 75%; padding: 0.25em 0.5em;" title="Copy color initialization code to clipboard">Export Colors</button>
 			</div>
 			
-			<h2 style="position: absolute; top: 13.5em; left: 0.8em; font-size: 100%;">Land</h2>
-			<div style="position: absolute; left: 0.8em; right: 0.8em; top: 15.3em; height: 11em;">
-				<!-- Land Header Row -->
-				<div style="position: absolute; left: 6em; top: 0; width: 6em; text-align: center; font-size: 90%; color: #FFFFFF;">Dry</div>
-				<div style="position: absolute; left: 12.5em; top: 0; width: 6em; text-align: center; font-size: 90%; color: #FFFFFF;">Wet</div>
-				
-				<!-- Low Row -->
-				<div style="position: absolute; left: 0; top: 1.8em; width: 5.5em; font-size: 90%; line-height: 2.2em;">Low</div>
-				<input type="color" id="landLowDry" value="#cccc66" style="position: absolute; left: 6em; top: 1.8em; width: 6em; height: 2.2em; cursor: pointer; border: none;">
-				<input type="color" id="landLowWet" value="#005000" style="position: absolute; left: 12.5em; top: 1.8em; width: 6em; height: 2.2em; cursor: pointer; border: none;">
-				
-				<!-- High Row -->
-				<div style="position: absolute; left: 0; top: 4.5em; width: 5.5em; font-size: 90%; line-height: 2.2em;">High</div>
-				<input type="color" id="landHighDry" value="#777788" style="position: absolute; left: 6em; top: 4.5em; width: 6em; height: 2.2em; cursor: pointer; border: none;">
-				<input type="color" id="landHighWet" value="#444455" style="position: absolute; left: 12.5em; top: 4.5em; width: 6em; height: 2.2em; cursor: pointer; border: none;">
-				
-				<!-- Cold Row -->
-				<div style="position: absolute; left: 0; top: 7.2em; width: 5.5em; font-size: 90%; line-height: 2.2em;">Cold</div>
-				<input type="color" id="landCold" value="#555544" style="position: absolute; left: 6em; top: 7.2em; width: 6em; height: 2.2em; cursor: pointer; border: none;">
+			<!-- Ocean Section -->
+			<div style="margin-bottom: 1em;">
+				<h3 style="margin: 0 0 0.5em 0; font-size: 100%; border-bottom: 1px solid #89B; padding-bottom: 0.25em;">Ocean</h3>
+				<div style="display: grid; grid-template-columns: 4em 1fr 1fr; gap: 0.5em; align-items: center;">
+					<div></div>
+					<div style="text-align: center; font-size: 85%;">Warm</div>
+					<div style="text-align: center; font-size: 85%;">Cold</div>
+					
+					<div style="font-size: 85%;">Surface</div>
+					<input type="color" id="oceanSurfaceWarm" value="#27efff" style="height: 2em; cursor: pointer; border: none; border-radius: 0.25em;">
+					<input type="color" id="oceanSurfaceCold" value="#1ba3cc" style="height: 2em; cursor: pointer; border: none; border-radius: 0.25em;">
+					
+					<div style="font-size: 85%;">Deep</div>
+					<input type="color" id="oceanDeepWarm" value="#072995" style="height: 2em; cursor: pointer; border: none; border-radius: 0.25em;">
+					<input type="color" id="oceanDeepCold" value="#222d5e" style="height: 2em; cursor: pointer; border: none; border-radius: 0.25em;">
+				</div>
+			</div>
+			
+			<!-- Land Section -->
+			<div>
+				<h3 style="margin: 0 0 0.5em 0; font-size: 100%; border-bottom: 1px solid #89B; padding-bottom: 0.25em;">Land</h3>
+				<div style="display: grid; grid-template-columns: 4em 1fr 1fr; gap: 0.5em; align-items: center;">
+					<div></div>
+					<div style="text-align: center; font-size: 85%;">Dry</div>
+					<div style="text-align: center; font-size: 85%;">Wet</div>
+					
+					<div style="font-size: 85%;">Low</div>
+					<input type="color" id="landLowDry" value="#cccc66" style="height: 2em; cursor: pointer; border: none; border-radius: 0.25em;">
+					<input type="color" id="landLowWet" value="#005000" style="height: 2em; cursor: pointer; border: none; border-radius: 0.25em;">
+					
+					<div style="font-size: 85%;">High</div>
+					<input type="color" id="landHighDry" value="#777788" style="height: 2em; cursor: pointer; border: none; border-radius: 0.25em;">
+					<input type="color" id="landHighWet" value="#444455" style="height: 2em; cursor: pointer; border: none; border-radius: 0.25em;">
+					
+					<div style="font-size: 85%;">Cold</div>
+					<input type="color" id="landCold" value="#555544" style="height: 2em; cursor: pointer; border: none; border-radius: 0.25em;">
+					<div></div> <!-- Empty cell to maintain grid -->
+				</div>
 			</div>
 		</div>
 		
@@ -120,41 +126,54 @@
 			</div>
 		</div>-->
 
-		<div id="controlPanel" class="panel" style="position: absolute; left: 1em; bottom: 1em; width: 28em; height: 22em; display: none;">
-			<h2 style="top: 0.8em; font-size: 110%;">Projection Display Options</h2>
-			<div id="projectionDisplayList" class="toggleButtonList onlyOne" style="position: absolute; left: 0.5em; right: 0.5em; top: 2.5em; height: 1.8em; margin: 0;"><!--
-				--><button id="projectGlobe" title="Project as Globe">Globe (G)</button><!--
-				--><button id="projectRaisedGlobe" title="Toggle 3D Elevation Exaggeration">Raised Globe (H)</button><!--
-				--><button id="projectMercatorMap" title="Project as Mercator Map">Mercator Map (J)</button><!--
-			--></div>
+		<div id="controlPanel" class="panel" style="position: absolute; left: 1em; bottom: 1em; width: 30em; display: none; padding: 1em;">
+			<!-- Projection Display Options -->
+			<div style="margin-bottom: 1em;">
+				<h2 style="margin: 0 0 0.5em 0; font-size: 110%; border-bottom: 1px solid #89B; padding-bottom: 0.25em;">Projection Display Options</h2>
+				<div id="projectionDisplayList" class="toggleButtonList onlyOne" style="margin: 0;">
+					<button id="projectGlobe" title="Project as Globe">Globe (G)</button>
+					<button id="projectRaisedGlobe" title="Toggle 3D Elevation Exaggeration">Raised Globe (H)</button>
+					<button id="projectMercatorMap" title="Project as Mercator Map">Mercator Map (J)</button>
+				</div>
+			</div>
 
-			<h2 style="top: 5.0em; font-size: 110%;">Surface Color Overlay</h2>
-			<div style="position: absolute; left: 0.5em; right: 0.5em; top: 6.5em; height: 1.8em; margin: 0;">
-				<select id="colorOverlayDropdown" title="Select color overlay mode" style="width: 100%; height: 100%; background-color: rgba(16, 32, 64, 1); color: #FFFFFF; border: none; border-radius: 0.25em; padding: 0.25em; font-size: 90%;">
+			<!-- Surface Color Overlay -->
+			<div style="margin-bottom: 1em;">
+				<h2 style="margin: 0 0 0.5em 0; font-size: 110%; border-bottom: 1px solid #89B; padding-bottom: 0.25em;">Surface Color Overlay</h2>
+				<select id="colorOverlayDropdown" title="Select color overlay mode" style="width: 100%; height: 1.8em; background-color: rgba(16, 32, 64, 1); color: #FFFFFF; border: none; border-radius: 0.25em; padding: 0.25em; font-size: 90%;">
 					<!-- Options will be populated dynamically -->
 				</select>
 			</div>
 
-			<h2 style="top: 9.0em; font-size: 110%;">Overlay Display Options</h2>
-			<div id="extrasDisplayList" class="toggleButtonList" style="position: absolute; left: 0.5em; right: 0.5em; top: 10.5em; height: 1.8em; margin: 0;"><!--
-				--><button id="showSunlightButton" title="Show Sunlight">Sun (U)</button><!--
-				--><button id="showPlateBoundariesButton" title="Show Tectonic Plate Boundaries">Plate Borders (I)</button><!--
-				--><button id="showRiversButton" title="Show Rivers">Rivers (R)</button><!--
-				--><button id="showAirCurrentsButton" title="Show Air Currents">Air Currents (P)</button><!--
-			--></div>
-
-			<h2 style="top: 13.0em; font-size: 110%;">Planet Generation</h2>
-			<div style="position: absolute; left: 0.5em; right: 0.5em; top: 14.8em; height: 4.5em;">
-				<button id="advancedSettingsButton" style="position: absolute; right: 0; width: calc(10em / 0.8); top: 0; height: calc(3em / 0.8); margin: 0; font-size: 100%;" title="Configure advanced settings for planet generation.">Advanced</button>
-				
-				<div style="position: absolute; left: 0; width: 6em; top: 0.2em; height: calc(1.2em / 0.75); font-size: 85%; ">Raw Seed:</div>
-				<div style="position: absolute; left: 6.5em; width: 12em; top: 0.2em; height: 1.5em; background-color: rgba(0, 0, 0, 0.2);">
-					<input type="text" id="rawSeedLabel" style="font-size: 75%; width: 100%; height: 100%; border: none; background: none; color: #FFFFFF; text-align: left; padding-left: 5px;"></input>
+			<!-- Overlay Display Options -->
+			<div style="margin-bottom: 1em;">
+				<h2 style="margin: 0 0 0.5em 0; font-size: 110%; border-bottom: 1px solid #89B; padding-bottom: 0.25em;">Overlay Display Options</h2>
+				<div id="extrasDisplayList" class="toggleButtonList" style="margin: 0;">
+					<button id="showSunlightButton" title="Show Sunlight" style="font-size: 75%;">Sun (U)</button>
+					<button id="showRiversButton" title="Show Rivers" style="font-size: 75%;">Rivers (R)</button>
+					<button id="showAirCurrentsButton" title="Show Air Currents" style="font-size: 75%;">Air Currents (P)</button>
 				</div>
-				
-				<div style="position: absolute; left: 0; width: 6em; top: 2.2em; height: calc(1.2em / 0.75); font-size: 85%; ">Original:</div>
-				<div style="position: absolute; left: 6.5em; width: 12em; top: 2.2em; height: 1.5em; background-color: rgba(0, 0, 0, 0.2);">
-					<input type="text" id="originalSeedLabel" style="font-size: 75%; width: 100%; height: 100%; border: none; background: none; color: #FFFFFF; text-align: left; padding-left: 5px;"></input>
+			</div>
+
+			<!-- Planet Generation -->
+			<div>
+				<h2 style="margin: 0 0 0.5em 0; font-size: 110%; border-bottom: 1px solid #89B; padding-bottom: 0.25em;">Planet Generation</h2>
+				<div style="display: flex; align-items: flex-start; gap: 1em;">
+					<div style="flex: 1;">
+						<div style="display: flex; align-items: center; margin-bottom: 0.5em; gap: 0.75em;">
+							<div style="font-size: 85%; width: 5em; flex-shrink: 0;">Raw Seed:</div>
+							<div style="flex: 1; background-color: rgba(0, 0, 0, 0.2); border-radius: 0.25em; height: 1.5em;">
+								<input type="text" id="rawSeedLabel" style="width: 100%; height: 100%; border: none; background: none; color: #FFFFFF; text-align: left; padding: 0 0.5em; font-size: 80%;">
+							</div>
+						</div>
+						<div style="display: flex; align-items: center; gap: 0.75em;">
+							<div style="font-size: 85%; width: 5em; flex-shrink: 0;">Original:</div>
+							<div style="flex: 1; background-color: rgba(0, 0, 0, 0.2); border-radius: 0.25em; height: 1.5em;">
+								<input type="text" id="originalSeedLabel" style="width: 100%; height: 100%; border: none; background: none; color: #FFFFFF; text-align: left; padding: 0 0.5em; font-size: 80%;">
+							</div>
+						</div>
+					</div>
+					<button id="advancedSettingsButton" style="height: 3.5em; padding: 0.5em 0.8em; margin: 0; font-size: 85%;" title="Configure advanced settings for planet generation.">Advanced</button>
 				</div>
 			</div>
 		</div>

@@ -293,6 +293,53 @@ function initializeTerrainColorPickers() {
 		terrainColors.landCold.setHex(parseInt(this.value.replace('#', '0x')));
 		updateTerrainColorsAndRefresh();
 	});
+
+	// Export Colors Button
+	document.getElementById('exportColorsButton').addEventListener('click', function() {
+		var colorCode = generateColorExportCode();
+		navigator.clipboard.writeText(colorCode).then(function() {
+			// Visual feedback - briefly change button text
+			var button = document.getElementById('exportColorsButton');
+			var originalText = button.textContent;
+			button.textContent = 'Copied!';
+			button.style.backgroundColor = 'rgba(0, 128, 0, 0.8)';
+			setTimeout(function() {
+				button.textContent = originalText;
+				button.style.backgroundColor = '';
+			}, 2000);
+		}).catch(function() {
+			// Fallback if clipboard API fails
+			alert('Color code copied to console (clipboard API not available)');
+			console.log('Color Export Code:');
+			console.log(colorCode);
+		});
+	});
+}
+
+// Generate JavaScript code for color initialization
+function generateColorExportCode() {
+	var oceanSurfaceWarm = document.getElementById('oceanSurfaceWarm').value;
+	var oceanSurfaceCold = document.getElementById('oceanSurfaceCold').value;
+	var oceanDeepWarm = document.getElementById('oceanDeepWarm').value;
+	var oceanDeepCold = document.getElementById('oceanDeepCold').value;
+	var landLowDry = document.getElementById('landLowDry').value;
+	var landLowWet = document.getElementById('landLowWet').value;
+	var landHighDry = document.getElementById('landHighDry').value;
+	var landHighWet = document.getElementById('landHighWet').value;
+	var landCold = document.getElementById('landCold').value;
+
+	return `// Terrain Color Initialization - Generated from Color Picker
+terrainColors = {
+	oceanSurfaceWarm: new THREE.Color("${oceanSurfaceWarm}"),
+	oceanSurfaceCold: new THREE.Color("${oceanSurfaceCold}"),
+	oceanDeepWarm: new THREE.Color("${oceanDeepWarm}"),
+	oceanDeepCold: new THREE.Color("${oceanDeepCold}"),
+	landLowDry: new THREE.Color("${landLowDry}"),
+	landLowWet: new THREE.Color("${landLowWet}"),
+	landHighDry: new THREE.Color("${landHighDry}"),
+	landHighWet: new THREE.Color("${landHighWet}"),
+	landCold: new THREE.Color("${landCold}")
+};`;
 }
 
 // Update terrain colors and refresh the display

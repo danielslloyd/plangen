@@ -18,37 +18,20 @@ window.logElevationChange = function(tile, functionName, newElevation) {
 // Global Average Border Length (ABL) for triangle sizing
 var averageBorderLength = 10; // Default fallback value
 
-// Calculate Average Border Length from topology borders
-function calculateAverageBorderLength(borders) {
-	if (!borders || borders.length === 0) {
-		return averageBorderLength;
-	}
-	
-	var totalLength = 0;
-	var validBorders = 0;
-	
-	for (var i = 0; i < borders.length; i++) {
-		var border = borders[i];
-		if (border.corners && border.corners.length >= 2) {
-			var corner0 = border.corners[0];
-			var corner1 = border.corners[1];
-			if (corner0.position && corner1.position) {
-				var borderLength = corner0.position.distanceTo(corner1.position);
-				if (borderLength > 0) {
-					totalLength += borderLength;
-					validBorders++;
-				}
-			}
-		}
-	}
-	
-	if (validBorders === 0) {
-		return averageBorderLength;
-	}
-	
-	var calculatedABL = totalLength / validBorders;
-	return calculatedABL;
-}
+// Terrain Color Initialization - Generated from Color Picker
+terrainColors = {
+	oceanSurfaceWarm: new THREE.Color("#27efff"),
+	oceanSurfaceCold: new THREE.Color("#072f6e"),
+	oceanDeepWarm: new THREE.Color("#072995"),
+	oceanDeepCold: new THREE.Color("#23225e"),
+	landLowDry: new THREE.Color("#cccc66"),
+	landLowWet: new THREE.Color("#007a00"),
+	landHighDry: new THREE.Color("#777788"),
+	landHighWet: new THREE.Color("#003816"),
+	landCold: new THREE.Color("#5c5c5c")
+};
+
+// calculateAverageBorderLength function moved to utilities.js
 
 var scene = null;
 var camera = null;
@@ -375,185 +358,7 @@ function calculateCornerDistancesToPlateRoot(plates, action) {
 	});
 }
 
-function groupBodies(planet) {
-	// Reset body assignments and body array
-	for (const t of planet.topology.tiles) {
-	  t.body = null;
-	}
-	planet.topology.bodies = [];
-	
-	// Pre-filter tiles into water and land
-	const water = planet.topology.tiles.filter(t => t.elevation < 0);
-	const land = planet.topology.tiles.filter(t => t.elevation >= 0);
-	
-	// Create sets for faster lookups
-	const waterSet = new Set(water);
-	const landSet = new Set(land);
-	
-	// Process water bodies first, then land bodies
-	processBodyType(water, false, waterSet);
-	processBodyType(land, true, landSet);
-	
-	function processBodyType(tiles, isLand, tileSet) {
-	  let bodyTypeCount = 0;
-	  
-	  for (const tile of tiles) {
-		if (tile.body) continue; // Skip tiles already assigned to a body
-		
-		bodyTypeCount++;
-		const bodyId = isLand ? bodyTypeCount : -bodyTypeCount;
-		const bodyIndex = planet.topology.bodies.length;
-		
-		// Create new body
-		const newBody = { 
-		  id: bodyId, 
-		  tiles: [] 
-		};
-		planet.topology.bodies.push(newBody);
-		
-		// Use iterative approach instead of recursive
-		const bodyTiles = findConnectedTiles(tile, isLand, tileSet);
-		
-		// Assign tiles to body
-		for (const bodyTile of bodyTiles) {
-		  bodyTile.body = newBody;
-		  newBody.tiles.push(bodyTile);
-		}
-	  }
-	}
-	
-	function findConnectedTiles(startTile, isLand, tileSet) {
-	  const body = [startTile];
-	  const queue = [startTile];
-	  const visited = new Set([startTile]);
-	  
-	  while (queue.length > 0) {
-		const current = queue.shift();
-		const neighbors = current.tiles || [];
-		
-		for (const neighbor of neighbors) {
-		  // Skip if already visited, already has a body, or wrong type (land/water)
-		  if (visited.has(neighbor) || neighbor.body || !tileSet.has(neighbor)) {
-			continue;
-		  }
-		  
-		  visited.add(neighbor);
-		  queue.push(neighbor);
-		  body.push(neighbor);
-		}
-	  }
-	  
-	  return body;
-	}
-	
-	// Process water bodies based on water-to-land ratio
-	const waterToLandRatioThreshold = 1; // Water body size / bordering land tiles <= 1
-	
-	// For each water body
-	const waterBodies = planet.topology.bodies.filter(body => body.id < 0);
-	
-	for (const waterBody of waterBodies) {
-	  // Find all neighboring land tiles and their bodies
-	  const neighboringLandTiles = new Set();
-	  const neighboringLandBodies = new Set();
-	  
-	  // Check each water tile for land neighbors
-	  for (const waterTile of waterBody.tiles) {
-		const neighbors = waterTile.tiles || [];
-		
-		for (const neighbor of neighbors) {
-		  // If neighbor is land and belongs to a land body
-		  if (neighbor.elevation >= 0 && neighbor.body && neighbor.body.id > 0) {
-			neighboringLandTiles.add(neighbor);
-			neighboringLandBodies.add(neighbor.body);
-		  }
-		}
-	  }
-	  
-	  // Calculate water-to-land ratio
-	  const waterTileCount = waterBody.tiles.length;
-	  const landTileCount = neighboringLandTiles.size;
-	  const waterToLandRatio = waterTileCount / landTileCount;
-	  
-	  // Convert neighboring land bodies to array for easier processing
-	  const landBodiesArray = Array.from(neighboringLandBodies);
-	  
-	  // If ratio is <= threshold and there's exactly one neighboring land body
-	  if (waterToLandRatio <= waterToLandRatioThreshold && landBodiesArray.length === 1) {
-		const landBody = landBodiesArray[0];
-		
-		// Find the lowest elevation among neighboring land tiles
-		let lowestLandElevation = Infinity;
-		for (const landTile of neighboringLandTiles) {
-		  if (landTile.elevation < lowestLandElevation) {
-			lowestLandElevation = landTile.elevation;
-		  }
-		}
-		
-		// Change elevation of water tiles and reassign to land body
-		for (const waterTile of waterBody.tiles) {
-		  // Set elevation based on the lowest land elevation + a small increment based on tile id
-		  waterTile.elevation = lowestLandElevation + 0.0000001 * Math.abs(waterTile.id || 0);
-		  
-		  // Reassign to land body
-		  waterTile.body = landBody;
-		  landBody.tiles.push(waterTile);
-		}
-		
-		// Mark this water body for removal
-		waterBody.tiles = [];
-	  }
-	}
-	
-	// Remove empty water bodies
-	planet.topology.bodies = planet.topology.bodies.filter(body => body.tiles.length > 0);
-	
-	for (b of planet.topology.bodies.filter(b => b.id > 0 && b.tiles.length > 20)) {
-		b.features =[];
-		let featureCount = 0;
-		for (t of b.tiles) {
-			t.s = t.shore;
-		}
-		let blanks = b.tiles.filter(t=>t.s > 0);
-		for (let i = 0; i < 12; i++) { 
-			if (blanks.length > 0) {
-				blanks.sort((a, b) => b.shore - a.shore || b.elevation - a.elevation);
-				featureCount++;
-				b.features.push({id: 'b'+b.id+'f'+featureCount, tiles: [blanks[0]], color: undefined});
-
-				let newFeature = b.features[featureCount-1];
-				let hash = Math.random();
-				if (hash < 0.5) {
-					newFeature.color = new THREE.Color(0xFFFF00).lerp(new THREE.Color(0x009966), hash*2);
-				} else {
-					newFeature.color = new THREE.Color(0x009966).lerp(new THREE.Color(0x800080), (hash-0.5)*2);
-				}
-				
-				blanks[0].s=0;
-				blanks[0].feature = newFeature;
-
-				let lastRing = newFeature.tiles;
-				let nextRing = [...new Set(lastRing.map(nft => nft.tiles).flat().filter(nr => nr.s > 0))];
-				while (nextRing.filter(t=>t.shore > 0).length/nextRing.length>0.95) {
-					for (t of nextRing.filter(t=>t.s > 0)) {
-						newFeature.tiles.push(t);
-						t.s=0;
-						t.feature = newFeature;
-					}
-					lastRing = nextRing;
-					nextRing = [...new Set(lastRing.map(nft => nft.tiles).flat().filter(nr=>!newFeature.tiles.includes(nr)))];
-					//console.log(nextRing.filter(t=>t.s > 0).length,nextRing.length);
-				}
-
-				blanks = b.tiles.filter(t=>t.s > 0);
-			}
-		}
-
-	}
-	
-	//console.log(planet.topology.bodies);
-	return planet.topology.bodies;
-}
+// groupBodies function moved to generatePlanetTerrain_functions.js
 
 function generatePlanetRenderData(topology, random, action) {
 	var renderData = {};
@@ -961,10 +766,12 @@ function showHideInterface() {
 		terrainColorPanel.style.display = terrainColorPanel.style.display === 'none' ? 'block' : 'none';
 	}
 	
-	// Toggle FPS overlay
+	// Toggle FPS overlay - show with control panel
 	var fpsOverlay = document.getElementById('fpsOverlay');
 	if (fpsOverlay) {
-		fpsOverlay.style.display = fpsOverlay.style.display === 'none' ? 'block' : 'none';
+		// Check if panels are visible to determine FPS overlay state
+		var controlPanelVisible = ui.controlPanel.is(':visible');
+		fpsOverlay.style.display = controlPanelVisible ? 'block' : 'none';
 	}
 }
 

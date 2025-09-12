@@ -201,3 +201,36 @@ function buildGraph(vertices, edges) {
     return graph;
 
 }
+
+// Calculate Average Border Length from topology borders
+// Moved from planet-generator.js for better organization
+function calculateAverageBorderLength(borders) {
+	if (!borders || borders.length === 0) {
+		return averageBorderLength;
+	}
+	
+	var totalLength = 0;
+	var validBorders = 0;
+	
+	for (var i = 0; i < borders.length; i++) {
+		var border = borders[i];
+		if (border.corners && border.corners.length >= 2) {
+			var corner0 = border.corners[0];
+			var corner1 = border.corners[1];
+			if (corner0.position && corner1.position) {
+				var borderLength = corner0.position.distanceTo(corner1.position);
+				if (borderLength > 0) {
+					totalLength += borderLength;
+					validBorders++;
+				}
+			}
+		}
+	}
+	
+	if (validBorders === 0) {
+		return averageBorderLength;
+	}
+	
+	var calculatedABL = totalLength / validBorders;
+	return calculatedABL;
+}
