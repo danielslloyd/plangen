@@ -169,6 +169,10 @@ function keyUpHandler(event) {
 			setSurfaceRenderMode("calorie");
 			event.preventDefault();
 			break;
+		case KEY.W:
+			setSurfaceRenderMode("watersheds");
+			event.preventDefault();
+			break;
 		case KEY.U:
 			showHideSunlight();
 			event.preventDefault();

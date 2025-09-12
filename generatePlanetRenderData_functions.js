@@ -1045,6 +1045,15 @@ registerColorOverlay("heat", "Heat Map", "Red-hot visualization based on elevati
 	return new THREE.Color(intensity, 0, 0);
 });
 
+// Watersheds color overlay - shows drainage basins in different colors
+registerColorOverlay("watersheds", "Watersheds", "Shows drainage basins with distinct colors", function(tile) {
+	if (tile.watershed && tile.watershed.color) {
+		return new THREE.Color(tile.watershed.color);
+	}
+	// Default color for tiles without watershed assignment
+	return tile.elevation <= 0 ? new THREE.Color(0x0066CC) : new THREE.Color(0x888888);
+});
+
 // Land Regions color overlay - shows K-means clustered land regions
 registerColorOverlay("landRegions", "Land Regions", "Shows clustered land regions in different colors", function(tile) {
 	// Ocean tiles stay blue
