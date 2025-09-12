@@ -1,5 +1,21 @@
 // Legacy Three.js r68 compatibility code removed - now using direct BufferGeometry creation
 
+// Global terrain color settings for picker integration
+var terrainColors = {
+	// Ocean colors (depth + temperature three-step lerp)
+	oceanSurfaceWarm: new THREE.Color(0x27efff),
+	oceanSurfaceCold: new THREE.Color(0x1ba3cc),
+	oceanDeepWarm: new THREE.Color(0x072995),
+	oceanDeepCold: new THREE.Color(0x222d5e),
+	
+	// Land colors (moisture + elevation + temperature lerp)
+	landLowDry: new THREE.Color(0xcccc66),    // A - low elevation, dry
+	landLowWet: new THREE.Color(0x005000),    // B - low elevation, wet  
+	landHighDry: new THREE.Color(0x777788),   // C - high elevation, dry
+	landHighWet: new THREE.Color(0x444455),   // D - high elevation, wet
+	landCold: new THREE.Color(0x555544)       // E - cold temperature
+};
+
 function buildSurfaceRenderObject(tiles, watersheds, random, action) {
 	
 	// Calculate geometry requirements (simple triangle fan per tile)
@@ -830,10 +846,20 @@ function calculateTerrainColor(tile) {
 		if ((tile.temperature < 0 || (Math.min(tile.elevation, 1) - Math.min(Math.max(tile.temperature, 0), 1) / 1.5 > 0.75)) && tile.lake) {
 			terrainColor = new THREE.Color(0xDDEEFF) // glacier
 		} else if (tile.biome === "ocean" || tile.lake) {
-			// Complex ocean color with depth and temperature
-			terrainColor = new THREE.Color(0x27efff)
-				.lerp(new THREE.Color(0x072995), Math.pow(normalizedDepth, 1 / 3))
-				.lerp(new THREE.Color(0x072995).lerp(new THREE.Color(0x222D5E), Math.pow(normalizedDepth, 1 / 5)), 1 - 1.1 * tile.temperature);
+			// Three-step ocean color lerp: (Surface/Deep) × (Warm/Cold)
+			var normalizedTemperature = Math.min(Math.max(tile.temperature, 0), 1);
+			
+			// Step 1: Lerp surface colors warm→cold based on temperature
+			var surfaceColor = terrainColors.oceanSurfaceWarm.clone()
+				.lerp(terrainColors.oceanSurfaceCold, 1 - normalizedTemperature);
+				
+			// Step 2: Lerp deep colors warm→cold based on temperature  
+			var deepColor = terrainColors.oceanDeepWarm.clone()
+				.lerp(terrainColors.oceanDeepCold, 1 - normalizedTemperature);
+				
+			// Step 3: Lerp surface→deep based on depth
+			terrainColor = surfaceColor
+				.lerp(deepColor, Math.pow(normalizedDepth, 1 / 3));
 		} else if (tile.biome === "seaIce") {
 			terrainColor = new THREE.Color(0x9EE1FF);
 		} else {
@@ -845,11 +871,22 @@ function calculateTerrainColor(tile) {
 		var normalizedMoisture = Math.min(tile.moisture, 1);
 		var normalizedTemperature = Math.min(Math.max(tile.temperature, 0), 1);
 
-		// Base terrain color - sophisticated blend
-		terrainColor = new THREE.Color(0xCCCC66) // Base yellowish color
-			.lerp(new THREE.Color(0x005000), Math.pow(normalizedMoisture, .25))  // Green for moisture
-			.lerp(new THREE.Color(0x777788), Math.pow(normalizedElevation, 2))   // Gray for elevation
-			.lerp(new THREE.Color(0x555544), (1 - tile.temperature));           // Brown for cold
+		// Sophisticated land color blend using picker colors
+		// Step 1: Lerp low elevation colors A (dry) and B (wet) based on moisture
+		var lowElevationColor = terrainColors.landLowDry.clone()
+			.lerp(terrainColors.landLowWet, Math.pow(normalizedMoisture, 0.25));
+		
+		// Step 2: Lerp high elevation colors C (dry) and D (wet) based on moisture  
+		var highElevationColor = terrainColors.landHighDry.clone()
+			.lerp(terrainColors.landHighWet, Math.pow(normalizedMoisture, 0.25));
+		
+		// Step 3: Lerp between AB and CD based on elevation
+		var elevationColor = lowElevationColor
+			.lerp(highElevationColor, Math.pow(normalizedElevation, 2));
+		
+		// Step 4: Final lerp to cold temperature color E
+		terrainColor = elevationColor
+			.lerp(terrainColors.landCold, (1 - tile.temperature));
 		
 		// Additional elevation blending for realistic mountain appearance
 		//var elevationBlend = Math.max(0, Math.min(1, Math.pow(Math.max(normalizedElevation - .4, 0), .7) - normalizedMoisture));

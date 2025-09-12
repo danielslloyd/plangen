@@ -953,8 +953,13 @@ function displayPlanet(newPlanet) {
 function showHideInterface() {
 	ui.helpPanel.toggle();
 	ui.controlPanel.toggle();
-	ui.dataPanel.toggle();
 	ui.updatePanel.toggle();
+	
+	// Toggle terrain color panel
+	var terrainColorPanel = document.getElementById('terrainColorPanel');
+	if (terrainColorPanel) {
+		terrainColorPanel.style.display = terrainColorPanel.style.display === 'none' ? 'block' : 'none';
+	}
 	
 	// Toggle FPS overlay
 	var fpsOverlay = document.getElementById('fpsOverlay');

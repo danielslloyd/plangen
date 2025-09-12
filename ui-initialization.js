@@ -85,19 +85,11 @@ $(document).ready(function onDocumentReady() {
 	ui.showRiversButton.click(showHideRivers);
 	ui.showAirCurrentsButton.click(showHideAirCurrents);
 
-	ui.lowDetailButton = $("#lowDetailButton");
-	ui.mediumDetailButton = $("#mediumDetailButton");
-	ui.highDetailButton = $("#highDetailButton");
-	ui.generatePlanetButton = $("#generatePlanetButton");
+	// Removed detail level and generate buttons
 	ui.advancedSettingsButton = $("#advancedSettingsButton");
-
-	ui.lowDetailButton.click(setSubdivisions.bind(null, 20));
-	ui.mediumDetailButton.click(setSubdivisions.bind(null, 40));
-	ui.highDetailButton.click(setSubdivisions.bind(null, 60));
-	ui.generatePlanetButton.click(generatePlanetAsynchronous);
 	ui.advancedSettingsButton.click(showAdvancedSettings);
 
-	ui.dataPanel = $("#dataPanel");
+	// Removed ui.dataPanel - statistics panel no longer exists
 
 	ui.progressPanel = $("#progressPanel");
 	ui.progressActionLabel = $("#progressActionLabel");
@@ -233,29 +225,130 @@ $(document).ready(function onDocumentReady() {
 	//showHideEdgeCosts(renderEdgeCosts);
 	showHideRivers(renderRivers);
 
-	ui.lowDetailButton.click();
+	// Set default subdivisions to low detail (20) since buttons are removed
+	setSubdivisions(20);
 
 	//saveToFileSystem(serializePlanetMesh(planet.mesh, "function getPregeneratedPlanetMesh() { return ", "; }\n"));
 
 	window.addEventListener("resize", resizeHandler);
 	resizeHandler();
-	showHideInterface();
+	// Removed showHideInterface() call - both panels now start hidden by default
     document.addEventListener('mousemove', (event) => {
         const rect = renderer.domElement.getBoundingClientRect();
         mouseX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
         mouseY = -((event.clientY - rect.top) / rect.height) * 2 + 1;
     });
 
-	ui.generatePlanetButton.click();
+	generatePlanetAsynchronous();
+	
+	// Initialize terrain color pickers
+	initializeTerrainColorPickers();
 });
+
+// Initialize terrain color picker system
+function initializeTerrainColorPickers() {
+	// Ocean color pickers - new four-color system
+	document.getElementById('oceanSurfaceWarm').addEventListener('change', function() {
+		terrainColors.oceanSurfaceWarm.setHex(parseInt(this.value.replace('#', '0x')));
+		updateTerrainColorsAndRefresh();
+	});
+	
+	document.getElementById('oceanSurfaceCold').addEventListener('change', function() {
+		terrainColors.oceanSurfaceCold.setHex(parseInt(this.value.replace('#', '0x')));
+		updateTerrainColorsAndRefresh();
+	});
+	
+	document.getElementById('oceanDeepWarm').addEventListener('change', function() {
+		terrainColors.oceanDeepWarm.setHex(parseInt(this.value.replace('#', '0x')));
+		updateTerrainColorsAndRefresh();
+	});
+	
+	document.getElementById('oceanDeepCold').addEventListener('change', function() {
+		terrainColors.oceanDeepCold.setHex(parseInt(this.value.replace('#', '0x')));
+		updateTerrainColorsAndRefresh();
+	});
+	
+	// Land color pickers
+	document.getElementById('landLowDry').addEventListener('change', function() {
+		terrainColors.landLowDry.setHex(parseInt(this.value.replace('#', '0x')));
+		updateTerrainColorsAndRefresh();
+	});
+	
+	document.getElementById('landLowWet').addEventListener('change', function() {
+		terrainColors.landLowWet.setHex(parseInt(this.value.replace('#', '0x')));
+		updateTerrainColorsAndRefresh();
+	});
+	
+	document.getElementById('landHighDry').addEventListener('change', function() {
+		terrainColors.landHighDry.setHex(parseInt(this.value.replace('#', '0x')));
+		updateTerrainColorsAndRefresh();
+	});
+	
+	document.getElementById('landHighWet').addEventListener('change', function() {
+		terrainColors.landHighWet.setHex(parseInt(this.value.replace('#', '0x')));
+		updateTerrainColorsAndRefresh();
+	});
+	
+	document.getElementById('landCold').addEventListener('change', function() {
+		terrainColors.landCold.setHex(parseInt(this.value.replace('#', '0x')));
+		updateTerrainColorsAndRefresh();
+	});
+}
+
+// Update terrain colors and refresh the display
+function updateTerrainColorsAndRefresh() {
+	// Only update if we're currently viewing terrain mode and have a planet
+	var currentOverlay = getCurrentColorOverlay();
+	if (currentOverlay === 'terrain' && planet && planet.topology) {
+		console.log('Updating terrain colors...');
+		
+		// Regenerate render data with new colors
+		var startTime = Date.now();
+		var regenerateAction = new SteppedAction("Updating Terrain Colors");
+		regenerateAction
+			.executeSubaction(function(action) {
+				return generatePlanetRenderData(planet.topology, planet.random, action);
+			})
+			.getResult(function(renderData) {
+				// Update the planet's render data
+				Object.keys(renderData).forEach(function(key) {
+					if (planet.renderData[key] && planet.renderData[key].renderObject) {
+						// Remove old render object from scene
+						scene.remove(planet.renderData[key].renderObject);
+					}
+					planet.renderData[key] = renderData[key];
+					
+					// Only automatically add the surface render object to the scene
+					if (key === 'surface' && renderData[key] && renderData[key].renderObject) {
+						scene.add(renderData[key].renderObject);
+					}
+				});
+				
+				// Reapply current visibility settings
+				showHideSunlight(renderSunlight);
+				showHidePlateBoundaries(renderPlateBoundaries);
+				showHidePlateMovements(renderPlateMovements);
+				showHideAirCurrents(renderAirCurrents);
+				showHideRivers(renderRivers);
+				
+				console.log('Terrain color update complete in', (Date.now() - startTime), 'ms');
+			})
+			.execute();
+	} else {
+		console.log('Cannot apply color overlay - not in terrain mode or missing planet data');
+	}
+}
+
+// Get current color overlay selection
+function getCurrentColorOverlay() {
+	var dropdown = document.getElementById('colorOverlayDropdown');
+	return dropdown ? dropdown.value : 'terrain';
+}
 
 function setSubdivisions(subdivisions) {
 	if (typeof (subdivisions) === "number" && subdivisions >= 4) {
 		generationSettings.subdivisions = subdivisions;
-		$("#detailDisplaylist>button.toggled").removeClass("toggled");
-		if (subdivisions === 20) ui.lowDetailButton.addClass("toggled");
-		else if (subdivisions === 40) ui.mediumDetailButton.addClass("toggled");
-		else if (subdivisions === 60) ui.highDetailButton.addClass("toggled");
+		// Removed detail button toggling since buttons no longer exist
 
 		subdivisions = subdivisions.toFixed(0);
 		if (ui.detailLevelRange.val() !== subdivisions) ui.detailLevelRange.val(subdivisions);

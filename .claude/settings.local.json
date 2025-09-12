@@ -3,7 +3,8 @@
     "allow": [
       "Bash(find:*)",
       "Bash(node:*)",
-      "Bash(start PlanGen.html)"
+      "Bash(start PlanGen.html)",
+      "Read(//c/Users/U064928/Downloads/**)"
     ],
     "deny": [],
     "ask": []
