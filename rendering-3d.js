@@ -469,12 +469,12 @@ function buildLabelsRenderObject() {
 		return null;
 	}
 	
-	console.log('DEBUG: labeledTiles contents:', labeledTiles.map(t => ({
+/* 	console.log('DEBUG: labeledTiles contents:', labeledTiles.map(t => ({
 		label: t.label, 
 		elevation: t.elevation,
 		hasAveragePosition: !!t.averagePosition,
 		hasElevationDisplacement: !!t.elevationDisplacement
-	})));
+	}))); */
 	
 	// Create a group to hold all labels
 	var labelsGroup = new THREE.Group();
@@ -482,7 +482,7 @@ function buildLabelsRenderObject() {
 	
 	for (var i = 0; i < labeledTiles.length; i++) {
 		var tile = labeledTiles[i];
-		console.log('DEBUG: Processing tile', i, 'with label:', tile.label);
+		//console.log('DEBUG: Processing tile', i, 'with label:', tile.label);
 		
 		if (!tile.label || !tile.averagePosition) {
 			console.log('DEBUG: Skipping tile - missing label or averagePosition');
@@ -496,8 +496,8 @@ function buildLabelsRenderObject() {
 		var labelPosition = tile.averagePosition.clone();
 		var distance = labelPosition.length();
 		
-		console.log('DEBUG: Tile position distance:', distance, 'elevation:', tile.elevation, 'elevationDisplacement:', tile.elevationDisplacement);
-		console.log('DEBUG: useElevationDisplacement setting:', useElevationDisplacement);
+		//console.log('DEBUG: Tile position distance:', distance, 'elevation:', tile.elevation, 'elevationDisplacement:', tile.elevationDisplacement);
+		//console.log('DEBUG: useElevationDisplacement setting:', useElevationDisplacement);
 		
 		// Position label just above the surface, respecting 3D/sphere mode
 		var labelOffset = 10; // Small offset to appear just above surface
@@ -505,11 +505,11 @@ function buildLabelsRenderObject() {
 		if (useElevationDisplacement && tile.elevation > 0 && tile.elevationDisplacement) {
 			// 3D mode: position above the elevated terrain
 			labelPosition.normalize().multiplyScalar(distance + tile.elevationDisplacement + labelOffset);
-			console.log('DEBUG: Applied 3D elevation positioning - offset from displaced surface');
+			//console.log('DEBUG: Applied 3D elevation positioning - offset from displaced surface');
 		} else {
 			// Sphere mode: position just above base sphere surface
 			labelPosition.normalize().multiplyScalar(distance + labelOffset);
-			console.log('DEBUG: Applied sphere positioning - offset from base sphere');
+			//console.log('DEBUG: Applied sphere positioning - offset from base sphere');
 		}
 		
 		sprite.position.copy(labelPosition);
@@ -518,7 +518,7 @@ function buildLabelsRenderObject() {
 		labelsGroup.add(sprite);
 		labelSprites.push(sprite);
 		
-		console.log('DEBUG: Added sprite to group, position:', sprite.position);
+		//console.log('DEBUG: Added sprite to group, position:', sprite.position);
 	}
 	
 	console.log('DEBUG: Created', labelSprites.length, 'label sprites from', validTiles, 'valid tiles');

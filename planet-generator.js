@@ -12,7 +12,6 @@
 window.logElevationChange = function(tile, functionName, newElevation) {
 	if (!tile.log) tile.log = [];
 	tile.log.push(functionName + ': ' + newElevation.toFixed(4));
-	console.log('Elevation change logged:', tile.id, functionName, newElevation.toFixed(4));
 };
 
 // Global Average Border Length (ABL) for triangle sizing
@@ -24,14 +23,14 @@ var labeledTiles = [];
 // Terrain Color Initialization - Generated from Color Picker
 terrainColors = {
 	oceanSurfaceWarm: new THREE.Color("#27efff"),
-	oceanSurfaceCold: new THREE.Color("#072f6e"),
+	oceanSurfaceCold: new THREE.Color("#383f75"),
 	oceanDeepWarm: new THREE.Color("#072995"),
-	oceanDeepCold: new THREE.Color("#23225e"),
+	oceanDeepCold: new THREE.Color("#29225e"),
 	landLowDry: new THREE.Color("#cccc66"),
-	landLowWet: new THREE.Color("#007a00"),
+	landLowWet: new THREE.Color("#005000"),
 	landHighDry: new THREE.Color("#777788"),
-	landHighWet: new THREE.Color("#003816"),
-	landCold: new THREE.Color("#5c5c5c")
+	landHighWet: new THREE.Color("#444455"),
+	landCold: new THREE.Color("#555544")
 };
 
 // calculateAverageBorderLength function moved to utilities.js
@@ -194,33 +193,23 @@ function Planet() {}
 
 // Function to collect all tiles with labels into the global labeledTiles array
 function collectLabeledTiles(tiles) {
-	console.log('DEBUG: collectLabeledTiles called with', tiles ? tiles.length : 'null', 'tiles');
-	console.log('DEBUG: Previous labeledTiles array had', labeledTiles.length, 'items');
-	
 	labeledTiles = []; // Clear previous labels
 	if (!tiles) {
-		console.log('DEBUG: No tiles provided to collectLabeledTiles');
 		return labeledTiles;
 	}
 	
 	var foundLabeled = [];
 	for (var i = 0; i < tiles.length; i++) {
 		if (tiles[i].label) {
-			console.log('DEBUG: Found labeled tile:', tiles[i].label, 'elevation:', tiles[i].elevation, 'id:', tiles[i].id || 'no-id');
 			labeledTiles.push(tiles[i]);
 			foundLabeled.push({label: tiles[i].label, elevation: tiles[i].elevation, id: tiles[i].id});
 		}
 	}
 	
-	console.log('DEBUG: collectLabeledTiles result:', labeledTiles.length, 'labeled tiles');
-	console.log('DEBUG: Found labeled tiles:', foundLabeled);
-	console.log('DEBUG: labeledTiles array now contains:', labeledTiles.map(t => ({label: t.label, elevation: t.elevation})));
 	return labeledTiles;
 }
 
 function generatePlanet(icosahedronSubdivision, topologyDistortionRate, plateCount, oceanicRate, heatLevel, moistureLevel, random, action) {
-	console.log('🌍 Starting Planet Generation');
-	console.log('DEBUG: Starting new planet generation - labeledTiles array state:', labeledTiles.length, 'items');
 	ctime('Total Generation Time');
 	var planet = new Planet();
 	var mesh;
@@ -233,7 +222,6 @@ function generatePlanet(icosahedronSubdivision, topologyDistortionRate, plateCou
 		.getResult(function (result) {
 			ctimeEnd('1. Mesh Generation');
 			mesh = result;
-			//console.log(mesh);
 		})
 		.executeSubaction(function (action) {
 			ctime('2. Topology Generation');
@@ -246,7 +234,6 @@ function generatePlanet(icosahedronSubdivision, topologyDistortionRate, plateCou
 			
 			// Calculate Average Border Length (ABL) for triangle sizing
 			averageBorderLength = calculateAverageBorderLength(planet.topology.borders);
-			//console.log(planet.topology);
 		})
 		.executeSubaction(function (action) {
 			ctime('3. Spatial Partitions');
@@ -262,7 +249,6 @@ function generatePlanet(icosahedronSubdivision, topologyDistortionRate, plateCou
 		}, 8, "Generating Terrain")
 		.getResult(function (result) {
 			ctimeEnd('4. Terrain Generation');
-			console.log('✅ Terrain Generation Complete - Rivers and air currents should now be available');
 		})
 		.executeSubaction(function (action) {
 			ctime('5. Render Data');
@@ -280,7 +266,6 @@ function generatePlanet(icosahedronSubdivision, topologyDistortionRate, plateCou
 			ctimeEnd('6. Statistics');
 			planet.statistics = result;
 			ctimeEnd('Total Generation Time');
-			console.log('✅ Planet Generation Complete');
 		})
 		.provideResult(planet);
 }
@@ -400,13 +385,29 @@ function generatePlanetRenderData(topology, random, action) {
 
 	action
 		.executeSubaction(function (action) {
-			buildSurfaceRenderObject(topology.tiles, topology.watersheds, random, action);
+			var lambertMaterial = new THREE.MeshLambertMaterial({
+				vertexColors: true,
+				wireframe: false,
+				side: THREE.DoubleSide
+			});
+			buildSurfaceRenderObject(topology.tiles, topology.watersheds, random, action, lambertMaterial);
 		}, 8, "Building Surface Visuals")
 		.getResult(function (result) {
-			console.log("Received surface result:", result);
-			console.log("Result properties:", Object.keys(result));
-			console.log("Result.renderObject:", result.renderObject);
 			renderData.surface = result;
+		})
+		
+		.executeSubaction(function (action) {
+			buildTestTileObject(topology.tiles, random, action);
+		}, 1, "Building Test Tile Object")
+		.getResult(function (result) {
+			renderData.testTiles = result;
+		})
+		
+		.executeSubaction(function (action) {
+			buildSimpleTestObject(action);
+		}, 1, "Building Simple Test Object")
+		.getResult(function (result) {
+			renderData.simpleTest = result;
 		})
 		.executeSubaction(function (action) {
 			buildPlateBoundariesRenderObject(topology.borders, action);
@@ -439,12 +440,7 @@ function generatePlanetRenderData(topology, random, action) {
 			renderData.moon = result;
 		})
 		.executeSubaction(function (action) {
-			console.log('DEBUG: About to build labels render object');
 			renderData.labels = buildLabelsRenderObject();
-			console.log('DEBUG: Labels render object created:', !!renderData.labels);
-			if (renderData.labels) {
-				console.log('DEBUG: Labels render object has', renderData.labels.children.length, 'children');
-			}
 		}, 1, "Building Label Visuals");
 
 	action.provideResult(renderData);
@@ -758,28 +754,15 @@ function displayPlanet(newPlanet) {
         }
         
         // Remove existing labels
-        console.log('DEBUG: Cleaning up previous labels');
         if (planet.renderData && planet.renderData.labels) {
-            console.log('DEBUG: Removing previous labels from scene - had', planet.renderData.labels.children.length, 'children');
             scene.remove(planet.renderData.labels);
-            // Note: clearLabelSprites() will be called in buildLabelsRenderObject() for the new planet
-            console.log('DEBUG: Previous labels removed from scene');
-        } else {
-            console.log('DEBUG: No previous labels to clean up');
         }
     } else {
         sunTimeOffset = Math.PI * 2 * (1 / 12 - Date.now() / 60000);
     }
     planet = newPlanet;
     scene.add(planet.renderData.surface.renderObject);
-    
-    // Add test cube for debugging
-    /* if (planet.renderData.surface.testCube) {
-        scene.add(planet.renderData.surface.testCube);
-        console.log("Added test cube to scene");
-    } */
     setSurfaceRenderMode(surfaceRenderMode, true);
-    console.log("displayPlanet: About to call overlay functions");
     showHideSunlight(renderSunlight);
     showHidePlateBoundaries(renderPlateBoundaries);
     showHidePlateMovements(renderPlateMovements);
@@ -787,7 +770,6 @@ function displayPlanet(newPlanet) {
     showHideRivers(renderRivers);
     showHideMoon(renderMoon);
     showHideLabels(renderLabels);
-    console.log("displayPlanet: Finished calling overlay functions");
     updateCamera();
     updateUI();
 
@@ -811,24 +793,16 @@ function displayPlanet(newPlanet) {
 }
 
 function showHideLabels(show) {
-	console.log('DEBUG: showHideLabels called with:', show);
-	console.log('DEBUG: renderLabels state:', renderLabels);
-	console.log('DEBUG: planet exists:', !!planet);
-	console.log('DEBUG: planet.renderData exists:', !!(planet && planet.renderData));
-	console.log('DEBUG: planet.renderData.labels exists:', !!(planet && planet.renderData && planet.renderData.labels));
 	
 	renderLabels = show;
 	if (!planet || !planet.renderData || !planet.renderData.labels) {
-		console.log('DEBUG: Cannot show/hide labels - missing planet, renderData, or labels object');
 		return;
 	}
 	
 	if (show) {
 		scene.add(planet.renderData.labels);
-		console.log('DEBUG: Labels added to scene - children count:', planet.renderData.labels.children.length);
 	} else {
 		scene.remove(planet.renderData.labels);
-		console.log('DEBUG: Labels removed from scene');
 	}
 }
 

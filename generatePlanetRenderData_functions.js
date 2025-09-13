@@ -1,7 +1,7 @@
 // Legacy Three.js r68 compatibility code removed - now using direct BufferGeometry creation
 // Note: terrainColors is now defined in planet-generator.js
 
-function buildSurfaceRenderObject(tiles, watersheds, random, action) {
+function buildSurfaceRenderObject(tiles, watersheds, random, action, customMaterial) {
 	
 	// Calculate geometry requirements (simple triangle fan per tile)
 	var totalVertices = 0;
@@ -21,6 +21,7 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action) {
 	
 	var vertexIndex = 0;
 	var triangleIndex = 0;
+	var finalResult = null; // Store the final result here
 	
 	var minShore = Math.min.apply(0, tiles.map((data) => data.shore));
 	var maxShore = Math.max.apply(0, tiles.map((data) => data.shore));
@@ -30,16 +31,24 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action) {
 
 	var i = 0;
 	action.executeSubaction(function (action) {
-		if (i >= tiles.length) return;
+		//console.log("*** TILE LOOP EXECUTING! i =", i, "tiles.length =", tiles.length, "***");
+		
+		if (i >= tiles.length) {
+			//console.log("*** TILE LOOP ENDING - reached tiles.length ***");
+			action.provideResult("completed");
+			return;
+		}
 
-		//if (i % 100 === 0) {
-		//	console.log("Processing tile", i, "of", tiles.length);
-		//}
+		if (i % 100 === 0) {
+			//console.log("Processing tile", i, "of", tiles.length);
+		}
 
 		var tile = tiles[i];
 		
+		
 		// Calculate terrain color using extracted function
 		var terrainColor = calculateTerrainColor(tile);
+		
 		
 		// Store tile center index
 		var centerIndex = vertexIndex;
@@ -52,6 +61,13 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action) {
 			centerPos.normalize().multiplyScalar(centerDistance + displacement);
 		}
 		
+		// DEBUG: Check center position calculation
+		if (i === 0) {
+			console.log("centerPos:", centerPos);
+			console.log("centerPos.x/y/z:", centerPos.x, centerPos.y, centerPos.z);
+			console.log("About to assign to positions[", vertexIndex * 3, "]");
+		}
+		
 		// Add center position
 		positions[vertexIndex * 3] = centerPos.x;
 		positions[vertexIndex * 3 + 1] = centerPos.y;
@@ -61,6 +77,12 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action) {
 		colors[vertexIndex * 3] = terrainColor.r;
 		colors[vertexIndex * 3 + 1] = terrainColor.g;
 		colors[vertexIndex * 3 + 2] = terrainColor.b;
+		
+		// DEBUG: Verify assignment worked
+		if (i === 0) {
+			console.log("After assignment - positions[0-2]:", positions[0], positions[1], positions[2]);
+			console.log("After assignment - colors[0-2]:", colors[0], colors[1], colors[2]);
+		}
 		
 		vertexIndex++;
 		
@@ -106,62 +128,87 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action) {
 		
 		++i;
 
-		action.loop(i / tiles.length);
+		if (i < tiles.length) {
+			action.loop(i / tiles.length);
+		} else {
+			console.log("=== ALL TILES PROCESSED ===");
+			console.log("Final vertexIndex:", vertexIndex);
+			console.log("Final triangleIndex:", triangleIndex);
+			console.log("=== FIRST EXECUTESUBACTION COMPLETING ===");
+		}
 	});
 
-	// Create BufferGeometry directly (no conversion needed)
-	//console.log("=== CREATING MODERN BUFFER GEOMETRY ===");
-	//console.log("Final vertexIndex:", vertexIndex);
-	//console.log("Final triangleIndex:", triangleIndex);
+	// Create BufferGeometry after executeSubaction completes
+	action.executeSubaction(function(action) {
+		console.log("=== SECOND EXECUTESUBACTION STARTING ===");
+		console.log("=== CREATING GEOMETRY AFTER TILE PROCESSING ===");
+		
+		// DEBUG: Check arrays after all tiles processed
+		console.log("positions first 9 values:", Array.from(positions.slice(0, 9)));
+		console.log("colors first 9 values:", Array.from(colors.slice(0, 9)));
+		console.log("indices first 9 values:", Array.from(indices.slice(0, 9)));
+		
+		var planetGeometry = new THREE.BufferGeometry();
+		
+		// Set buffer attributes directly
+		planetGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+		planetGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+		planetGeometry.setIndex(new THREE.BufferAttribute(indices, 1));
+		
+		// Force fresh normal calculation
+		console.log("=== COMPUTING NORMALS ===");
+		planetGeometry.computeVertexNormals();
+		planetGeometry.computeBoundingBox();
+		
+		// Verify normals
+		if (planetGeometry.attributes.normal) {
+			var newNormals = planetGeometry.attributes.normal.array;
+			var checkValid = 0;
+			for (var check = 0; check < Math.min(10, newNormals.length / 3); check++) {
+				var nx = newNormals[check * 3];
+				var ny = newNormals[check * 3 + 1];
+				var nz = newNormals[check * 3 + 2];
+				if (!(nx === 0 && ny === 0 && nz === 0)) {
+					checkValid++;
+				}
+			}
+			console.log("Normal check - Valid:", checkValid, "out of 10");
+		}
+		
+		// Create material
+		var planetMaterial;
+		if (customMaterial) {
+			planetMaterial = customMaterial;
+			console.log("Using custom material:", planetMaterial.type);
+		} else {
+			planetMaterial = new THREE.MeshBasicMaterial({
+				vertexColors: true,
+				wireframe: false,
+				side: THREE.DoubleSide,
+				color: 0xFFFFFF
+			});
+			console.log("Using default Basic material");
+		}
+		
+		var planetRenderObject = new THREE.Mesh(planetGeometry, planetMaterial);
+		
+		console.log("=== SECOND EXECUTESUBACTION PROVIDING RESULT ===");
+		finalResult = {
+			geometry: planetGeometry,
+			material: planetMaterial,
+			renderObject: planetRenderObject
+		};
+		console.log("Result object:", finalResult);
+		
+		// Store result but don't call provideResult here
+	}, 1, "Building Final Geometry");
 	
-	var planetGeometry = new THREE.BufferGeometry();
-	
-	// Set buffer attributes directly
-	planetGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-	planetGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-	planetGeometry.setIndex(new THREE.BufferAttribute(indices, 1));
-	
-	// Compute normals for proper lighting
-	planetGeometry.computeVertexNormals();
-	planetGeometry.computeBoundingBox();
-	
-	/* console.log("=== MODERN GEOMETRY VALIDATION ===");
-	console.log("Position attribute:", planetGeometry.getAttribute('position'));
-	console.log("Color attribute:", planetGeometry.getAttribute('color'));
-	console.log("Index:", planetGeometry.getIndex());
-	if (planetGeometry.getAttribute('position')) {
-		console.log("Vertex count:", planetGeometry.getAttribute('position').count);
-	}
-	if (planetGeometry.getIndex()) {
-		console.log("Index count:", planetGeometry.getIndex().count);
-		console.log("Face count:", planetGeometry.getIndex().count / 3);
-	}
-	console.log("Bounding box:", planetGeometry.boundingBox);
-	console.log("=== END VALIDATION ==="); */
-	
-	// Create material with vertex colors - set color to white so it doesn't interfere
-	var planetMaterial = new THREE.MeshBasicMaterial({
-		vertexColors: true,
-		wireframe: false,
-		side: THREE.DoubleSide,
-		color: 0xFFFFFF  // White base color doesn't affect vertex colors
+	// Provide result as a function that returns finalResult when called
+	action.provideResult(function() {
+		console.log("=== MAIN FUNCTION RESULT FUNCTION CALLED ===");
+		console.log("Returning finalResult:", finalResult);
+		return finalResult;
 	});
-	
-	var planetRenderObject = new THREE.Mesh(planetGeometry, planetMaterial);
-	
- 	// Add a simple test cube to verify basic rendering works
-/* 	var testGeometry = new THREE.BoxGeometry(100, 100, 100);
-	var testMaterial = new THREE.MeshBasicMaterial({ color: 0x00FFFF, wireframe: true });
-	var testCube = new THREE.Mesh(testGeometry, testMaterial);
-	testCube.position.set(1500, 0, 0); // Position it off to the side
-	console.log("Adding test cube at position:", testCube.position);
-*/
-	action.provideResult({
-		geometry: planetGeometry,
-		material: planetMaterial,
-		renderObject: planetRenderObject,
-		//testCube: testCube  // Add test cube for debugging
-	});  
 }
 
 function buildPlateBoundariesRenderObject(borders, action) {
@@ -986,6 +1033,143 @@ function buildMoonRenderObject(action) {
 		geometry: moonGeometry,
 		material: moonMaterial,
 		renderObject: moonRenderObject
+	});
+}
+
+// Function to create a test tile object with Lambert material for debugging
+function buildTestTileObject(tiles, random, action) {
+	console.log("=== BUILDING TEST TILE OBJECT ===");
+	
+	// Use only first 50 tiles for testing (smaller, faster)
+	var testTiles = tiles.slice(0, Math.min(50, tiles.length));
+	console.log("Using", testTiles.length, "tiles for test object");
+	
+	// Create Lambert material for testing
+	var testMaterial = new THREE.MeshLambertMaterial({
+		vertexColors: true,
+		wireframe: false,
+		side: THREE.DoubleSide
+	});
+	console.log("Created Lambert test material:", testMaterial.type);
+	
+	// Use the same buildSurfaceRenderObject function with custom material
+	action.executeSubaction(function(action) {
+		buildSurfaceRenderObject(testTiles, null, random, action, testMaterial);
+	}, 1, "Building Test Tile Object")
+	.getResult(function(result) {
+		console.log("Test tile object result:", result);
+		
+		// Enhanced debugging for geometry comparison
+		if (result && result.geometry) {
+			console.log("=== TEST OBJECT GEOMETRY DEBUG ===");
+			console.log("Test geometry vertices:", result.geometry.attributes.position ? result.geometry.attributes.position.count : 'none');
+			console.log("Test geometry normals:", result.geometry.attributes.normal ? result.geometry.attributes.normal.count : 'none');
+			console.log("Test geometry colors:", result.geometry.attributes.color ? result.geometry.attributes.color.count : 'none');
+			
+			if (result.geometry.attributes.normal) {
+				var testNormals = result.geometry.attributes.normal.array;
+				var testNormalCount = testNormals.length / 3;
+				var testZeroNormals = 0;
+				var testValidNormals = 0;
+				
+				for (var i = 0; i < testNormalCount; i++) {
+					var x = testNormals[i * 3];
+					var y = testNormals[i * 3 + 1];
+					var z = testNormals[i * 3 + 2];
+					
+					if (x === 0 && y === 0 && z === 0) {
+						testZeroNormals++;
+					} else {
+						testValidNormals++;
+					}
+				}
+				
+				console.log("TEST OBJECT Normal Analysis:");
+				console.log("  Valid normals:", testValidNormals);
+				console.log("  Zero normals:", testZeroNormals);
+				console.log("  Normal sample (first 9):", Array.from(testNormals.slice(0, 9)));
+			}
+			
+			console.log("Test material type:", result.material.type);
+			console.log("Test material vertexColors:", result.material.vertexColors);
+		}
+		
+		// Position the test object between moon and planet
+		if (result && result.renderObject) {
+			result.renderObject.position.set(800, 200, 600);
+			result.renderObject.scale.set(0.3, 0.3, 0.3); // Make it smaller
+			console.log("Positioned test object at (800, 200, 600) with 0.3 scale");
+		}
+		
+		action.provideResult({
+			geometry: result.geometry,
+			material: result.material,
+			renderObject: result.renderObject
+		});
+	});
+}
+
+// Function to create a simple test object for position validation
+function buildSimpleTestObject(action) {
+	console.log("=== BUILDING SIMPLE TEST OBJECT ===");
+	
+	// Create a simple cube geometry
+	var testGeometry = new THREE.BoxGeometry(100, 100, 100);
+	console.log("Created test cube geometry");
+	
+	// Create bright red Lambert material to test normals
+	var testMaterial = new THREE.MeshLambertMaterial({
+		color: 0xFF0000,  // Bright red
+		wireframe: false
+	});
+	console.log("Created bright red Lambert material for normal testing");
+	
+	// Create mesh
+	var testRenderObject = new THREE.Mesh(testGeometry, testMaterial);
+	
+	// Position at same location as tile test object
+	testRenderObject.position.set(800, 200, 600);
+	testRenderObject.scale.set(0.3, 0.3, 0.3);
+	
+	console.log("Simple test object positioned at (800, 200, 600) with 0.3 scale");
+	console.log("Simple test object material:", testMaterial.type);
+	console.log("Simple test object color:", testMaterial.color);
+	
+	// Debug normals on simple geometry
+	console.log("=== SIMPLE GEOMETRY NORMALS DEBUG ===");
+	console.log("Simple geometry vertices:", testGeometry.attributes.position.count);
+	console.log("Simple geometry normals:", testGeometry.attributes.normal ? testGeometry.attributes.normal.count : 'none');
+	
+	if (testGeometry.attributes.normal) {
+		var simpleNormals = testGeometry.attributes.normal.array;
+		var simpleNormalCount = simpleNormals.length / 3;
+		var simpleZeroNormals = 0;
+		var simpleValidNormals = 0;
+		
+		for (var i = 0; i < Math.min(simpleNormalCount, 10); i++) {
+			var x = simpleNormals[i * 3];
+			var y = simpleNormals[i * 3 + 1];
+			var z = simpleNormals[i * 3 + 2];
+			
+			if (x === 0 && y === 0 && z === 0) {
+				simpleZeroNormals++;
+			} else {
+				simpleValidNormals++;
+			}
+		}
+		
+		console.log("SIMPLE GEOMETRY Normal Analysis (first 10):");
+		console.log("  Valid normals:", simpleValidNormals);
+		console.log("  Zero normals:", simpleZeroNormals);
+		console.log("  Normal sample (first 9):", Array.from(simpleNormals.slice(0, 9)));
+	} else {
+		console.log("ERROR: Simple geometry has no normals!");
+	}
+	
+	action.provideResult({
+		geometry: testGeometry,
+		material: testMaterial,
+		renderObject: testRenderObject
 	});
 }
 
