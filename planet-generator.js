@@ -58,7 +58,7 @@ var renderRivers = true;
 var renderMoon = false;
 var renderLabels = true;
 var elevationMultiplier = 80; // Controls how exaggerated the 3D terrain elevation appears
-var useElevationDisplacement = true; // Binary parameter: use stored displacement values (true) or sphere positions (false)
+var useElevationDisplacement = false; // Binary parameter: use stored displacement values (true) or sphere positions (false)
 var riverElevationDeltaThreshold = 0.1; // Minimum elevation difference for white waterfall rivers
 var enableElevationDistributionReshaping = true; // Apply realistic elevation distribution
 var elevationExponent = 4; // Exponential curve steepness for elevation distribution (higher = more contrast)
@@ -246,24 +246,16 @@ function generatePlanet(icosahedronSubdivision, topologyDistortionRate, plateCou
 		.executeSubaction(function (action) {
 			ctime('4. Terrain Generation');
 			generatePlanetTerrain(planet, plateCount, oceanicRate, heatLevel, moistureLevel, random, action);
-		}, 8, "Generating Terrain")
+		}, 9, "Generating Terrain")
 		.getResult(function (result) {
 			ctimeEnd('4. Terrain Generation');
 		})
 		.executeSubaction(function (action) {
-			ctime('5. Render Data');
-			generatePlanetRenderData(planet.topology, random, action);
-		}, 1, "Building Visuals")
-		.getResult(function (result) {
-			ctimeEnd('5. Render Data');
-			planet.renderData = result;
-		})
-		.executeSubaction(function (action) {
-			ctime('6. Statistics');
+			ctime('5. Statistics');
 			generatePlanetStatistics(planet.topology, planet.plates, action);
 		}, 1, "Compiling Statistics")
 		.getResult(function (result) {
-			ctimeEnd('6. Statistics');
+			ctimeEnd('5. Statistics');
 			planet.statistics = result;
 			ctimeEnd('Total Generation Time');
 		})
@@ -330,8 +322,15 @@ function generatePlanetTerrain(planet, plateCount, oceanicRate, heatLevel, moist
 			// Collect labeled tiles after biomes are generated
 			collectLabeledTiles(planet.topology.tiles);
 		}, 0)
-		.getResult(function (result) {
+		.executeSubaction(function (action) {
 			ctimeEnd('4h. Biomes & Resources');
+			ctime('4i. Render Data Generation');
+			generatePlanetRenderData(planet.topology, random, action);
+		}, 1, "Building Visuals")
+		.getResult(function (result) {
+			ctimeEnd('4i. Render Data Generation');
+			// Store render data in planet object 
+			planet.renderData = result;
 		});
 
 }
@@ -388,7 +387,8 @@ function generatePlanetRenderData(topology, random, action) {
 			var lambertMaterial = new THREE.MeshLambertMaterial({
 				vertexColors: true,
 				wireframe: false,
-				side: THREE.DoubleSide
+				side: THREE.DoubleSide,
+				flatShading: true
 			});
 			buildSurfaceRenderObject(topology.tiles, topology.watersheds, random, action, lambertMaterial);
 		}, 8, "Building Surface Visuals")

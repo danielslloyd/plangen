@@ -3,14 +3,14 @@
 
 function buildSurfaceRenderObject(tiles, watersheds, random, action, customMaterial) {
 	
-	// Calculate geometry requirements (simple triangle fan per tile)
+	// Calculate geometry requirements (independent triangles - no vertex sharing)
 	var totalVertices = 0;
 	var totalFaces = 0;
 	
 	for (var i = 0; i < tiles.length; i++) {
 		var cornersCount = tiles[i].corners.length;
-		totalVertices += 1 + cornersCount; // 1 center + N corners
-		totalFaces += cornersCount; // N triangles (triangle fan)
+		totalVertices += cornersCount * 3; // 3 vertices per triangle
+		totalFaces += cornersCount; // N triangles per tile
 	}
 	
 	
@@ -49,11 +49,7 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 		// Calculate terrain color using extracted function
 		var terrainColor = calculateTerrainColor(tile);
 		
-		
-		// Store tile center index
-		var centerIndex = vertexIndex;
-		
-		// Add center vertex
+		// Calculate tile center position (with elevation)
 		var centerPos = tile.averagePosition.clone();
 		if (tile.elevation > 0) {
 			var centerDistance = centerPos.length();
@@ -61,32 +57,8 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 			centerPos.normalize().multiplyScalar(centerDistance + displacement);
 		}
 		
-		// DEBUG: Check center position calculation
-		if (i === 0) {
-			console.log("centerPos:", centerPos);
-			console.log("centerPos.x/y/z:", centerPos.x, centerPos.y, centerPos.z);
-			console.log("About to assign to positions[", vertexIndex * 3, "]");
-		}
-		
-		// Add center position
-		positions[vertexIndex * 3] = centerPos.x;
-		positions[vertexIndex * 3 + 1] = centerPos.y;
-		positions[vertexIndex * 3 + 2] = centerPos.z;
-		
-		// Add center color  
-		colors[vertexIndex * 3] = terrainColor.r;
-		colors[vertexIndex * 3 + 1] = terrainColor.g;
-		colors[vertexIndex * 3 + 2] = terrainColor.b;
-		
-		// DEBUG: Verify assignment worked
-		if (i === 0) {
-			console.log("After assignment - positions[0-2]:", positions[0], positions[1], positions[2]);
-			console.log("After assignment - colors[0-2]:", colors[0], colors[1], colors[2]);
-		}
-		
-		vertexIndex++;
-		
-		// Add corner vertices and create triangle fan
+		// Calculate corner positions (with elevation)
+		var cornerPositions = [];
 		for (var j = 0; j < tile.corners.length; j++) {
 			var corner = tile.corners[j];
 			var cornerPos = corner.position.clone();
@@ -106,24 +78,49 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 				cornerPos.normalize().multiplyScalar(cornerDistance + cornerDisplacement);
 			}
 			
-			// Add corner position
-			positions[vertexIndex * 3] = cornerPos.x;
-			positions[vertexIndex * 3 + 1] = cornerPos.y;
-			positions[vertexIndex * 3 + 2] = cornerPos.z;
+			cornerPositions.push(cornerPos);
+		}
+		
+		// Create independent triangles (no vertex sharing)
+		for (var j = 0; j < tile.corners.length; j++) {
+			var nextJ = (j + 1) % tile.corners.length;
 			
-			// Add corner color (same as center for now)
+			// Triangle vertices: center -> corner[j] -> corner[j+1]
+			var vertex1 = centerPos;
+			var vertex2 = cornerPositions[j];
+			var vertex3 = cornerPositions[nextJ];
+			
+			// Add vertex 1 (center)
+			positions[vertexIndex * 3] = vertex1.x;
+			positions[vertexIndex * 3 + 1] = vertex1.y;
+			positions[vertexIndex * 3 + 2] = vertex1.z;
 			colors[vertexIndex * 3] = terrainColor.r;
 			colors[vertexIndex * 3 + 1] = terrainColor.g;
 			colors[vertexIndex * 3 + 2] = terrainColor.b;
+			indices[triangleIndex * 3] = vertexIndex;
+			vertexIndex++;
 			
-			// Create triangle: center -> corner[j] -> corner[j+1]
-			var nextJ = (j + 1) % tile.corners.length;
-			indices[triangleIndex * 3] = centerIndex;
+			// Add vertex 2 (corner j)
+			positions[vertexIndex * 3] = vertex2.x;
+			positions[vertexIndex * 3 + 1] = vertex2.y;
+			positions[vertexIndex * 3 + 2] = vertex2.z;
+			colors[vertexIndex * 3] = terrainColor.r;
+			colors[vertexIndex * 3 + 1] = terrainColor.g;
+			colors[vertexIndex * 3 + 2] = terrainColor.b;
 			indices[triangleIndex * 3 + 1] = vertexIndex;
-			indices[triangleIndex * 3 + 2] = centerIndex + 1 + nextJ;
+			vertexIndex++;
+			
+			// Add vertex 3 (corner j+1)
+			positions[vertexIndex * 3] = vertex3.x;
+			positions[vertexIndex * 3 + 1] = vertex3.y;
+			positions[vertexIndex * 3 + 2] = vertex3.z;
+			colors[vertexIndex * 3] = terrainColor.r;
+			colors[vertexIndex * 3 + 1] = terrainColor.g;
+			colors[vertexIndex * 3 + 2] = terrainColor.b;
+			indices[triangleIndex * 3 + 2] = vertexIndex;
+			vertexIndex++;
 			
 			triangleIndex++;
-			vertexIndex++;
 		}
 		
 		++i;
@@ -131,55 +128,42 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 		if (i < tiles.length) {
 			action.loop(i / tiles.length);
 		} else {
-			console.log("=== ALL TILES PROCESSED ===");
-			console.log("Final vertexIndex:", vertexIndex);
-			console.log("Final triangleIndex:", triangleIndex);
-			console.log("=== FIRST EXECUTESUBACTION COMPLETING ===");
+			// All tiles processed
 		}
 	});
 
 	// Create BufferGeometry after executeSubaction completes
 	action.executeSubaction(function(action) {
-		console.log("=== SECOND EXECUTESUBACTION STARTING ===");
-		console.log("=== CREATING GEOMETRY AFTER TILE PROCESSING ===");
-		
-		// DEBUG: Check arrays after all tiles processed
-		console.log("positions first 9 values:", Array.from(positions.slice(0, 9)));
-		console.log("colors first 9 values:", Array.from(colors.slice(0, 9)));
-		console.log("indices first 9 values:", Array.from(indices.slice(0, 9)));
 		
 		var planetGeometry = new THREE.BufferGeometry();
 		
 		// Set buffer attributes directly
-		planetGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-		planetGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-		planetGeometry.setIndex(new THREE.BufferAttribute(indices, 1));
+		var positionAttribute = new THREE.BufferAttribute(positions, 3);
+		var colorAttribute = new THREE.BufferAttribute(colors, 3);
+		var indexAttribute = new THREE.BufferAttribute(indices, 1);
 		
-		// Force fresh normal calculation
-		console.log("=== COMPUTING NORMALS ===");
+		planetGeometry.setAttribute('position', positionAttribute);
+		planetGeometry.setAttribute('color', colorAttribute);
+		planetGeometry.setIndex(indexAttribute);
+		
+		// Force buffer updates for GPU synchronization
+		positionAttribute.needsUpdate = true;
+		colorAttribute.needsUpdate = true;
+		indexAttribute.needsUpdate = true;
+		
+		// Compute normals and bounding box
 		planetGeometry.computeVertexNormals();
 		planetGeometry.computeBoundingBox();
 		
-		// Verify normals
+		// Ensure normal buffer is marked for update
 		if (planetGeometry.attributes.normal) {
-			var newNormals = planetGeometry.attributes.normal.array;
-			var checkValid = 0;
-			for (var check = 0; check < Math.min(10, newNormals.length / 3); check++) {
-				var nx = newNormals[check * 3];
-				var ny = newNormals[check * 3 + 1];
-				var nz = newNormals[check * 3 + 2];
-				if (!(nx === 0 && ny === 0 && nz === 0)) {
-					checkValid++;
-				}
-			}
-			console.log("Normal check - Valid:", checkValid, "out of 10");
+			planetGeometry.attributes.normal.needsUpdate = true;
 		}
 		
 		// Create material
 		var planetMaterial;
 		if (customMaterial) {
 			planetMaterial = customMaterial;
-			console.log("Using custom material:", planetMaterial.type);
 		} else {
 			planetMaterial = new THREE.MeshBasicMaterial({
 				vertexColors: true,
@@ -187,18 +171,19 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 				side: THREE.DoubleSide,
 				color: 0xFFFFFF
 			});
-			console.log("Using default Basic material");
 		}
 		
 		var planetRenderObject = new THREE.Mesh(planetGeometry, planetMaterial);
 		
-		console.log("=== SECOND EXECUTESUBACTION PROVIDING RESULT ===");
+		// Force geometry update notification
+		planetGeometry.attributes.position.needsUpdate = true;
+		planetGeometry.attributes.color.needsUpdate = true;
+		
 		finalResult = {
 			geometry: planetGeometry,
 			material: planetMaterial,
 			renderObject: planetRenderObject
 		};
-		console.log("Result object:", finalResult);
 		
 		// Store result but don't call provideResult here
 	}, 1, "Building Final Geometry");
@@ -875,6 +860,7 @@ function calculateTerrainColor(tile) {
 			} else var normalizedDepth = 1
 		}
 		
+		
 		if ((tile.temperature < 0 || (Math.min(tile.elevation, 1) - Math.min(Math.max(tile.temperature, 0), 1) / 1.5 > 0.75)) && tile.lake) {
 			terrainColor = new THREE.Color(0xDDEEFF) // glacier
 		} else if (tile.biome === "ocean" || tile.lake) {
@@ -902,6 +888,7 @@ function calculateTerrainColor(tile) {
 		var normalizedElevation = Math.min(tile.elevation, 1);
 		var normalizedMoisture = Math.min(tile.moisture, 1);
 		var normalizedTemperature = Math.min(Math.max(tile.temperature, 0), 1);
+		
 
 		// Sophisticated land color blend using picker colors
 		// Step 1: Lerp low elevation colors A (dry) and B (wet) based on moisture
