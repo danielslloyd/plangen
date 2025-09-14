@@ -877,6 +877,9 @@ function erodeElevation(planet, action) {
 			for (w of watersheds.filter(w=>!w.color)) {
 				w.color = new THREE.Color(0x000000);
 			}
+
+			// Apply watershed absorption algorithm based on ocean/land border ratios
+			performWatershedAbsorption(watersheds);
 			function assignWatershedColors(watersheds, N) {
 				var colors = [];
 				//for (var i = 0; i < N; i++) {colors.push(new THREE.Color().setHSL((i) / (1.5*N), 1, 0.5));}
@@ -908,6 +911,254 @@ function erodeElevation(planet, action) {
 					assignedColors[watershed.id] = watershed.color;
 				}
 			}
+		}
+
+		// Watershed absorption algorithm based on ocean/land border ratios
+		function performWatershedAbsorption(watersheds) {
+			console.log("Starting watershed absorption algorithm...");
+
+			// Initialize absorption regions - each watershed starts as its own region
+			watersheds.forEach((watershed, index) => {
+				watershed.absorptionRegion = {
+					originalId: watershed.id,
+					finalId: watershed.id,
+					watersheds: [watershed],
+					absorbed: false
+				};
+			});
+
+			let absorptionRound = 1;
+			let totalAbsorptions = 0;
+
+			while (true) {
+				console.log(`Absorption round ${absorptionRound}`);
+				let absorptionsThisRound = 0;
+
+				// Get active regions and sort by net ocean score (O-L, highest first)
+				let activeRegions = watersheds.filter(w => !w.absorptionRegion.absorbed);
+
+				// Calculate stats for all regions and sort by net ocean score
+				let regionsWithStats = activeRegions.map(region => ({
+					region: region,
+					stats: calculateRegionStats(region)
+				}));
+
+				// Sort by net ocean score (O - L, descending)
+				regionsWithStats.sort((a, b) => {
+					let aNetOcean = a.stats.oceanBorders - a.stats.landBorders;
+					let bNetOcean = b.stats.oceanBorders - b.stats.landBorders;
+					return bNetOcean - aNetOcean;
+				});
+
+				// Process each region in net ocean priority order
+				for (let {region, stats} of regionsWithStats) {
+					let currentNetOcean = stats.oceanBorders - stats.landBorders;
+					console.log(`Processing region ${region.absorptionRegion.originalId} (O-L = ${currentNetOcean}, tiles: ${stats.allTiles.size})`);
+
+					// Let this region absorb continuously until no more legal absorptions
+					let regionAbsorptions = 0;
+					while (true) {
+						let currentActiveRegions = watersheds.filter(w => !w.absorptionRegion.absorbed);
+						let bestTarget = findBestAbsorptionTarget(region, currentActiveRegions);
+
+						if (bestTarget) {
+							// Perform absorption
+							absorb(region, bestTarget);
+							regionAbsorptions++;
+							absorptionsThisRound++;
+							totalAbsorptions++;
+							console.log(`  Region ${region.absorptionRegion.originalId} absorbed region ${bestTarget.absorptionRegion.originalId} (absorption #${regionAbsorptions} for this region)`);
+						} else {
+							// No more legal absorptions for this region
+							if (regionAbsorptions > 0) {
+								let newStats = calculateRegionStats(region);
+								let newNetOcean = newStats.oceanBorders - newStats.landBorders;
+								console.log(`  Region ${region.absorptionRegion.originalId} finished absorbing. New net ocean: ${newNetOcean} (was ${currentNetOcean})`);
+							}
+							break;
+						}
+					}
+				}
+
+				if (absorptionsThisRound === 0) {
+					console.log(`No more absorptions possible. Total absorptions: ${totalAbsorptions}`);
+					break;
+				}
+
+				absorptionRound++;
+			}
+
+			// Assign final region IDs and propagate to tiles
+			let finalRegionId = 1;
+			let regionMap = {};
+
+			for (let watershed of watersheds) {
+				if (!watershed.absorptionRegion.absorbed) {
+					let rootRegion = watershed.absorptionRegion;
+
+					if (!regionMap[rootRegion.originalId]) {
+						regionMap[rootRegion.originalId] = finalRegionId++;
+					}
+
+					rootRegion.finalId = regionMap[rootRegion.originalId];
+
+					// Propagate to all watersheds in this region
+					for (let w of rootRegion.watersheds) {
+						w.absorptionRegion.finalId = rootRegion.finalId;
+					}
+				}
+			}
+
+			console.log(`Watershed absorption complete. ${watersheds.filter(w => !w.absorptionRegion.absorbed).length} final regions created.`);
+		}
+
+		function calculateRegionStats(region) {
+			let allTiles = new Set();
+
+			// Collect all tiles in this region
+			for (let watershed of region.absorptionRegion.watersheds) {
+				for (let tile of watershed.tiles) {
+					allTiles.add(tile);
+				}
+			}
+
+			let oceanBorders = 0;
+			let landBorders = 0;
+			let borderTiles = new Set();
+
+			// Count borders
+			for (let tile of allTiles) {
+				for (let neighbor of tile.tiles) {
+					if (!allTiles.has(neighbor)) {
+						borderTiles.add(tile);
+						if (neighbor.elevation <= 0) {
+							oceanBorders++;
+						} else {
+							landBorders++;
+						}
+					}
+				}
+			}
+
+			return {
+				allTiles: allTiles,
+				oceanBorders: oceanBorders,
+				landBorders: landBorders,
+				borderTiles: borderTiles,
+				ratio: landBorders > 0 ? oceanBorders / landBorders : (oceanBorders > 0 ? Infinity : 0)
+			};
+		}
+
+		function findBestAbsorptionTarget(absorber, activeRegions) {
+			let absorberStats = calculateRegionStats(absorber);
+			let bestTarget = null;
+			let bestNetOceanGain = -1; // Must be >= 0 for a valid absorption
+
+			// Calculate current net ocean score
+			let currentNetOcean = absorberStats.oceanBorders - absorberStats.landBorders;
+			let absorberTileCount = absorberStats.allTiles.size;
+
+			// Find neighboring regions
+			let neighboringRegions = new Set();
+			for (let tile of absorberStats.borderTiles) {
+				for (let neighbor of tile.tiles) {
+					if (neighbor.elevation > 0 && neighbor.watershed &&
+						!absorberStats.allTiles.has(neighbor) &&
+						!neighbor.watershed.absorptionRegion.absorbed &&
+						neighbor.watershed !== absorber) {
+						neighboringRegions.add(neighbor.watershed);
+					}
+				}
+			}
+
+			// Evaluate each neighboring region as a potential absorption target
+			for (let candidate of neighboringRegions) {
+				let candidateStats = calculateRegionStats(candidate);
+				let candidateNetOcean = candidateStats.oceanBorders - candidateStats.landBorders;
+				let candidateTileCount = candidateStats.allTiles.size;
+
+				// Simulate absorption to calculate new net ocean score
+				let combinedStats = simulateAbsorption(absorber, candidate);
+				let newNetOcean = combinedStats.oceanBorders - combinedStats.landBorders;
+				let netOceanGain = newNetOcean - currentNetOcean;
+
+				// Check absorption conditions:
+				// A) Eating n must increase r's net ocean score OR keep it the same
+				if (netOceanGain >= 0) {
+					// B1) r has more tiles than n AND n has negative net ocean score
+					// OR B2) r has higher net ocean score than n
+					let condition1 = (absorberTileCount > candidateTileCount) && (candidateNetOcean < 0);
+					let condition2 = currentNetOcean > candidateNetOcean;
+
+					if (condition1 || condition2) {
+						// Select the absorption with the highest net ocean gain (including zero gain)
+						if (netOceanGain > bestNetOceanGain) {
+							bestNetOceanGain = netOceanGain;
+							bestTarget = candidate;
+						}
+					}
+				}
+			}
+
+			// Add logging for debugging
+			if (bestTarget) {
+				let targetStats = calculateRegionStats(bestTarget);
+				let targetNetOcean = targetStats.oceanBorders - targetStats.landBorders;
+				console.log(`    Best target: Region ${bestTarget.absorptionRegion.originalId} (net ocean: ${targetNetOcean}, tiles: ${targetStats.allTiles.size}), gain: +${bestNetOceanGain}`);
+			} else {
+				console.log(`    No valid targets found (conditions not met)`);
+			}
+
+			return bestTarget;
+		}
+
+		function simulateAbsorption(absorber, target) {
+			let allTiles = new Set();
+
+			// Add tiles from both regions
+			for (let watershed of absorber.absorptionRegion.watersheds) {
+				for (let tile of watershed.tiles) {
+					allTiles.add(tile);
+				}
+			}
+			for (let watershed of target.absorptionRegion.watersheds) {
+				for (let tile of watershed.tiles) {
+					allTiles.add(tile);
+				}
+			}
+
+			let oceanBorders = 0;
+			let landBorders = 0;
+
+			// Count borders of combined region
+			for (let tile of allTiles) {
+				for (let neighbor of tile.tiles) {
+					if (!allTiles.has(neighbor)) {
+						if (neighbor.elevation <= 0) {
+							oceanBorders++;
+						} else {
+							landBorders++;
+						}
+					}
+				}
+			}
+
+			return {
+				oceanBorders: oceanBorders,
+				landBorders: landBorders,
+				ratio: landBorders > 0 ? oceanBorders / landBorders : (oceanBorders > 0 ? Infinity : 0)
+			};
+		}
+
+		function absorb(absorber, target) {
+			// Move all watersheds from target to absorber
+			for (let watershed of target.absorptionRegion.watersheds) {
+				absorber.absorptionRegion.watersheds.push(watershed);
+				watershed.absorptionRegion = absorber.absorptionRegion;
+			}
+
+			// Mark target as absorbed
+			target.absorptionRegion.absorbed = true;
 		}
 	}
 	function reMoisture() {

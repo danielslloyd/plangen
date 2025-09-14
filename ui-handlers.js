@@ -173,6 +173,10 @@ function keyUpHandler(event) {
 			setSurfaceRenderMode("watersheds");
 			event.preventDefault();
 			break;
+		case KEY.T:
+			setSurfaceRenderMode("watershedRegions"); // Watershed regions with absorption
+			event.preventDefault();
+			break;
 		case KEY.U:
 			showHideSunlight();
 			event.preventDefault();

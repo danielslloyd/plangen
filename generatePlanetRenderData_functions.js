@@ -1251,3 +1251,32 @@ registerColorOverlay("landRegions", "Land Regions", "Shows clustered land region
 	// Fallback for land tiles without region assignment
 	return new THREE.Color(0x888888); // Gray for unassigned land
 });
+
+// Watershed Regions color overlay - shows watersheds after coastal absorption
+registerColorOverlay("watershedRegions", "Watershed Regions", "Shows watersheds with coastal absorption based on O:L ratios", function(tile) {
+	// Ocean tiles stay blue
+	if (tile.elevation <= 0) {
+		return calculateTerrainColor(tile); // Use standard ocean coloring
+	}
+
+	// Land tiles get colored by their watershed region
+	if (tile.watershed && tile.watershed.absorptionRegion && tile.watershed.absorptionRegion.finalId) {
+		// Generate distinct colors for each final region using hue rotation
+		var hue = ((tile.watershed.absorptionRegion.finalId - 1) * 137.5) % 360; // Golden angle for good distribution
+		var saturation = 0.8;
+		var lightness = 0.5;
+
+		// Convert HSL to RGB
+		var color = new THREE.Color();
+		color.setHSL(hue / 360, saturation, lightness);
+		return color;
+	}
+
+	// Fallback to regular watershed coloring
+	if (tile.watershed && tile.watershed.color) {
+		return new THREE.Color(tile.watershed.color);
+	}
+
+	// Default color for land tiles without watershed assignment
+	return new THREE.Color(0x888888);
+});
