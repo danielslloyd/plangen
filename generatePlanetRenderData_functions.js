@@ -978,23 +978,26 @@ function recalculateBufferGeometryColors(tiles, geometry, overlayId) {
 	var calculateColor = overlay ? overlay.colorFunction : calculateTerrainColor;
 
 	var vertexIndex = 0;
-	
+
 	// Process each tile and update vertex colors
+	// This must match the vertex creation logic in buildSurfaceRenderObject
 	for (var i = 0; i < tiles.length; i++) {
 		var tile = tiles[i];
 		var tileColor = calculateColor(tile);
-		
-		// Update center vertex color
-		colorAttribute.setXYZ(vertexIndex, tileColor.r, tileColor.g, tileColor.b);
-		vertexIndex++;
-		
-		// Update corner vertex colors (same as center for consistency)
+
+		// Each tile creates tile.corners.length triangles
+		// Each triangle has 3 vertices: center -> corner[j] -> corner[j+1]
 		for (var j = 0; j < tile.corners.length; j++) {
-			colorAttribute.setXYZ(vertexIndex, tileColor.r, tileColor.g, tileColor.b);
+			// Set color for all 3 vertices of this triangle (center, corner j, corner j+1)
+			colorAttribute.setXYZ(vertexIndex, tileColor.r, tileColor.g, tileColor.b); // center vertex
+			vertexIndex++;
+			colorAttribute.setXYZ(vertexIndex, tileColor.r, tileColor.g, tileColor.b); // corner j vertex
+			vertexIndex++;
+			colorAttribute.setXYZ(vertexIndex, tileColor.r, tileColor.g, tileColor.b); // corner j+1 vertex
 			vertexIndex++;
 		}
 	}
-	
+
 	// Mark the color attribute for update
 	colorAttribute.needsUpdate = true;
 }

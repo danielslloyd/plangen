@@ -100,12 +100,30 @@ oceanicRate: 0.7           // Proportion of oceanic plates
 ## File Dependencies
 
 Core files loaded in order (see `PlanGen.html`):
-1. External: jQuery, Three.js r68, ngraph libraries
+1. External: jQuery 2.1.0, Three.js r125, ngraph libraries
 2. `SteppedAction.js` - Execution framework
-3. `planet-generator.js` - Main coordination
-4. `geometry.js` - Mesh generation  
+3. `geometry.js` - Mesh generation
+4. `utilities.js` - Helper functions and math operations
 5. `elevation-generation.js` - Terrain algorithms
-6. `rendering-3d.js` - 3D visualization
-7. Generation functions, UI handlers, utilities
+6. Generation functions (`generatePlanetTerrain_functions.js`, `generatePlanetRenderData_functions.js`)
+7. `rendering-3d.js` - 3D visualization
+8. `weather-generation.js` - Climate simulation
+9. `planet-generator.js` - Main coordination
+10. UI components (`ui-handlers.js`, `ui-initialization.js`)
+11. Additional features (`path-finding.js`, `debug-overlay.js`, `text-labels.js`)
 
 The codebase uses ES5 JavaScript with global variables and function declarations for browser compatibility.
+
+## UI System & Customization
+
+**Color System**: Interactive terrain color panel allows real-time customization of:
+- Ocean colors (surface/deep, warm/cold variations)
+- Land colors (elevation-based dry/wet variations, cold climate colors)
+- Export functionality copies color initialization code to clipboard
+
+**Control Panels**:
+- Advanced settings panel (`generationSettingsPanel`) for detailed terrain parameters
+- Control panel with projection modes (Globe/Raised Globe/Mercator), color overlays, and display options
+- Progress tracking panel for long-running generation operations
+
+**Dynamic UI Updates**: Color overlay dropdown and toggle buttons are populated programmatically based on available render modes.
