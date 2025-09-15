@@ -192,20 +192,61 @@ function generatePlanetAsynchronous() {
 function Planet() {}
 
 // Function to collect all tiles with labels into the global labeledTiles array
-function collectLabeledTiles(tiles) {
+function collectLabeledTiles(tiles, overlayMode) {
+	console.log('DEBUG: collectLabeledTiles called with overlayMode:', overlayMode);
 	labeledTiles = []; // Clear previous labels
 	if (!tiles) {
+		console.log('DEBUG: No tiles provided');
 		return labeledTiles;
 	}
-	
+
 	var foundLabeled = [];
+	var landRegionCount = 0;
+	var watershedRegionCount = 0;
+	var regularLabelCount = 0;
+
 	for (var i = 0; i < tiles.length; i++) {
-		if (tiles[i].label) {
-			labeledTiles.push(tiles[i]);
-			foundLabeled.push({label: tiles[i].label, elevation: tiles[i].elevation, id: tiles[i].id});
+		if (tiles[i].landRegionLabel) landRegionCount++;
+		if (tiles[i].watershedRegionLabel) watershedRegionCount++;
+		if (tiles[i].label) regularLabelCount++;
+
+		var tileToAdd = null;
+		var labelToShow = null;
+
+		// Determine which label to show based on overlay mode
+		if (overlayMode === "landRegions" && tiles[i].landRegionLabel) {
+			labelToShow = tiles[i].landRegionLabel;
+			// Create a clone with the region label as the main label
+			tileToAdd = {
+				label: labelToShow,
+				averagePosition: tiles[i].averagePosition,
+				elevation: tiles[i].elevation,
+				elevationDisplacement: tiles[i].elevationDisplacement
+			};
+		} else if (overlayMode === "watershedRegions" && tiles[i].watershedRegionLabel) {
+			labelToShow = tiles[i].watershedRegionLabel;
+			// Create a clone with the watershed label as the main label
+			tileToAdd = {
+				label: labelToShow,
+				averagePosition: tiles[i].averagePosition,
+				elevation: tiles[i].elevation,
+				elevationDisplacement: tiles[i].elevationDisplacement
+			};
+		} else if (overlayMode !== "landRegions" && overlayMode !== "watershedRegions" && tiles[i].label) {
+			// Show regular labels (like Mount Everest) for all other overlays
+			labelToShow = tiles[i].label;
+			tileToAdd = tiles[i];
+		}
+
+		if (tileToAdd && labelToShow) {
+			labeledTiles.push(tileToAdd);
+			foundLabeled.push({label: labelToShow, elevation: tiles[i].elevation, id: tiles[i].id});
 		}
 	}
-	
+
+	console.log('DEBUG: Found tiles with labels - landRegion:', landRegionCount, 'watershedRegion:', watershedRegionCount, 'regular:', regularLabelCount);
+	console.log('DEBUG: Collected', labeledTiles.length, 'tiles for display in mode:', overlayMode);
+
 	return labeledTiles;
 }
 
@@ -320,7 +361,7 @@ function generatePlanetTerrain(planet, plateCount, oceanicRate, heatLevel, moist
 		}, 1, "Generating Biomes")
 		.executeSubaction(function (action) {
 			// Collect labeled tiles after biomes are generated
-			collectLabeledTiles(planet.topology.tiles);
+			collectLabeledTiles(planet.topology.tiles, surfaceRenderMode);
 		}, 0)
 		.executeSubaction(function (action) {
 			ctimeEnd('4h. Biomes & Resources');

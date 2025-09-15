@@ -915,250 +915,297 @@ function erodeElevation(planet, action) {
 
 		// Watershed absorption algorithm based on ocean/land border ratios
 		function performWatershedAbsorption(watersheds) {
-			console.log("Starting watershed absorption algorithm...");
+			console.log("Starting clean watershed absorption algorithm...");
 
-			// Initialize absorption regions - each watershed starts as its own region
-			watersheds.forEach((watershed, index) => {
-				watershed.absorptionRegion = {
-					originalId: watershed.id,
-					finalId: watershed.id,
-					watersheds: [watershed],
-					absorbed: false
+			// Step 1: Initialize regions directly from watersheds (simple structure)
+			var regions = [];
+			for (var i = 0; i < watersheds.length; i++) {
+				var watershed = watersheds[i];
+				var region = {
+					id: i + 1,
+					tiles: watershed.tiles.slice(), // Copy tile array
+					neighbors: new Set()
 				};
-			});
 
-			let absorptionRound = 1;
-			let totalAbsorptions = 0;
+				// Set direct reference on each tile
+				for (var j = 0; j < region.tiles.length; j++) {
+					region.tiles[j].finalRegionId = region.id;
+				}
 
+				regions.push(region);
+			}
+
+			console.log("Initialized", regions.length, "regions from watersheds");
+
+			// Step 2: Calculate neighbors for each region
+			function updateNeighbors() {
+				// Clear all neighbor sets
+				for (var i = 0; i < regions.length; i++) {
+					regions[i].neighbors.clear();
+				}
+
+				// Find neighbors by checking tile adjacencies
+				for (var i = 0; i < regions.length; i++) {
+					var region = regions[i];
+					for (var j = 0; j < region.tiles.length; j++) {
+						var tile = region.tiles[j];
+						if (tile.tiles) {
+							for (var k = 0; k < tile.tiles.length; k++) {
+								var neighbor = tile.tiles[k];
+								if (neighbor.finalRegionId && neighbor.finalRegionId !== region.id) {
+									region.neighbors.add(neighbor.finalRegionId);
+								}
+							}
+						}
+					}
+				}
+			}
+
+			// Step 3: Calculate O-L ratio for a region
+			function calculateOLRatio(region) {
+				var oceanBorders = 0;
+				var landBorders = 0;
+
+				for (var i = 0; i < region.tiles.length; i++) {
+					var tile = region.tiles[i];
+					if (tile.tiles) {
+						for (var j = 0; j < tile.tiles.length; j++) {
+							var neighbor = tile.tiles[j];
+							// Count external borders (to other regions or ocean)
+							if (!neighbor.finalRegionId || neighbor.finalRegionId !== region.id) {
+								if (neighbor.elevation <= 0) {
+									oceanBorders++;
+								} else {
+									landBorders++;
+								}
+							}
+						}
+					}
+				}
+
+				return oceanBorders - landBorders;
+			}
+
+			// Step 4: Calculate combined O-L ratio if two regions were merged
+			function calculateCombinedOLRatio(region1, region2) {
+				var combinedOceanBorders = 0;
+				var combinedLandBorders = 0;
+				var combinedTileIds = new Set();
+
+				// Collect all tile IDs in combined region
+				for (var i = 0; i < region1.tiles.length; i++) {
+					combinedTileIds.add(region1.tiles[i].index || region1.tiles[i].id);
+				}
+				for (var i = 0; i < region2.tiles.length; i++) {
+					combinedTileIds.add(region2.tiles[i].index || region2.tiles[i].id);
+				}
+
+				// Count external borders for combined region
+				var allTiles = region1.tiles.concat(region2.tiles);
+				for (var i = 0; i < allTiles.length; i++) {
+					var tile = allTiles[i];
+					if (tile.tiles) {
+						for (var j = 0; j < tile.tiles.length; j++) {
+							var neighbor = tile.tiles[j];
+							var neighborTileId = neighbor.index || neighbor.id;
+							// If neighbor is not in combined region
+							if (!combinedTileIds.has(neighborTileId)) {
+								if (neighbor.elevation <= 0) {
+									combinedOceanBorders++;
+								} else {
+									combinedLandBorders++;
+								}
+							}
+						}
+					}
+				}
+
+				return combinedOceanBorders - combinedLandBorders;
+			}
+
+			// Step 5: Main absorption loop
+			var round = 1;
 			while (true) {
-				console.log(`Absorption round ${absorptionRound}`);
-				let absorptionsThisRound = 0;
+				updateNeighbors();
 
-				// Get active regions and sort by net ocean score (O-L, highest first)
-				let activeRegions = watersheds.filter(w => !w.absorptionRegion.absorbed);
-
-				// Calculate stats for all regions and sort by net ocean score
-				let regionsWithStats = activeRegions.map(region => ({
-					region: region,
-					stats: calculateRegionStats(region)
-				}));
-
-				// Sort by net ocean score (O - L, descending)
-				regionsWithStats.sort((a, b) => {
-					let aNetOcean = a.stats.oceanBorders - a.stats.landBorders;
-					let bNetOcean = b.stats.oceanBorders - b.stats.landBorders;
-					return bNetOcean - aNetOcean;
+				// Sort regions by O-L ratio (highest first)
+				regions.sort(function(a, b) {
+					return calculateOLRatio(b) - calculateOLRatio(a);
 				});
 
-				// Process each region in net ocean priority order
-				for (let {region, stats} of regionsWithStats) {
-					let currentNetOcean = stats.oceanBorders - stats.landBorders;
-					console.log(`Processing region ${region.absorptionRegion.originalId} (O-L = ${currentNetOcean}, tiles: ${stats.allTiles.size})`);
+				var anyAbsorptions = false;
 
-					// Let this region absorb continuously until no more legal absorptions
-					let regionAbsorptions = 0;
-					while (true) {
-						let currentActiveRegions = watersheds.filter(w => !w.absorptionRegion.absorbed);
-						let bestTarget = findBestAbsorptionTarget(region, currentActiveRegions);
+				for (var i = 0; i < regions.length; i++) {
+					var region = regions[i];
+					var currentOL = calculateOLRatio(region);
 
-						if (bestTarget) {
-							// Perform absorption
-							absorb(region, bestTarget);
-							regionAbsorptions++;
-							absorptionsThisRound++;
-							totalAbsorptions++;
-							console.log(`  Region ${region.absorptionRegion.originalId} absorbed region ${bestTarget.absorptionRegion.originalId} (absorption #${regionAbsorptions} for this region)`);
-						} else {
-							// No more legal absorptions for this region
-							if (regionAbsorptions > 0) {
-								let newStats = calculateRegionStats(region);
-								let newNetOcean = newStats.oceanBorders - newStats.landBorders;
-								console.log(`  Region ${region.absorptionRegion.originalId} finished absorbing. New net ocean: ${newNetOcean} (was ${currentNetOcean})`);
+					// Try to absorb each neighbor
+					var neighborsArray = Array.from(region.neighbors);
+					for (var j = 0; j < neighborsArray.length; j++) {
+						var neighborId = neighborsArray[j];
+						var neighborRegion = null;
+
+						// Find neighbor region
+						for (var k = 0; k < regions.length; k++) {
+							if (regions[k].id === neighborId) {
+								neighborRegion = regions[k];
+								break;
 							}
-							break;
+						}
+
+						if (neighborRegion) {
+							var combinedOL = calculateCombinedOLRatio(region, neighborRegion);
+
+							// If combined O-L is same or better, absorb
+							if (combinedOL >= currentOL) {
+								console.log("Region", region.id, "(O-L:", currentOL, ") absorbing region", neighborRegion.id, "-> combined O-L:", combinedOL);
+
+								// Merge neighbor into region
+								for (var l = 0; l < neighborRegion.tiles.length; l++) {
+									var tile = neighborRegion.tiles[l];
+									tile.finalRegionId = region.id;
+									region.tiles.push(tile);
+								}
+
+								// Remove neighbor from regions array
+								regions.splice(regions.indexOf(neighborRegion), 1);
+								anyAbsorptions = true;
+								break; // Process this region again with new neighbors
+							}
 						}
 					}
+
+					if (anyAbsorptions) break; // Start over with updated regions
 				}
 
-				if (absorptionsThisRound === 0) {
-					console.log(`No more absorptions possible. Total absorptions: ${totalAbsorptions}`);
+				console.log("Round", round, "complete.", regions.length, "regions remaining");
+				if (!anyAbsorptions) {
+					console.log("No more absorptions possible. Algorithm complete.");
 					break;
 				}
-
-				absorptionRound++;
+				round++;
 			}
 
-			// Assign final region IDs and propagate to tiles
-			let finalRegionId = 1;
-			let regionMap = {};
+			// Step 6: Assign final sequential IDs
+			for (var i = 0; i < regions.length; i++) {
+				var newId = i + 1;
+				var oldId = regions[i].id;
+				regions[i].id = newId;
 
-			for (let watershed of watersheds) {
-				if (!watershed.absorptionRegion.absorbed) {
-					let rootRegion = watershed.absorptionRegion;
-
-					if (!regionMap[rootRegion.originalId]) {
-						regionMap[rootRegion.originalId] = finalRegionId++;
-					}
-
-					rootRegion.finalId = regionMap[rootRegion.originalId];
-
-					// Propagate to all watersheds in this region
-					for (let w of rootRegion.watersheds) {
-						w.absorptionRegion.finalId = rootRegion.finalId;
-					}
+				// Update all tile references
+				for (var j = 0; j < regions[i].tiles.length; j++) {
+					regions[i].tiles[j].finalRegionId = newId;
 				}
 			}
 
-			console.log(`Watershed absorption complete. ${watersheds.filter(w => !w.absorptionRegion.absorbed).length} final regions created.`);
+			console.log("Watershed absorption complete.", regions.length, "final regions created.");
+
+			// Store regions globally for coloring and labeling
+			if (typeof window !== 'undefined') {
+				window.watershedFinalRegions = regions;
+			}
+
+			// Apply graph coloring and create labels
+			applySimpleGraphColoring(regions);
+			createSimpleRegionLabels(regions);
 		}
 
-		function calculateRegionStats(region) {
-			let allTiles = new Set();
+		// Enhanced graph coloring with iterative balancing
+		function applySimpleGraphColoring(regions) {
+			console.log("Applying enhanced 5-color graph coloring to", regions.length, "regions");
 
-			// Collect all tiles in this region
-			for (let watershed of region.absorptionRegion.watersheds) {
-				for (let tile of watershed.tiles) {
-					allTiles.add(tile);
+			// Enhanced adjacency function for simple regions
+			function getRegionAdjacencies(region, allRegions) {
+				var adjacentIds = Array.from(region.neighbors);
+				return adjacentIds;
+			}
+
+			// Apply the enhanced graph coloring algorithm
+			applyGraphColoring(regions, getRegionAdjacencies, 'color', 'watershedRegion');
+
+			// Validation
+			var regionsWithColors = 0;
+			var colorDistribution = {};
+
+			for (var i = 0; i < regions.length; i++) {
+				var region = regions[i];
+				if (region.color) {
+					regionsWithColors++;
+					var colorKey = region.color;
+					if (!colorDistribution[colorKey]) {
+						colorDistribution[colorKey] = 0;
+					}
+					colorDistribution[colorKey]++;
 				}
 			}
 
-			let oceanBorders = 0;
-			let landBorders = 0;
-			let borderTiles = new Set();
+			console.log("=== FINAL REGION COLOR VALIDATION ===");
+			console.log("Regions with colors:", regionsWithColors, "/", regions.length);
+			console.log("Color distribution by region:", colorDistribution);
+			console.log("Number of unique colors used:", Object.keys(colorDistribution).length);
+		}
 
-			// Count borders
-			for (let tile of allTiles) {
-				for (let neighbor of tile.tiles) {
-					if (!allTiles.has(neighbor)) {
-						borderTiles.add(tile);
-						if (neighbor.elevation <= 0) {
-							oceanBorders++;
-						} else {
-							landBorders++;
+		// Simple region label creation
+		function createSimpleRegionLabels(regions) {
+			console.log("Creating simple region labels...");
+
+			var regionsLabeled = 0;
+
+			for (var i = 0; i < regions.length; i++) {
+				var region = regions[i];
+
+				// Calculate ocean/land border ratio for label
+				var oceanBorders = 0;
+				var landBorders = 0;
+
+				// Count border types by examining tile neighbors
+				for (var j = 0; j < region.tiles.length; j++) {
+					var tile = region.tiles[j];
+					if (tile.tiles) {
+						for (var k = 0; k < tile.tiles.length; k++) {
+							var neighbor = tile.tiles[k];
+							if (neighbor.finalRegionId !== region.id) {
+								// This is a border with another region or outside
+								if (neighbor.elevation <= 0) {
+									oceanBorders++;
+								} else {
+									landBorders++;
+								}
+							}
 						}
 					}
 				}
-			}
 
-			return {
-				allTiles: allTiles,
-				oceanBorders: oceanBorders,
-				landBorders: landBorders,
-				borderTiles: borderTiles,
-				ratio: landBorders > 0 ? oceanBorders / landBorders : (oceanBorders > 0 ? Infinity : 0)
-			};
-		}
+				var netOcean = oceanBorders - landBorders;
+				var labelText = "Coast " + region.id + " (" + (netOcean > 0 ? "+" : "") + netOcean + ")";
 
-		function findBestAbsorptionTarget(absorber, activeRegions) {
-			let absorberStats = calculateRegionStats(absorber);
-			let bestTarget = null;
-			let bestNetOceanGain = -1; // Must be >= 0 for a valid absorption
+				// Find land tiles in this region
+				var landTiles = region.tiles.filter(function(tile) {
+					return tile.elevation > 0;
+				});
 
-			// Calculate current net ocean score
-			let currentNetOcean = absorberStats.oceanBorders - absorberStats.landBorders;
-			let absorberTileCount = absorberStats.allTiles.size;
+				if (landTiles.length > 0) {
+					// Find the highest elevation tile in the region to place the label
+					var highestTile = landTiles.reduce(function(highest, current) {
+						return current.elevation > highest.elevation ? current : highest;
+					}, landTiles[0]);
 
-			// Find neighboring regions
-			let neighboringRegions = new Set();
-			for (let tile of absorberStats.borderTiles) {
-				for (let neighbor of tile.tiles) {
-					if (neighbor.elevation > 0 && neighbor.watershed &&
-						!absorberStats.allTiles.has(neighbor) &&
-						!neighbor.watershed.absorptionRegion.absorbed &&
-						neighbor.watershed !== absorber) {
-						neighboringRegions.add(neighbor.watershed);
+					// Place exactly one label per region on the highest tile
+					if (!highestTile.watershedRegionLabel) {
+						highestTile.watershedRegionLabel = labelText;
+						highestTile.watershedRegionLabelId = region.id;
+						regionsLabeled++;
+
+						console.log("DEBUG: Created region label for region", region.id, ':"', labelText, '" at elevation', highestTile.elevation.toFixed(3), "(", region.tiles.length, "total tiles,", landTiles.length, "land tiles)");
 					}
+				} else {
+					console.log("DEBUG: No land tiles found in region", region.id, "- skipping label (", region.tiles.length, "total tiles)");
 				}
 			}
 
-			// Evaluate each neighboring region as a potential absorption target
-			for (let candidate of neighboringRegions) {
-				let candidateStats = calculateRegionStats(candidate);
-				let candidateNetOcean = candidateStats.oceanBorders - candidateStats.landBorders;
-				let candidateTileCount = candidateStats.allTiles.size;
-
-				// Simulate absorption to calculate new net ocean score
-				let combinedStats = simulateAbsorption(absorber, candidate);
-				let newNetOcean = combinedStats.oceanBorders - combinedStats.landBorders;
-				let netOceanGain = newNetOcean - currentNetOcean;
-
-				// Check absorption conditions:
-				// A) Eating n must increase r's net ocean score OR keep it the same
-				if (netOceanGain >= 0) {
-					// B1) r has more tiles than n AND n has negative net ocean score
-					// OR B2) r has higher net ocean score than n
-					let condition1 = (absorberTileCount > candidateTileCount) && (candidateNetOcean < 0);
-					let condition2 = currentNetOcean > candidateNetOcean;
-
-					if (condition1 || condition2) {
-						// Select the absorption with the highest net ocean gain (including zero gain)
-						if (netOceanGain > bestNetOceanGain) {
-							bestNetOceanGain = netOceanGain;
-							bestTarget = candidate;
-						}
-					}
-				}
-			}
-
-			// Add logging for debugging
-			if (bestTarget) {
-				let targetStats = calculateRegionStats(bestTarget);
-				let targetNetOcean = targetStats.oceanBorders - targetStats.landBorders;
-				console.log(`    Best target: Region ${bestTarget.absorptionRegion.originalId} (net ocean: ${targetNetOcean}, tiles: ${targetStats.allTiles.size}), gain: +${bestNetOceanGain}`);
-			} else {
-				console.log(`    No valid targets found (conditions not met)`);
-			}
-
-			return bestTarget;
-		}
-
-		function simulateAbsorption(absorber, target) {
-			let allTiles = new Set();
-
-			// Add tiles from both regions
-			for (let watershed of absorber.absorptionRegion.watersheds) {
-				for (let tile of watershed.tiles) {
-					allTiles.add(tile);
-				}
-			}
-			for (let watershed of target.absorptionRegion.watersheds) {
-				for (let tile of watershed.tiles) {
-					allTiles.add(tile);
-				}
-			}
-
-			let oceanBorders = 0;
-			let landBorders = 0;
-
-			// Count borders of combined region
-			for (let tile of allTiles) {
-				for (let neighbor of tile.tiles) {
-					if (!allTiles.has(neighbor)) {
-						if (neighbor.elevation <= 0) {
-							oceanBorders++;
-						} else {
-							landBorders++;
-						}
-					}
-				}
-			}
-
-			return {
-				oceanBorders: oceanBorders,
-				landBorders: landBorders,
-				ratio: landBorders > 0 ? oceanBorders / landBorders : (oceanBorders > 0 ? Infinity : 0)
-			};
-		}
-
-		function absorb(absorber, target) {
-			// Move all watersheds from target to absorber
-			for (let watershed of target.absorptionRegion.watersheds) {
-				absorber.absorptionRegion.watersheds.push(watershed);
-				watershed.absorptionRegion = absorber.absorptionRegion;
-			}
-
-			// Mark target as absorbed
-			target.absorptionRegion.absorbed = true;
+			console.log("=== REGION LABEL VALIDATION ===");
+			console.log("Regions labeled:", regionsLabeled, "/", regions.length);
+			console.log("Label creation complete");
 		}
 	}
 	function reMoisture() {
@@ -1734,14 +1781,19 @@ function clusterLandFeatures(tiles) {
 	for (var i = 0; i < landTiles.length; i++) {
 		landTiles[i].landRegion = assignments[i] + 1; // 1-based indexing for display
 	}
-	
+
+	// Apply graph-based coloring to land regions
+	applyLandRegionGraphColoring(landTiles, clusters.length);
+
 	// Assign labels to tiles closest to cluster centers
 	for (var i = 0; i < clusters.length; i++) {
 		var center = clusters[i];
 		var closestTile = findClosestTile(landTiles, center);
-		if (closestTile && !closestTile.label) { // Don't override existing labels (like Mount Everest)
-			closestTile.label = 'Land ' + (i + 1);
-			console.log('DEBUG: Labeled cluster', i + 1, 'at tile with elevation:', closestTile.elevation);
+		if (closestTile && !closestTile.landRegionLabel) { // Don't override existing land region labels
+			closestTile.landRegionLabel = 'Land ' + (i + 1);
+			console.log('DEBUG: Created land region label:', closestTile.landRegionLabel, 'at tile with elevation:', closestTile.elevation);
+		} else {
+			console.log('DEBUG: Skipping land region label - closestTile:', !!closestTile, 'existing label:', closestTile ? closestTile.landRegionLabel : 'N/A');
 		}
 	}
 }
@@ -1831,6 +1883,180 @@ function kMeansSphereClustering(positions, landTiles, k) {
 		centers: centers,
 		assignments: finalAssignments
 	};
+}
+
+// Graph coloring for watershed regions (preserving original watershed region logic)
+function applyWatershedRegionGraphColoring(watersheds) {
+	// Get final absorption regions (not absorbed) - these ARE the proper watershed regions
+	var finalAbsorptionRegions = watersheds.filter(function(w) {
+		return !w.absorptionRegion.absorbed;
+	});
+
+	if (finalAbsorptionRegions.length === 0) {
+		console.log("No final watershed regions to color");
+		return;
+	}
+
+	console.log("Applying graph coloring to", finalAbsorptionRegions.length, "watershed absorption regions");
+
+	// Adjacency function for watershed absorption regions (original logic)
+	function getWatershedRegionAdjacencies(absorptionRegion, allAbsorptionRegions) {
+		var adjacentIds = [];
+		var regionTiles = new Set();
+
+		// Collect all tiles in this absorption region
+		for (var i = 0; i < absorptionRegion.watersheds.length; i++) {
+			var watershed = absorptionRegion.watersheds[i];
+			for (var j = 0; j < watershed.tiles.length; j++) {
+				regionTiles.add(watershed.tiles[j]);
+			}
+		}
+
+		// Find adjacent absorption regions
+		regionTiles.forEach(function(tile) {
+			if (tile.tiles) {
+				for (var k = 0; k < tile.tiles.length; k++) {
+					var neighbor = tile.tiles[k];
+					if (neighbor.watershed && neighbor.watershed.absorptionRegion &&
+						!neighbor.watershed.absorptionRegion.absorbed &&
+						neighbor.watershed.absorptionRegion.finalId !== absorptionRegion.finalId) {
+
+						var neighborId = neighbor.watershed.absorptionRegion.finalId;
+						if (adjacentIds.indexOf(neighborId) === -1) {
+							adjacentIds.push(neighborId);
+						}
+					}
+				}
+			}
+		});
+
+		return adjacentIds;
+	}
+
+	// Extract just the absorption regions for graph coloring
+	var absorptionRegions = finalAbsorptionRegions.map(function(w) { return w.absorptionRegion; });
+
+	// Apply graph coloring to absorption regions
+	applyGraphColoring(absorptionRegions, getWatershedRegionAdjacencies, 'graphColor', 'watershedRegion');
+
+	// Step: Create simple final regions structure for easy lookup (flattening step)
+	var simpleFinalRegions = [];
+
+	for (var i = 0; i < finalAbsorptionRegions.length; i++) {
+		var watershedWithActiveRegion = finalAbsorptionRegions[i];
+		var absorptionRegion = watershedWithActiveRegion.absorptionRegion;
+
+		// Create simple final region
+		var simpleFinalRegion = {
+			id: absorptionRegion.finalId,
+			tiles: [],
+			graphColor: absorptionRegion.graphColor,
+			originalAbsorptionRegion: absorptionRegion // Keep reference if needed
+		};
+
+		// Collect ALL tiles from ALL watersheds in this absorption region
+		for (var j = 0; j < absorptionRegion.watersheds.length; j++) {
+			var watershed = absorptionRegion.watersheds[j];
+			for (var k = 0; k < watershed.tiles.length; k++) {
+				var tile = watershed.tiles[k];
+				simpleFinalRegion.tiles.push(tile);
+
+				// Set direct reference on tile for easy lookup
+				tile.finalRegionId = absorptionRegion.finalId;
+			}
+		}
+
+		simpleFinalRegions.push(simpleFinalRegion);
+	}
+
+	// Validation
+	var regionsWithColors = 0;
+	var colorDistribution = {};
+
+	for (var i = 0; i < simpleFinalRegions.length; i++) {
+		var region = simpleFinalRegions[i];
+		if (region.graphColor) {
+			regionsWithColors++;
+			var colorKey = region.graphColor;
+			if (!colorDistribution[colorKey]) {
+				colorDistribution[colorKey] = 0;
+			}
+			colorDistribution[colorKey]++;
+		}
+	}
+
+	console.log("=== WATERSHED REGION COLOR VALIDATION ===");
+	console.log("Final regions with colors:", regionsWithColors, "/", simpleFinalRegions.length);
+	console.log("Color distribution by region:", colorDistribution);
+	console.log("Number of unique colors used:", Object.keys(colorDistribution).length);
+
+	// Store simplified regions globally for label creation and color lookup
+	if (typeof window !== 'undefined') {
+		window.watershedFinalRegions = simpleFinalRegions;
+	}
+
+	return simpleFinalRegions;
+}
+
+// Graph coloring for land regions
+function applyLandRegionGraphColoring(landTiles, regionCount) {
+	if (!landTiles || landTiles.length === 0) {
+		console.log("No land tiles to color");
+		return;
+	}
+
+	// Create region objects
+	var regions = [];
+	var regionMap = {};
+
+	for (var i = 1; i <= regionCount; i++) {
+		var region = {
+			id: i,
+			tiles: landTiles.filter(function(tile) {
+				return tile.landRegion === i;
+			})
+		};
+		regions.push(region);
+		regionMap[i] = region;
+	}
+
+	// Adjacency function for land regions
+	function getLandRegionAdjacencies(region, allRegions) {
+		var adjacentIds = [];
+		var regionTiles = region.tiles;
+
+		// Find adjacent regions
+		for (var i = 0; i < regionTiles.length; i++) {
+			var tile = regionTiles[i];
+			if (tile.tiles) {
+				for (var j = 0; j < tile.tiles.length; j++) {
+					var neighbor = tile.tiles[j];
+					if (neighbor.landRegion && neighbor.landRegion !== region.id) {
+						if (adjacentIds.indexOf(neighbor.landRegion) === -1) {
+							adjacentIds.push(neighbor.landRegion);
+						}
+					}
+				}
+			}
+		}
+
+		return adjacentIds;
+	}
+
+	// Apply graph coloring
+	applyGraphColoring(regions, getLandRegionAdjacencies, 'graphColor', 'landRegion');
+
+	// Apply colors to individual tiles
+	for (var i = 0; i < regions.length; i++) {
+		var region = regions[i];
+		if (region.graphColor) {
+			for (var j = 0; j < region.tiles.length; j++) {
+				region.tiles[j].landRegionGraphColor = region.graphColor;
+			}
+		}
+	}
+
+	console.log("Applied graph coloring to", regions.length, "land regions");
 }
 
 // Find the tile closest to a given 3D position

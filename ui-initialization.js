@@ -59,7 +59,8 @@ $(document).ready(function onDocumentReady() {
 	// Set up change handler for dropdown
 	ui.colorOverlayDropdown.change(function() {
 		var selectedOverlay = $(this).val();
-		applyColorOverlay(selectedOverlay);
+		console.log('DEBUG: Dropdown changed to overlay:', selectedOverlay);
+		setSurfaceRenderMode(selectedOverlay);
 	});
 
 	// Projection buttons
@@ -494,12 +495,37 @@ function setSurfaceRenderMode(mode, force) {
 	if (ui.colorOverlayDropdown) {
 		ui.colorOverlayDropdown.val(mode);
 	}
-	
+
 	// Apply the color overlay
 	applyColorOverlay(mode);
-	
+
 	// Update the global variable for compatibility
 	surfaceRenderMode = mode;
+
+	// Update labels based on the new overlay mode
+	console.log('DEBUG: setSurfaceRenderMode updating labels for mode:', mode);
+	if (planet && planet.topology && planet.topology.tiles) {
+		console.log('DEBUG: Calling collectLabeledTiles with mode:', mode);
+		collectLabeledTiles(planet.topology.tiles, mode);
+
+		// Rebuild and update label render objects
+		if (planet.renderData) {
+			console.log('DEBUG: Rebuilding label render objects');
+			// Remove old labels from scene first
+			if (planet.renderData.labels) {
+				scene.remove(planet.renderData.labels);
+			}
+
+			planet.renderData.labels = buildLabelsRenderObject();
+			console.log('DEBUG: New labels object:', planet.renderData.labels);
+
+			// Add new labels to scene if labels are enabled
+			if (renderLabels && planet.renderData.labels) {
+				scene.add(planet.renderData.labels);
+				console.log('DEBUG: Added new labels to scene');
+			}
+		}
+	}
 }
 
 function showHideSunlight(show) {

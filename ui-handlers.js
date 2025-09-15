@@ -161,20 +161,12 @@ function keyUpHandler(event) {
 			setSurfaceRenderMode("moisture"); //moisture
 			event.preventDefault();
 			break;
-		case KEY.L:
-			setSurfaceRenderMode("landRegions"); // Land regions overlay
-			event.preventDefault();
-			break;
 		case KEY.K:
 			setSurfaceRenderMode("calorie");
 			event.preventDefault();
 			break;
 		case KEY.W:
 			setSurfaceRenderMode("watersheds");
-			event.preventDefault();
-			break;
-		case KEY.T:
-			setSurfaceRenderMode("watershedRegions"); // Watershed regions with absorption
 			event.preventDefault();
 			break;
 		case KEY.U:

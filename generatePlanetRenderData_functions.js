@@ -1221,62 +1221,294 @@ registerColorOverlay("heat", "Heat Map", "Red-hot visualization based on elevati
 
 // Watersheds color overlay - shows drainage basins in different colors
 registerColorOverlay("watersheds", "Watersheds", "Shows drainage basins with distinct colors", function(tile) {
+	// Ocean tiles get flat blue-gray
+	if (tile.elevation <= 0) {
+		return new THREE.Color(0x6699CC);
+	}
+
+	if (tile.watershed && tile.watershed.graphColor) {
+		return new THREE.Color(tile.watershed.graphColor);
+	}
+	// Fall back to original color if graph coloring not available
 	if (tile.watershed && tile.watershed.color) {
 		return new THREE.Color(tile.watershed.color);
 	}
-	// Default color for tiles without watershed assignment
-	return tile.elevation <= 0 ? new THREE.Color(0x0066CC) : new THREE.Color(0x888888);
+	// Default color for land tiles without watershed assignment
+	return new THREE.Color(0x888888);
 });
 
 // Land Regions color overlay - shows K-means clustered land regions
 registerColorOverlay("landRegions", "Land Regions", "Shows clustered land regions in different colors", function(tile) {
-	// Ocean tiles stay blue
+	// Ocean tiles get flat blue-gray
 	if (tile.elevation <= 0) {
-		return calculateTerrainColor(tile); // Use standard ocean coloring
+		return new THREE.Color(0x6699CC);
 	}
-	
-	// Land tiles get colored by their region
+
+	// Land tiles get colored by their region using graph coloring
 	if (tile.landRegion && tile.landRegion > 0) {
-		// Generate distinct colors for each region using hue rotation
+		// Use graph-based color if available
+		if (tile.landRegionGraphColor) {
+			return new THREE.Color(tile.landRegionGraphColor);
+		}
+
+		// Fallback to original hue-based coloring
 		var hue = ((tile.landRegion - 1) * 137.5) % 360; // Golden angle for good distribution
 		var saturation = 0.7;
 		var lightness = 0.6;
-		
+
 		// Convert HSL to RGB
 		var color = new THREE.Color();
 		color.setHSL(hue / 360, saturation, lightness);
 		return color;
 	}
-	
+
 	// Fallback for land tiles without region assignment
 	return new THREE.Color(0x888888); // Gray for unassigned land
 });
 
 // Watershed Regions color overlay - shows watersheds after coastal absorption
 registerColorOverlay("watershedRegions", "Watershed Regions", "Shows watersheds with coastal absorption based on O:L ratios", function(tile) {
-	// Ocean tiles stay blue
+	// Ocean tiles get flat blue-gray
 	if (tile.elevation <= 0) {
-		return calculateTerrainColor(tile); // Use standard ocean coloring
+		return new THREE.Color(0x6699CC);
 	}
 
-	// Land tiles get colored by their watershed region
-	if (tile.watershed && tile.watershed.absorptionRegion && tile.watershed.absorptionRegion.finalId) {
-		// Generate distinct colors for each final region using hue rotation
-		var hue = ((tile.watershed.absorptionRegion.finalId - 1) * 137.5) % 360; // Golden angle for good distribution
-		var saturation = 0.8;
-		var lightness = 0.5;
+	// Direct lookup using simple final region structure
+	if (tile.finalRegionId && window.watershedFinalRegions) {
+		// Direct array access since IDs are now sequential 1, 2, 3...
+		var finalRegion = window.watershedFinalRegions[tile.finalRegionId - 1];
 
-		// Convert HSL to RGB
-		var color = new THREE.Color();
-		color.setHSL(hue / 360, saturation, lightness);
-		return color;
+		if (finalRegion && finalRegion.color) {
+			return new THREE.Color(finalRegion.color);
+		}
+
+		// Fallback: Use constrained palette if region exists but missing color
+		if (finalRegion) {
+			console.warn("Final region", tile.finalRegionId, "missing color - using palette fallback");
+			var paletteColors = ["#606c38","#283618","#fefae0","#dda15e","#bc6c25"];
+			var paletteIndex = (tile.finalRegionId - 1) % 5;
+			return new THREE.Color(paletteColors[paletteIndex]);
+		}
 	}
 
-	// Fallback to regular watershed coloring
+	// Priority 5: Fallback to regular watershed coloring
+	if (tile.watershed && tile.watershed.graphColor) {
+		return new THREE.Color(tile.watershed.graphColor);
+	}
 	if (tile.watershed && tile.watershed.color) {
 		return new THREE.Color(tile.watershed.color);
 	}
 
 	// Default color for land tiles without watershed assignment
+	console.warn("Land tile without watershed assignment found");
 	return new THREE.Color(0x888888);
 });
+
+// Color palette arrays for different region types
+var WATERSHED_COLORS = ["#606c38","#283618","#fefae0","#dda15e","#bc6c25"];
+var WATERSHED_REGION_COLORS = ["#606c38","#283618","#fefae0","#dda15e","#bc6c25"];
+var LAND_REGION_COLORS = ["#606c38","#283618","#fefae0","#dda15e","#bc6c25"];
+
+// Generate color palette for specific region type
+function getRegionColorPalette(regionType) {
+	switch (regionType) {
+		case 'watershed':
+			return WATERSHED_COLORS.slice(); // Return copy
+		case 'watershedRegion':
+			return WATERSHED_REGION_COLORS.slice(); // Return copy
+		case 'landRegion':
+			return LAND_REGION_COLORS.slice(); // Return copy
+		default:
+			return WATERSHED_COLORS.slice(); // Default fallback
+	}
+}
+
+// Graph coloring algorithm using Welsh-Powell (greedy with degree sorting)
+function applyGraphColoring(regions, getAdjacencies, colorProperty, regionType) {
+	if (!regions || regions.length === 0) {
+		console.log("No regions to color");
+		return;
+	}
+
+	// Get the appropriate color palette
+	var colorPalette = getRegionColorPalette(regionType);
+
+	// Build adjacency information
+	var adjacencyMap = {};
+	var regionIds = [];
+
+	// Initialize adjacency lists
+	for (var i = 0; i < regions.length; i++) {
+		var region = regions[i];
+		var regionId = region.id || region.finalId || region.landRegion || i;
+		regionIds.push(regionId);
+		adjacencyMap[regionId] = [];
+	}
+
+	// Populate adjacencies using the provided function
+	for (var i = 0; i < regions.length; i++) {
+		var region = regions[i];
+		var regionId = regionIds[i];
+		var adjacentIds = getAdjacencies(region, regions);
+
+		for (var j = 0; j < adjacentIds.length; j++) {
+			var adjacentId = adjacentIds[j];
+			if (adjacencyMap[regionId] && adjacencyMap[adjacentId]) {
+				adjacencyMap[regionId].push(adjacentId);
+				adjacencyMap[adjacentId].push(regionId);
+			}
+		}
+	}
+
+	// Calculate degrees (number of neighbors)
+	var degrees = {};
+	for (var i = 0; i < regionIds.length; i++) {
+		var regionId = regionIds[i];
+		degrees[regionId] = adjacencyMap[regionId].length;
+	}
+
+	// Sort regions by degree (descending) for better coloring
+	var sortedRegionIds = regionIds.slice().sort(function(a, b) {
+		return degrees[b] - degrees[a];
+	});
+
+	// Color assignment with strict 5-color limit and even distribution
+	var coloring = {};
+	var colorUsage = {}; // Track how many times each color is used
+
+	// Initialize color usage counter
+	for (var i = 0; i < colorPalette.length; i++) {
+		colorUsage[i] = 0;
+	}
+
+	// First pass: Assign colors greedily while respecting constraints
+	for (var i = 0; i < sortedRegionIds.length; i++) {
+		var regionId = sortedRegionIds[i];
+		var usedColors = {};
+
+		// Check colors used by neighbors
+		var neighbors = adjacencyMap[regionId] || [];
+		for (var j = 0; j < neighbors.length; j++) {
+			var neighborId = neighbors[j];
+			if (coloring[neighborId] !== undefined) {
+				usedColors[coloring[neighborId]] = true;
+			}
+		}
+
+		// Find best available color (prioritize least used colors)
+		var bestColorIndex = -1;
+		var minUsage = Infinity;
+
+		for (var colorIndex = 0; colorIndex < colorPalette.length; colorIndex++) {
+			if (!usedColors[colorIndex] && colorUsage[colorIndex] < minUsage) {
+				minUsage = colorUsage[colorIndex];
+				bestColorIndex = colorIndex;
+			}
+		}
+
+		// If no color available from original palette, force assignment
+		if (bestColorIndex === -1) {
+			// This should not happen with proper planar graphs, but handle gracefully
+			// Find the least-used color among neighbors (breaking adjacency constraint minimally)
+			console.warn("Graph coloring conflict detected for region", regionId, "- using least conflicting color");
+
+			var minConflictUsage = Infinity;
+			var fallbackColorIndex = 0;
+
+			for (var colorIndex = 0; colorIndex < colorPalette.length; colorIndex++) {
+				if (colorUsage[colorIndex] < minConflictUsage) {
+					minConflictUsage = colorUsage[colorIndex];
+					fallbackColorIndex = colorIndex;
+				}
+			}
+			bestColorIndex = fallbackColorIndex;
+		}
+
+		coloring[regionId] = bestColorIndex;
+		colorUsage[bestColorIndex]++;
+	}
+
+	// Second pass: Redistribute colors for better balance
+	// Try to swap colors to achieve more even distribution
+	var targetUsagePerColor = Math.ceil(sortedRegionIds.length / colorPalette.length);
+	var maxIterations = 10;
+	var iteration = 0;
+
+	while (iteration < maxIterations) {
+		var swapMade = false;
+
+		// Find overused and underused colors
+		var overusedColors = [];
+		var underusedColors = [];
+
+		for (var colorIndex = 0; colorIndex < colorPalette.length; colorIndex++) {
+			if (colorUsage[colorIndex] > targetUsagePerColor) {
+				overusedColors.push(colorIndex);
+			} else if (colorUsage[colorIndex] < targetUsagePerColor) {
+				underusedColors.push(colorIndex);
+			}
+		}
+
+		// Try to swap regions from overused to underused colors
+		for (var i = 0; i < overusedColors.length && !swapMade; i++) {
+			var overusedColor = overusedColors[i];
+
+			// Find regions using the overused color
+			for (var j = 0; j < sortedRegionIds.length && !swapMade; j++) {
+				var regionId = sortedRegionIds[j];
+
+				if (coloring[regionId] === overusedColor) {
+					// Check if we can assign an underused color to this region
+					var neighbors = adjacencyMap[regionId] || [];
+					var neighborColors = {};
+
+					for (var k = 0; k < neighbors.length; k++) {
+						var neighborId = neighbors[k];
+						if (coloring[neighborId] !== undefined) {
+							neighborColors[coloring[neighborId]] = true;
+						}
+					}
+
+					// Try underused colors
+					for (var l = 0; l < underusedColors.length; l++) {
+						var underusedColor = underusedColors[l];
+
+						if (!neighborColors[underusedColor]) {
+							// Safe to swap
+							coloring[regionId] = underusedColor;
+							colorUsage[overusedColor]--;
+							colorUsage[underusedColor]++;
+							swapMade = true;
+							break;
+						}
+					}
+				}
+			}
+		}
+
+		if (!swapMade) break;
+		iteration++;
+	}
+
+	// Apply colors to regions
+	for (var i = 0; i < regions.length; i++) {
+		var region = regions[i];
+		var regionId = regionIds[i];
+		var colorIndex = coloring[regionId];
+
+		if (colorIndex !== undefined && colorPalette[colorIndex]) {
+			region[colorProperty] = colorPalette[colorIndex];
+		}
+	}
+
+	console.log("Graph coloring complete. Used", colorPalette.length, "colors for", regions.length, "regions");
+	console.log("Color usage:", colorUsage);
+	console.log("Color balance achieved after", iteration, "redistribution iterations");
+
+	// Calculate and log distribution statistics
+	var usageCounts = Object.values(colorUsage);
+	var minUsage = Math.min.apply(Math, usageCounts);
+	var maxUsage = Math.max.apply(Math, usageCounts);
+	var avgUsage = usageCounts.reduce(function(a, b) { return a + b; }, 0) / usageCounts.length;
+	console.log("Usage distribution - Min:", minUsage, "Max:", maxUsage, "Avg:", avgUsage.toFixed(1));
+}
