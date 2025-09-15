@@ -195,39 +195,39 @@ function groupBodies(planet) {
 	  t.body = null;
 	}
 	planet.topology.bodies = [];
-	
+
 	// Pre-filter tiles into water and land
 	const water = planet.topology.tiles.filter(t => t.elevation < 0);
 	const land = planet.topology.tiles.filter(t => t.elevation >= 0);
-	
+
 	// Create sets for faster lookups
 	const waterSet = new Set(water);
 	const landSet = new Set(land);
-	
+
 	// Process water bodies first, then land bodies
 	processBodyType(water, false, waterSet);
 	processBodyType(land, true, landSet);
-	
+
 	function processBodyType(tiles, isLand, tileSet) {
 	  let bodyTypeCount = 0;
-	  
+
 	  for (const tile of tiles) {
 		if (tile.body) continue; // Skip tiles already assigned to a body
-		
+
 		bodyTypeCount++;
 		const bodyId = isLand ? bodyTypeCount : -bodyTypeCount;
 		const bodyIndex = planet.topology.bodies.length;
-		
+
 		// Create new body
-		const newBody = { 
-		  id: bodyId, 
-		  tiles: [] 
+		const newBody = {
+		  id: bodyId,
+		  tiles: []
 		};
 		planet.topology.bodies.push(newBody);
-		
+
 		// Use iterative approach instead of recursive
 		const bodyTiles = findConnectedTiles(tile, isLand, tileSet);
-		
+
 		// Assign tiles to body
 		for (const bodyTile of bodyTiles) {
 		  bodyTile.body = newBody;
@@ -235,46 +235,46 @@ function groupBodies(planet) {
 		}
 	  }
 	}
-	
+
 	function findConnectedTiles(startTile, isLand, tileSet) {
 	  const body = [startTile];
 	  const queue = [startTile];
 	  const visited = new Set([startTile]);
-	  
+
 	  while (queue.length > 0) {
 		const current = queue.shift();
 		const neighbors = current.tiles || [];
-		
+
 		for (const neighbor of neighbors) {
 		  // Skip if already visited, already has a body, or wrong type (land/water)
 		  if (visited.has(neighbor) || neighbor.body || !tileSet.has(neighbor)) {
 			continue;
 		  }
-		  
+
 		  visited.add(neighbor);
 		  queue.push(neighbor);
 		  body.push(neighbor);
 		}
 	  }
-	  
+
 	  return body;
 	}
-	
+
 	// Process water bodies based on water-to-land ratio
 	const waterToLandRatioThreshold = 1; // Water body size / bordering land tiles <= 1
-	
+
 	// For each water body
 	const waterBodies = planet.topology.bodies.filter(body => body.id < 0);
-	
+
 	for (const waterBody of waterBodies) {
 	  // Find all neighboring land tiles and their bodies
 	  const neighboringLandTiles = new Set();
 	  const neighboringLandBodies = new Set();
-	  
+
 	  // Check each water tile for land neighbors
 	  for (const waterTile of waterBody.tiles) {
 		const neighbors = waterTile.tiles || [];
-		
+
 		for (const neighbor of neighbors) {
 		  // If neighbor is land and belongs to a land body
 		  if (neighbor.elevation >= 0 && neighbor.body && neighbor.body.id > 0) {
@@ -283,19 +283,19 @@ function groupBodies(planet) {
 		  }
 		}
 	  }
-	  
+
 	  // Calculate water-to-land ratio
 	  const waterTileCount = waterBody.tiles.length;
 	  const landTileCount = neighboringLandTiles.size;
 	  const waterToLandRatio = waterTileCount / landTileCount;
-	  
+
 	  // Convert neighboring land bodies to array for easier processing
 	  const landBodiesArray = Array.from(neighboringLandBodies);
-	  
+
 	  // If ratio is <= threshold and there's exactly one neighboring land body
 	  if (waterToLandRatio <= waterToLandRatioThreshold && landBodiesArray.length === 1) {
 		const landBody = landBodiesArray[0];
-		
+
 		// Find the lowest elevation among neighboring land tiles
 		let lowestLandElevation = Infinity;
 		for (const landTile of neighboringLandTiles) {
@@ -303,25 +303,25 @@ function groupBodies(planet) {
 			lowestLandElevation = landTile.elevation;
 		  }
 		}
-		
+
 		// Change elevation of water tiles and reassign to land body
 		for (const waterTile of waterBody.tiles) {
 		  // Set elevation based on the lowest land elevation + a small increment based on tile id
 		  waterTile.elevation = lowestLandElevation + 0.0000001 * Math.abs(waterTile.id || 0);
-		  
+
 		  // Reassign to land body
 		  waterTile.body = landBody;
 		  landBody.tiles.push(waterTile);
 		}
-		
+
 		// Mark this water body for removal
 		waterBody.tiles = [];
 	  }
 	}
-	
+
 	// Remove empty water bodies
 	planet.topology.bodies = planet.topology.bodies.filter(body => body.tiles.length > 0);
-	
+
 	for (b of planet.topology.bodies.filter(b => b.id > 0 && b.tiles.length > 20)) {
 		b.features =[];
 		let featureCount = 0;
@@ -329,7 +329,7 @@ function groupBodies(planet) {
 			t.s = t.shore;
 		}
 		let blanks = b.tiles.filter(t=>t.s > 0);
-		for (let i = 0; i < 12; i++) { 
+		for (let i = 0; i < 12; i++) {
 			if (blanks.length > 0) {
 				blanks.sort((a, b) => b.shore - a.shore || b.elevation - a.elevation);
 				featureCount++;
@@ -342,7 +342,7 @@ function groupBodies(planet) {
 				} else {
 					newFeature.color = new THREE.Color(0x009966).lerp(new THREE.Color(0x800080), (hash-0.5)*2);
 				}
-				
+
 				blanks[0].s=0;
 				blanks[0].feature = newFeature;
 
@@ -364,7 +364,7 @@ function groupBodies(planet) {
 		}
 
 	}
-	
+
 	//console.log(planet.topology.bodies);
 	return planet.topology.bodies;
 }
@@ -381,13 +381,13 @@ function erodeElevation(planet, action) {
 	randomLocalMax();
 	//randomLocalMax();
 	ctimeEnd("randomLocalMax");
-	
+
 	// Validate drainage after initial randomLocalMax
 	let landTiles = tiles.filter(t => t.elevation > 0);
 	if (landTiles.some(t => t.drain)) {  // Only validate if drainage has been set
 		validateDrainage(landTiles, 'After initial randomLocalMax');
 	}
-	
+
 	tiles.sort((a, b) => parseFloat(a.elevation) - parseFloat(b.elevation));
 
 	ctime("newerDrain");
@@ -409,7 +409,7 @@ function erodeElevation(planet, action) {
 	ctime("reMoisture");
 	reMoisture()
 	ctimeEnd("reMoisture");
-	
+
 	//console.log(planet)
 
 	// Helper function to recalculate drainage for specific tiles
@@ -421,13 +421,13 @@ function erodeElevation(planet, action) {
 			tile.downstream = [];
 			tile.sources = [];
 		});
-		
+
 		// Recalculate drainage for updated tiles
 		tilesToUpdate.forEach(tile => {
 			tile.tiles.sort((a, b) => a.elevation - b.elevation);
 			tile.drain = tile.tiles.filter(n => n.elevation < tile.elevation)[0];
 		});
-		
+
 		// Recalculate upstream/downstream for all affected tiles
 		calculateUpstreamDownstream(allLandTiles);
 	}
@@ -441,13 +441,13 @@ function erodeElevation(planet, action) {
 			tile.downstream = [];
 			tile.sources = [];
 		});
-		
+
 		// Recalculate drainage for basin tiles
 		basin.forEach(tile => {
 			tile.tiles.sort((a, b) => a.elevation - b.elevation);
 			tile.drain = tile.tiles.filter(n => n.elevation < tile.elevation)[0];
 		});
-		
+
 		// Also recalculate for tiles in escape route area that might be affected
 		escapeRouteArea.forEach(tile => {
 			if (tile.elevation > 0) {
@@ -455,12 +455,12 @@ function erodeElevation(planet, action) {
 				tile.drain = tile.tiles.filter(n => n.elevation < tile.elevation)[0];
 			}
 		});
-		
+
 		// Recalculate upstream/downstream only for affected tiles (basin + escape area)
 		let allAffectedTiles = [...basin, ...escapeRouteArea.filter(t => t.elevation > 0)];
 		calculateUpstreamDownstreamForSpecificTiles(allAffectedTiles, basin);
 	}
-	
+
 	// Helper to calculate upstream/downstream for specific tiles only
 	function calculateUpstreamDownstreamForSpecificTiles(tilesToProcess, basinTiles) {
 		// Initialize arrays for tiles being processed
@@ -470,7 +470,7 @@ function erodeElevation(planet, action) {
 				tile.downstream = [];
 			}
 		});
-		
+
 		// Calculate upstream and downstream relationships within this scope
 		tilesToProcess.forEach(tile => {
 			if (tile.elevation > 0 && tile.drain) {
@@ -479,7 +479,7 @@ function erodeElevation(planet, action) {
 					if (!tile.drain.downstream) tile.drain.downstream = [];
 					tile.drain.downstream.push(tile);
 				}
-				
+
 				// Add upstream tiles within the basin
 				let current = tile;
 				while (current.drain && current.drain.elevation > 0 && basinTiles.includes(current.drain)) {
@@ -488,7 +488,7 @@ function erodeElevation(planet, action) {
 						current.drain.upstream.push(tile);
 					}
 					current = current.drain;
-					
+
 					// Safety check to prevent infinite loops
 					if (current === tile) break;
 				}
@@ -500,7 +500,7 @@ function erodeElevation(planet, action) {
 	function validateDrainage(tiles, context = '') {
 		let uphillCount = 0;
 		let issues = [];
-		
+
 		tiles.forEach(tile => {
 			if (tile.elevation > 0 && tile.drain) {
 				if (tile.drain.elevation >= tile.elevation) {
@@ -514,7 +514,7 @@ function erodeElevation(planet, action) {
 				}
 			}
 		});
-		
+
 		if (uphillCount > 0) {
 			console.log(`${context}: Found ${uphillCount} uphill drainage issues`);
 			// Show worst cases for debugging
@@ -526,13 +526,13 @@ function erodeElevation(planet, action) {
 		} else {
 			//console.log(`${context}: All drainage flows downhill ✓`);
 		}
-		
+
 		return uphillCount;
 	}
 
 	function randomLocalMax() {
 		let modifiedTiles = [];
-		
+
 		tiles.sort((a, b) => parseFloat(a.elevation) - parseFloat(b.elevation));
 		for (let i = 0; i < tiles.length; i++) {
 			tiles[i].tiles.sort((a, b) => parseFloat(a.elevation) - parseFloat(b.elevation));
@@ -552,7 +552,7 @@ function erodeElevation(planet, action) {
 									break;
 								}
 							}
-							
+
 							if (!neighborIsLocalMax) {
 								//console.log('success')
 								tiles[i].elevation = tiles[i].tiles[tiles[i].tiles.length - 1].elevation * 1.05 //make local max
@@ -565,11 +565,11 @@ function erodeElevation(planet, action) {
 				}
 			}
 		}
-		
+
 		// Use localized drainage recalculation for modified tiles
 		if (modifiedTiles.length > 0) {
 			let locallyAffectedTiles = new Set(modifiedTiles);
-			
+
 			// Add immediate neighbors that might be affected by elevation changes
 			modifiedTiles.forEach(tile => {
 				tile.tiles.forEach(neighbor => {
@@ -578,7 +578,7 @@ function erodeElevation(planet, action) {
 					}
 				});
 			});
-			
+
 			// Also find tiles that were previously draining into the raised tiles
 			let land = tiles.filter(t => t.elevation > 0);
 			land.forEach(tile => {
@@ -586,12 +586,12 @@ function erodeElevation(planet, action) {
 					locallyAffectedTiles.add(tile);
 				}
 			});
-			
+
 			// Use basin-scoped recalculation with the locally affected area
 			recalculateBasinDrainage([...locallyAffectedTiles], []);
 			//console.log(`randomLocalMax: Localized recalculation for ${modifiedTiles.length} raised tiles affecting ${locallyAffectedTiles.size} total tiles`);
 		}
-		
+
 		tiles.sort((a, b) => parseFloat(a.elevation) - parseFloat(b.elevation));
 		for (let i = 0; i < tiles.length; i++) {
 			tiles[i].tiles.sort((a, b) => parseFloat(a.elevation) - parseFloat(b.elevation));
@@ -606,7 +606,7 @@ function erodeElevation(planet, action) {
 				tile.downstream = [];
 			}
 		});
-	
+
 		// Calculate upstream and downstream arrays
 		tiles.forEach(tile => {
 			if (tile.elevation > 0 && tile.drain) {
@@ -621,7 +621,7 @@ function erodeElevation(planet, action) {
 				if (tile.drain.elevation >= tile.elevation) {
 					tile.error = 'drain higher/equal elevation';
 				}
-	
+
 				// Add all upstream tiles to the current tile's upstream array
 				let current = tile;
 				while (current.drain && current.drain.elevation > 0) {
@@ -640,7 +640,7 @@ function erodeElevation(planet, action) {
 				}
 			}
 		});
-	
+
 		// Recursively add downstream tiles to the downstream array
 		function addDownstreamTiles(tile, downstreamTiles) {
 			tile.downstream.forEach(downstreamTile => {
@@ -650,7 +650,7 @@ function erodeElevation(planet, action) {
 				}
 			});
 		}
-	
+
 		// Populate downstream arrays with all downstream tiles
 		tiles.forEach(tile => {
 			if (tile.elevation > 0) {
@@ -725,30 +725,30 @@ function erodeElevation(planet, action) {
 					let oldElevation = b.elevation;
 					b.elevation = (b.tiles[0].elevation+b.tiles[1].elevation)/2+0.000001*b.id;
 					//logElevationChange(b, 'borderElevation', b.elevation);
-					
+
 					// Use very localized drainage recalculation for single tile fix
 					if (Math.abs(b.elevation - oldElevation) > 0.000001) {
 						let locallyAffectedTiles = [b];
-						
+
 						// Add immediate neighbors
 						b.tiles.forEach(neighbor => {
 							if (neighbor.elevation > 0) {
 								locallyAffectedTiles.push(neighbor);
 							}
 						});
-						
+
 						// Also add any tiles that were draining into this tile
 						land.forEach(tile => {
 							if (tile.drain === b) {
 								locallyAffectedTiles.push(tile);
 							}
 						});
-						
+
 						// Use basin-scoped recalculation for this very small area
 						recalculateBasinDrainage(locallyAffectedTiles, []);
 					}
 				}
-			}		
+			}
 			if (i===3) {
 				ctime("randomLocalMax");
 				randomLocalMax();
@@ -825,7 +825,7 @@ function erodeElevation(planet, action) {
 			// Use basin-scoped drainage recalculation - much more efficient!
 			let basin = [...lake.tiles]; // The filled basin
 			let escapeRouteArea = [...lake.shore]; // Shore tiles that form boundary
-			
+
 			// Add escape route neighbor to capture drainage boundary
 			if (bowlEscapeRoute && bowlEscapeRoute.routeB && bowlEscapeRoute.routeB.elevation > 0) {
 				escapeRouteArea.push(bowlEscapeRoute.routeB);
@@ -836,16 +836,16 @@ function erodeElevation(planet, action) {
 					}
 				});
 			}
-			
+
 			// Use basin-scoped recalculation instead of full planet recalculation
 			recalculateBasinDrainage(basin, escapeRouteArea);
-			
+
 			// Clear lake references
 			lake.tiles.forEach(tile => {
 				tile.lake = undefined;
 			});
 			lake.tiles=[];
-			
+
 			//console.log(`bowlFill: Basin-scoped recalculation for ${basin.length} basin tiles and ${escapeRouteArea.length} boundary tiles`);
 
 			function findMouthOrder(lake,mouth) {
@@ -872,7 +872,7 @@ function erodeElevation(planet, action) {
 				}
 			}
 			assignWatershedColors(watersheds, 6);
-			
+
 			if (watersheds.some(w=>!w.color)) {
 				console.log(watersheds.filter(w=>!w.color));
 			}
@@ -889,14 +889,14 @@ function erodeElevation(planet, action) {
 				colors = [new THREE.Color(0xE2E8C6), new THREE.Color(0xB7C779), new THREE.Color(0x7D8A42), new THREE.Color(0xA67B5B), new THREE.Color(0x6F5A4D), new THREE.Color(0x4D3B2E)];
 
 				var assignedColors = {};
-				
+
 				// Sort watersheds by the number of distinct neighboring watersheds in descending order
 				watersheds.sort((a, b) => {
 					var aNeighbors = [...new Set(a.tiles.map(t => t.tiles).flat().filter(n => !a.tiles.includes(n) && n.watershed && n.watershed !== a).map(n => n.watershed.id))].length;
 					var bNeighbors = [...new Set(b.tiles.map(t => t.tiles).flat().filter(n => !b.tiles.includes(n) && n.watershed && n.watershed !== b).map(n => n.watershed.id))].length;
 					return bNeighbors - aNeighbors;
 				});
-			
+
 				for (var i = 0; i < watersheds.length; i++) {
 					var watershed = watersheds[i];
 					var watershedNeighbors = [...new Set(watershed.tiles.map(t => t.tiles).flat().filter(n => !watershed.tiles.includes(n) && n.watershed && n.watershed !== watershed))];
@@ -919,7 +919,7 @@ function erodeElevation(planet, action) {
 	}
 	function reMoisture() {
 		var maxRain = Math.max(...tiles.map(element => element.rain));
-		
+
 		var shareFraction = 0.4;
 		var shareIteration = 4;
 
@@ -934,61 +934,61 @@ function erodeElevation(planet, action) {
 			}
 		};
 	}
-	
+
 	function redirectParallelRivers(landTiles) {
 		// Find qualifying river tiles
 		var flows = landTiles.filter(t => t.outflow > 0).sort((a, b) => parseFloat(a.outflow) - parseFloat(b.outflow));
 		const riverThresholdValue = flows[Math.floor(flows.length * riverThreshold)].outflow;
-		
+
 		// Get all tiles that qualify as rivers
 		let qualifyingRivers = landTiles.filter(t => t.outflow > riverThresholdValue && t.drain);
-		
+
 		let redirectionCount = 0;
 		let processedPairs = new Set(); // Track processed tile pairs to avoid duplicates
-		
+
 		// Process each qualifying river tile
 		for (let i = 0; i < qualifyingRivers.length; i++) {
 			let tileA = qualifyingRivers[i];
-			
+
 			// Check each neighbor for parallel drainage (draining to different tiles)
 			for (let tileB of tileA.tiles) {
 				if (!qualifyingRivers.includes(tileB)) continue;
-				
+
 				// Skip if we've already processed this pair
 				let pairKey = [tileA.id, tileB.id].sort().join('-');
 				if (processedPairs.has(pairKey)) continue;
 				processedPairs.add(pairKey);
-				
+
 				// Check if they drain to different tiles (excluding upstream/downstream relationship)
 				if (tileA.drain && tileB.drain && tileA.drain !== tileB.drain) {
 					// Check if they are upstream or downstream of each other
-					let isUpstream = (tileA.upstream && tileA.upstream.includes(tileB)) || 
+					let isUpstream = (tileA.upstream && tileA.upstream.includes(tileB)) ||
 									 (tileB.upstream && tileB.upstream.includes(tileA));
-					let isDownstream = (tileA.downstream && tileA.downstream.includes(tileB)) || 
+					let isDownstream = (tileA.downstream && tileA.downstream.includes(tileB)) ||
 									   (tileB.downstream && tileB.downstream.includes(tileA));
-					
+
 					// Only process if they are NOT upstream/downstream of each other
 					if (!isUpstream && !isDownstream) {
 						// Identify A = higher elevation tile, B = lower elevation tile
 						let higherTile = tileA.elevation > tileB.elevation ? tileA : tileB;
 						let lowerTile = tileA.elevation > tileB.elevation ? tileB : tileA;
-						
+
 						// 1) Raise elevation of higherTile.drain until it's no longer the drain
 						let currentDrain = higherTile.drain;
 						let alternativeNeighbors = higherTile.tiles.filter(n => n !== currentDrain && n.elevation < higherTile.elevation);
-						
+
 						if (alternativeNeighbors.length > 0) {
 							// Find the lowest alternative neighbor
-							let lowestAlternative = alternativeNeighbors.reduce((min, neighbor) => 
+							let lowestAlternative = alternativeNeighbors.reduce((min, neighbor) =>
 								neighbor.elevation < min.elevation ? neighbor : min);
-							
+
 							// Raise current drain elevation to just above the lowest alternative
 							let newDrainElevation = lowestAlternative.elevation + 0.001;
 							currentDrain.elevation = newDrainElevation;
-							
+
 							redirectionCount++;
 						}
-						
+
 						// 2) Lower lowerTile.elevation as much as possible without changing its drain
 						if (lowerTile.drain) {
 							// Find the minimum elevation that keeps lowerTile.drain as the drain
@@ -998,7 +998,7 @@ function erodeElevation(planet, action) {
 								// Lower lowerTile to just above its drain but below other neighbors
 								let maxAllowedElevation = Math.min(lowestOtherNeighbor - 0.001, lowerTile.elevation);
 								let minRequiredElevation = lowerTile.drain.elevation + 0.001;
-								
+
 								if (maxAllowedElevation > minRequiredElevation) {
 									lowerTile.elevation = minRequiredElevation;
 									redirectionCount++;
@@ -1009,20 +1009,20 @@ function erodeElevation(planet, action) {
 				}
 			}
 		}
-		
+
 		// Recalculate drainage system with the elevation changes
 		if (redirectionCount > 0) {
 			newerDrain(landTiles);
 		}
 	}
-	
+
 	// Removed - using tile.downstream.length directly
-	
+
 	// Helper functions removed - using simplified neighbor check
-	
-	
+
+
 	// Removed - using tile.downstream directly
-	
+
 	// Helper function removed - no longer needed with simplified approach
 }
 
@@ -1137,590 +1137,4 @@ function tileElevationProcs(tiles, action) {
 	}
 }
 
-function generatePlanetBiomesResources(tiles, planetRadius, action) {
-	tiles.sort((a, b) => parseFloat(b.elevation) - parseFloat(a.elevation));
-	var flows = tiles.filter(t => t.outflow > 0).sort((a, b) => parseFloat(a.outflow) - parseFloat(b.outflow));
-	var flowThreshold = flows[Math.floor(flows.length * riverThreshold)].outflow;
-	var seaTemps = tiles.filter(t => t.elevation < 0).sort((a, b) => parseFloat(a.temperature) - parseFloat(b.temperature));
-	var optimalTemp = seaTemps[Math.floor(seaTemps.length * .4)].temperature;
-	const fibVectors = generateEvenVectors(Math.floor(Math.pow(tiles.length,0.5)), 1000)
-	//console.log(fibVectors);
-	function calculateAngleBetweenVectors(v1, v2) {
-		// Calculate the dot product of the vectors
-		const dotProduct = v1.dot(v2);
-	
-		// Calculate the magnitudes of the vectors
-		const magnitudeV1 = v1.length();
-		const magnitudeV2 = v2.length();
-	
-		// Calculate the cosine of the angle
-		const cosTheta = dotProduct / (magnitudeV1 * magnitudeV2);
-	
-		// Calculate the angle in radians
-		let angle = Math.acos(cosTheta);
-	
-		// Ensure the angle is between -pi and pi
-		if (v1.cross(v2).z < 0) {
-			angle = -angle;
-		}
-	
-		return angle;
-	}
-
-	function generateEvenVectors(N, M) {
-		const vectors = [];
-		const goldenRatio = (1 + Math.sqrt(5)) / 2;
-		const angleIncrement = Math.PI * 2 * goldenRatio;
-	
-		for (let i = 0; i < N; i++) {
-			const t = i / N;
-			const inclination = Math.acos(1 - 2 * t);
-			const azimuth = angleIncrement * i;
-	
-			const x = Math.sin(inclination) * Math.cos(azimuth);
-			const y = Math.sin(inclination) * Math.sin(azimuth);
-			const z = Math.cos(inclination);
-	
-			const vector = new THREE.Vector3(x, y, z);
-			vector.multiplyScalar(M);
-	
-			vectors.push(vector);
-		}
-	
-		return vectors;
-	}
-	function findClosestVector(inputVector, vectorArray) {
-		if (vectorArray.length === 0) {
-			throw new Error('Vector array is empty');
-		}
-	
-		let closestVector = vectorArray[0];
-		let minDistance = inputVector.distanceTo(closestVector);
-	
-		for (let i = 1; i < vectorArray.length; i++) {
-			const currentDistance = inputVector.distanceTo(vectorArray[i]);
-			
-			if (currentDistance < minDistance) {
-				minDistance = currentDistance;
-				closestVector = vectorArray[i];
-			}
-		}
-	
-		return minDistance;
-	}
-	let maxDist = 1;
-
-	for (t of tiles) {
-		t.fibNoise = findClosestVector(t.position, fibVectors);
-		if (t.fibNoise > maxDist) {
-			maxDist = t.fibNoise;
-		}		t.wheat = 0;
-		t.corn = 0;
-		t.rice = 0;
-		t.fish = 0;
-		t.pasture = 0;
-		t.timber =0;
-		t.calories = 0;
-		t.iron = 0;
-		t.bauxite = 0;
-		t.oil = 0;
-		t.gold = 0;
-		t.copper = 0;
-	}
-	
-	for (t of tiles) {
-		t.fibNoise = 1 - t.fibNoise / maxDist;
-	}
-
-	for (var i = 0; i < tiles.length; ++i) {
-		var tile = tiles[i];
-		var elevation = Math.max(0, tile.elevation);
-		tile.slope = Math.max(...tile.tiles.map(n => Math.abs(tile.elevation - n.elevation)));
-		tile.latitudeAbs = Math.asin(Math.abs(tile.position.y) / planetRadius)/(Math.PI/2);
-		var temperature = tile.temperature;
-		var distanceToPlateBoundary = Math.min(...tile.corners.map(c => c.distanceToPlateBoundary));
-		
-		if (elevation <= 0) {
-			if (temperature > 0) {
-				tile.biome = "ocean";
-				let hemisphere = Math.sign(tile.averagePosition.y);
-				let higherShoreNeighbors = tile.tiles.filter(n => n.shore > tile.shore);
-				let shoreVector = higherShoreNeighbors.reduce((acc, n) => {
-					let vector = n.position.clone().sub(tile.position);
-					return acc.add(vector);
-				}, new THREE.Vector3()).divideScalar(higherShoreNeighbors.length);
-				let airCurrent = tile.corners.reduce((acc, corner) => {
-					return acc.add(corner.airCurrent);
-				}, new THREE.Vector3()).divideScalar(tile.corners.length);
-				let angle = calculateAngleBetweenVectors(shoreVector, airCurrent);
-				let nearShore = [...tile.tiles.map(n => Math.min(-1,n.shore))].reduce((sum, num) => sum - num, 0);
-				//if (tile.shore > -3) {
-					//not sure why z matters, I think because the sign of the angle difference switches
-					tile.fish = 0.1*tile.slope+7*Math.max(0,Math.sin(angle)*(-Math.sign(tile.averagePosition.y)*Math.sign(tile.averagePosition.z)))/nearShore+0.1*(1-Math.pow(temperature-optimalTemp,2));
-				//}
-			} else {
-				tile.biome = "seaIce";
-			}
-		} else if (tile.elevation > 0.9 || tile.temperature < 0 || (tile.temperature < 0 && (Math.min(tile.moisture, 1) > 0.45 || (tile.drain && tile.outflow > flowThreshold)))) { //
-			tile.biome = "glacier";
-		} else if (tile.lake) {
-			tile.biome = "lake";
-			tile.fish = tile.upstream.length/20;
-		} else if (tile.drain) {
-			// Check if any individual inflow (not total) exceeds threshold
-			var hasSignificantInflow = false;
-			var alreadyRiver = false;
-			var significantSources = [];
-			
-			if (tile.sources && tile.sources.length > 0) {
-				for (var source of tile.sources) {
-					if (source.outflow > flowThreshold) {
-						hasSignificantInflow = true;
-						alreadyRiver = source.river;
-						significantSources.push(source);
-					}
-				}
-			}
-			
-			if (hasSignificantInflow && (alreadyRiver||(tile.downstream && tile.downstream.length > 0))) {
-				tile.river = true;
-				tile.riverSources = significantSources; // Store which sources qualify for rendering
-				tile.fish = Math.max(.125,Math.min(.25,tile.upstream.length/20))+Math.min(.75,(tile.upstream.length/(tile.downstream.length+1))/45);
-			}
-		} else {
-			if (tile.elevation <= 0.8 && tile.elevation >= 0 && tile.lake === undefined && tile.temperature > 0.2) {
-				tile.wheat = Math.round(100 * Math.max(0, 1 - 2 * (Math.abs(tile.temperature - .3) + Math.abs(tile.moisture - .3))));
-			}
-			if (tile.elevation <= 0.6 && tile.elevation >= 0 && tile.lake === undefined && tile.temperature > 0.4 && tile.moisture >= 0.1) {
-				tile.corn = Math.round(100 * Math.max(0, 1 - 2 * (Math.abs(tile.temperature - .6) + Math.abs(tile.moisture - .4))));
-			}
-			if (tile.elevation <= 0.6 && tile.elevation >= 0 && tile.lake === undefined && tile.temperature >= .5 && tile.moisture >= 0.2) {
-				tile.rice = Math.round(100 * (Math.pow(nrm(tile.temperature, 'logistic', .9, 7), 3) * Math.pow(nrm(tile.moisture, 'logistic', .6, 7), 3)));
-			}
-			if (tile.elevation <= 0.9) {
-				tile.pasture = tile.moisture*2;
-			}
-			if (tile.temperature > 0.2 && tile.elevation < 0.8) {
-				tile.timber = tile.moisture;
-			}
-
-			if (tile.elevation > 0.6) {
-				tile.gold = tile.fibNoise * (1-5*Math.abs(tile.elevation-0.8)) / Math.max(1,Math.pow(distanceToPlateBoundary,3));
-			} else if (tile.elevation > 0.4) {
-				tile.iron = Math.abs(0.5-tile.fibNoise) / Math.max(1,Math.pow(distanceToPlateBoundary,5));
-			}
-			tile.oil = (1-tile.fibNoise) * Math.max(0,1-Math.pow(tile.slope,0.125)-tile.moisture);
-			tile.bauxite = (tile.fibNoise) * Math.max(0,tile.slope*tile.moisture*tile.temperature);
-			tile.copper = (10 / (1 + Math.exp(-0.003 * (tile.elevation - 1200)))) *
-				(1 / (1 + Math.exp(-0.1 * (tile.temperature - 20)))) *
-				Math.exp(-0.2 * distanceToPlateBoundary) *
-				Math.exp(-0.002 * tile.rain);
-		}
-		tile.calories = Math.max(0, tile.wheat * 7, tile.corn * 15, tile.rice * 11, tile.pasture*1000,tile.fish*1300);
-	}
-		
-	//}
-	for (t of tiles.filter(t => t.upstream)) {
-		t.upstreamCalories = t.upstream.reduce((s, v) => s + v.calories, 0)
-	}
-	
-	
-	const percentiles = {
-		iron: 90,
-		oil: 95,
-		bauxite: 98,
-		copper: 97,
-		gold: 99
-	};
-
-	function normalizeTiles(tiles, percentiles) {
-		if (!tiles || tiles.length === 0) return [];
-
-		for (const attr in percentiles) {
-			const perc = percentiles[attr];
-			const values = tiles.map(tile => tile[attr]);
-			const sorted = [...values].sort((a, b) => a - b);
-			const index = Math.floor((perc / 100) * (sorted.length - 1));
-			const pVal = sorted[index];
-			const maxVal = Math.max(...values);
-
-			for (const tile of tiles) {
-			if (maxVal === pVal) {
-				tile[attr] = tile[attr] >= maxVal ? 1.0 : 0.0;
-			} else {
-				tile[attr] = Math.max(0, Math.min(1, (tile[attr] - pVal) / (maxVal - pVal)));
-			}
-			}
-		}
-
-		//return tiles;
-	}
-	normalizeTiles(tiles.filter(t => t.elevation > 0), percentiles);
-	
-	const weights = {
-		calories: 1,
-		iron: 10,
-		oil: 20,
-		bauxite: 10,
-		copper: 25,
-		gold: 100
-	};
-
-	function sumUpstreamWeights(tiles, weights) {
-		for (const tile of tiles) {
-			let sum = 0;
-
-			for (const upstreamTile of tile.upstream || []) {
-				for (const attr in weights) {
-					if (typeof upstreamTile[attr] === 'number') {
-					sum += upstreamTile[attr] * weights[attr];
-					}
-				}
-			}
-
-			tile.upstreamWeight = sum;
-		}
-	}
-
-	sumUpstreamWeights(tiles.filter(t => t.elevation > 0), weights);
-	normalizeTiles(tiles.filter(t => t.elevation > 0), {upstreamWeight: 0});
-	/* 
-
-		//fish color		
-		var fishColor = terrainColor.clone()
-		if (tile.elevation < 0 && tile.biome != "seaIce"&&tile.shore>-5) {// && tile.elevation >= -0.2) {
-			tile.fish = 100-100*Math.pow(Math.abs(tile.elevation+0.2),0.15);
-			fishColor = fishColor.lerp(new THREE.Color(0xFF00FF), tile.fish / 100);
-		}
-		var calorieColor = terrainColor.clone()
-		calorieColor = calorieColor.lerp(new THREE.Color(0xFF00FF), tile.calories / 1500);
-
-		
-		function assignResourceDeposits(tiles) {
-			tiles.forEach(tile => {
-				if (tile.elevation > 0) { // Only assign resources to land tiles
-					// Gold deposits are often found in mountainous regions and near plate boundaries
-					tile.goldDeposits = (tile.elevation > 0.5 && tile.plate.boundaryBorders.length > 0) ? Math.random() * 100 : 0;
-		
-					// Iron ore deposits are often found in ancient geological formations, typically away from plate boundaries
-					tile.ironOreDeposits = (tile.elevation > 0.3 && tile.plate.boundaryBorders.length === 0) ? Math.random() * 200 : 0;
-		
-					// Oil deposits are often found in sedimentary basins, typically in low elevation areas
-					tile.oilDeposits = (tile.elevation < 0.2 && tile.moisture > 0.5) ? Math.random() * 50 : 0;
-		
-					// Aluminum ore deposits (bauxite) are often found in tropical regions with high moisture
-					tile.aluminumOreDeposits = (tile.moisture * tile.temperature) ? Math.random() * 150 : 0;
-				} else {
-					tile.goldDeposits = 0;
-					tile.ironOreDeposits = 0;
-					tile.oilDeposits = 0;
-					tile.aluminumOreDeposits = 0;
-				}
-			});
-		}
-			*/
-	
-	// Add labeling system - find highest elevation tile and label it
-	console.log('DEBUG: Starting label assignment phase');
-	if (tiles && tiles.length > 0) {
-		console.log('DEBUG: Processing', tiles.length, 'tiles for labeling');
-		// Find tile with highest elevation (tiles are already sorted by elevation descending at line 1134)
-		var highestTile = tiles[0];
-		for (var i = 1; i < tiles.length; i++) {
-			if (tiles[i].elevation > highestTile.elevation) {
-				highestTile = tiles[i];
-			}
-		}
-		
-		console.log('DEBUG: Found highest tile with elevation:', highestTile.elevation);
-		console.log('DEBUG: Highest tile ID/position:', highestTile.id || 'no-id', highestTile.averagePosition);
-		
-		// Add label to highest elevation tile
-		if (highestTile && highestTile.elevation > 0) {
-			highestTile.label = 'Mount Everest';
-			console.log('DEBUG: Successfully assigned label "Mount Everest" to tile');
-			console.log('DEBUG: Tile now has label property:', highestTile.label);
-		} else {
-			console.log('DEBUG: No suitable tile found for labeling (highest elevation <= 0)');
-		}
-	} else {
-		console.log('DEBUG: No tiles provided for labeling');
-	}
-	
-	// Add K-means clustering for geographical features
-	clusterLandFeatures(tiles);
-}
-
-// Sphere-constrained K-means clustering for land features
-function clusterLandFeatures(tiles) {
-	console.log('DEBUG: Starting land feature clustering');
-	
-	if (!tiles || tiles.length === 0) {
-		console.log('DEBUG: No tiles for clustering');
-		return;
-	}
-	
-	// Filter land tiles only
-	var landTiles = tiles.filter(function(tile) {
-		return tile.elevation > 0;
-	});
-	
-	console.log('DEBUG: Found', landTiles.length, 'land tiles for clustering');
-	
-	if (landTiles.length === 0) {
-		console.log('DEBUG: No land tiles found for clustering');
-		return;
-	}
-	
-	// Calculate number of clusters (land tiles / 100, minimum 1)
-	var k = Math.max(1, Math.floor(landTiles.length / 100));
-	console.log('DEBUG: Using', k, 'clusters for', landTiles.length, 'land tiles');
-	
-	// Extract 3D positions from land tiles
-	var positions = landTiles.map(function(tile) {
-		return tile.averagePosition.clone();
-	});
-	
-	// Perform K-means clustering
-	var clusterResult = kMeansSphereClustering(positions, landTiles, k);
-	var clusters = clusterResult.centers;
-	var assignments = clusterResult.assignments;
-	
-	// Store cluster assignments on tiles for color overlay
-	for (var i = 0; i < landTiles.length; i++) {
-		landTiles[i].landRegion = assignments[i] + 1; // 1-based indexing for display
-	}
-
-	// Apply graph-based coloring to land regions
-	// Note: Land region graph coloring moved to post-generation.js
-
-	// Assign labels to tiles closest to cluster centers
-	for (var i = 0; i < clusters.length; i++) {
-		var center = clusters[i];
-		var closestTile = findClosestTile(landTiles, center);
-		if (closestTile && !closestTile.landRegionLabel) { // Don't override existing land region labels
-			closestTile.landRegionLabel = 'Land ' + (i + 1);
-			console.log('DEBUG: Created land region label:', closestTile.landRegionLabel, 'at tile with elevation:', closestTile.elevation);
-		} else {
-			console.log('DEBUG: Skipping land region label - closestTile:', !!closestTile, 'existing label:', closestTile ? closestTile.landRegionLabel : 'N/A');
-		}
-	}
-}
-
-// K-means clustering with sphere constraint
-function kMeansSphereClustering(positions, landTiles, k) {
-	var sphereRadius = 1000; // Match planet radius
-	var maxIterations = 50;
-	var convergenceThreshold = 1.0; // Stop when centers move less than this distance
-	
-	// Initialize cluster centers randomly on sphere surface
-	var centers = [];
-	for (var i = 0; i < k; i++) {
-		// Random point on sphere surface
-		var center = new THREE.Vector3(
-			Math.random() - 0.5,
-			Math.random() - 0.5, 
-			Math.random() - 0.5
-		);
-		center.normalize().multiplyScalar(sphereRadius);
-		centers.push(center);
-	}
-	
-	console.log('DEBUG: Initialized', k, 'cluster centers on sphere surface');
-	
-	var finalAssignments = [];
-	
-	// K-means iterations
-	for (var iteration = 0; iteration < maxIterations; iteration++) {
-		// Assign each position to closest cluster
-		var assignments = [];
-		var clusterSums = [];
-		var clusterCounts = [];
-		
-		// Initialize cluster accumulators
-		for (var i = 0; i < k; i++) {
-			clusterSums.push(new THREE.Vector3(0, 0, 0));
-			clusterCounts.push(0);
-		}
-		
-		// Assign positions to clusters
-		for (var i = 0; i < positions.length; i++) {
-			var pos = positions[i];
-			var closestCluster = 0;
-			var minDistance = pos.distanceTo(centers[0]);
-			
-			for (var j = 1; j < k; j++) {
-				var distance = pos.distanceTo(centers[j]);
-				if (distance < minDistance) {
-					minDistance = distance;
-					closestCluster = j;
-				}
-			}
-			
-			assignments.push(closestCluster);
-			clusterSums[closestCluster].add(pos);
-			clusterCounts[closestCluster]++;
-		}
-		
-		// Store the final assignments
-		finalAssignments = assignments;
-		
-		// Calculate new cluster centers
-		var maxMovement = 0;
-		for (var i = 0; i < k; i++) {
-			if (clusterCounts[i] > 0) {
-				var newCenter = clusterSums[i].divideScalar(clusterCounts[i]);
-				
-				// CRITICAL: Constrain center to sphere surface
-				newCenter.normalize().multiplyScalar(sphereRadius);
-				
-				var movement = centers[i].distanceTo(newCenter);
-				maxMovement = Math.max(maxMovement, movement);
-				centers[i] = newCenter;
-			}
-		}
-		
-		// Check for convergence
-		if (maxMovement < convergenceThreshold) {
-			console.log('DEBUG: K-means converged after', iteration + 1, 'iterations');
-			break;
-		}
-	}
-	
-	console.log('DEBUG: K-means clustering completed, returning', centers.length, 'cluster centers and assignments');
-	return {
-		centers: centers,
-		assignments: finalAssignments
-	};
-}
-
-// Graph coloring for watershed regions (preserving original watershed region logic)
-function applyWatershedRegionGraphColoring(watersheds) {
-	// Get final absorption regions (not absorbed) - these ARE the proper watershed regions
-	var finalAbsorptionRegions = watersheds.filter(function(w) {
-		return !w.absorptionRegion.absorbed;
-	});
-
-	if (finalAbsorptionRegions.length === 0) {
-		console.log("No final watershed regions to color");
-		return;
-	}
-
-	console.log("Applying graph coloring to", finalAbsorptionRegions.length, "watershed absorption regions");
-
-	// Adjacency function for watershed absorption regions (original logic)
-	function getWatershedRegionAdjacencies(absorptionRegion, allAbsorptionRegions) {
-		var adjacentIds = [];
-		var regionTiles = new Set();
-
-		// Collect all tiles in this absorption region
-		for (var i = 0; i < absorptionRegion.watersheds.length; i++) {
-			var watershed = absorptionRegion.watersheds[i];
-			for (var j = 0; j < watershed.tiles.length; j++) {
-				regionTiles.add(watershed.tiles[j]);
-			}
-		}
-
-		// Find adjacent absorption regions
-		regionTiles.forEach(function(tile) {
-			if (tile.tiles) {
-				for (var k = 0; k < tile.tiles.length; k++) {
-					var neighbor = tile.tiles[k];
-					if (neighbor.watershed && neighbor.watershed.absorptionRegion &&
-						!neighbor.watershed.absorptionRegion.absorbed &&
-						neighbor.watershed.absorptionRegion.finalId !== absorptionRegion.finalId) {
-
-						var neighborId = neighbor.watershed.absorptionRegion.finalId;
-						if (adjacentIds.indexOf(neighborId) === -1) {
-							adjacentIds.push(neighborId);
-						}
-					}
-				}
-			}
-		});
-
-		return adjacentIds;
-	}
-
-	// Extract just the absorption regions for graph coloring
-	var absorptionRegions = finalAbsorptionRegions.map(function(w) { return w.absorptionRegion; });
-
-	// Apply graph coloring to absorption regions
-	applyGraphColoring(absorptionRegions, getWatershedRegionAdjacencies, 'graphColor', 'watershedRegion');
-
-	// Step: Create simple final regions structure for easy lookup (flattening step)
-	var simpleFinalRegions = [];
-
-	for (var i = 0; i < finalAbsorptionRegions.length; i++) {
-		var watershedWithActiveRegion = finalAbsorptionRegions[i];
-		var absorptionRegion = watershedWithActiveRegion.absorptionRegion;
-
-		// Create simple final region
-		var simpleFinalRegion = {
-			id: absorptionRegion.finalId,
-			tiles: [],
-			graphColor: absorptionRegion.graphColor,
-			originalAbsorptionRegion: absorptionRegion // Keep reference if needed
-		};
-
-		// Collect ALL tiles from ALL watersheds in this absorption region
-		for (var j = 0; j < absorptionRegion.watersheds.length; j++) {
-			var watershed = absorptionRegion.watersheds[j];
-			for (var k = 0; k < watershed.tiles.length; k++) {
-				var tile = watershed.tiles[k];
-				simpleFinalRegion.tiles.push(tile);
-
-				// Set direct reference on tile for easy lookup
-				tile.finalRegionId = absorptionRegion.finalId;
-			}
-		}
-
-		simpleFinalRegions.push(simpleFinalRegion);
-	}
-
-	// Validation
-	var regionsWithColors = 0;
-	var colorDistribution = {};
-
-	for (var i = 0; i < simpleFinalRegions.length; i++) {
-		var region = simpleFinalRegions[i];
-		if (region.graphColor) {
-			regionsWithColors++;
-			var colorKey = region.graphColor;
-			if (!colorDistribution[colorKey]) {
-				colorDistribution[colorKey] = 0;
-			}
-			colorDistribution[colorKey]++;
-		}
-	}
-
-	console.log("=== WATERSHED REGION COLOR VALIDATION ===");
-	console.log("Final regions with colors:", regionsWithColors, "/", simpleFinalRegions.length);
-	console.log("Color distribution by region:", colorDistribution);
-	console.log("Number of unique colors used:", Object.keys(colorDistribution).length);
-
-	// Store simplified regions globally for label creation and color lookup
-	if (typeof window !== 'undefined') {
-		window.watershedFinalRegions = simpleFinalRegions;
-	}
-
-	return simpleFinalRegions;
-}
-
-// Note: Land region graph coloring function moved to post-generation.js
-
-// Find the tile closest to a given 3D position
-function findClosestTile(tiles, position) {
-	var closestTile = null;
-	var minDistance = Infinity;
-	
-	for (var i = 0; i < tiles.length; i++) {
-		var distance = tiles[i].averagePosition.distanceTo(position);
-		if (distance < minDistance) {
-			minDistance = distance;
-			closestTile = tiles[i];
-		}
-	}
-	
-	return closestTile;
-}
+// NOTE: All biomes, resources, clustering, and region functions moved to post-generation.js

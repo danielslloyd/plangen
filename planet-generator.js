@@ -356,21 +356,16 @@ function generatePlanetTerrain(planet, plateCount, oceanicRate, heatLevel, moist
 		//erode
 		.executeSubaction(function (action) {
 			ctimeEnd('4g. Distance Calculations');
-			ctime('4h. Biomes & Resources');
-			generatePlanetBiomesResources(planet.topology.tiles, 1000, action);
-		}, 1, "Generating Biomes")
+			ctime('4h. Post-Generation Analysis');
+			runPostGeneration(planet, action);
+		}, 3, "Generating Biomes & Regions")
 		.executeSubaction(function (action) {
 			// Collect labeled tiles after biomes are generated
 			collectLabeledTiles(planet.topology.tiles, surfaceRenderMode);
 		}, 0)
 		.executeSubaction(function (action) {
-			ctimeEnd('4h. Biomes & Resources');
-			ctime('4i. Post-Generation Analysis');
-			runPostGeneration(planet, action);
-		}, 2, "Generating Regions")
-		.executeSubaction(function (action) {
-			ctimeEnd('4i. Post-Generation Analysis');
-			ctime('4j. Render Data Generation');
+			ctimeEnd('4h. Post-Generation Analysis');
+			ctime('4i. Render Data Generation');
 			generatePlanetRenderData(planet.topology, random, action);
 		}, 1, "Building Visuals")
 		.getResult(function (result) {
