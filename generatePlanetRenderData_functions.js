@@ -1429,6 +1429,8 @@ function applyGraphColoring(regions, getAdjacencies, colorProperty, regionType) 
 	}
 
 	// Second pass: Redistribute colors for better balance
+	// COMMENTED OUT FOR DEBUGGING - Testing if adjacency issues are in initial coloring or redistribution
+	/*
 	// Try to swap colors to achieve more even distribution
 	var targetUsagePerColor = Math.ceil(sortedRegionIds.length / colorPalette.length);
 	var maxIterations = 10;
@@ -1489,6 +1491,8 @@ function applyGraphColoring(regions, getAdjacencies, colorProperty, regionType) 
 		if (!swapMade) break;
 		iteration++;
 	}
+	*/
+	var iteration = 0; // Set to 0 since redistribution is commented out
 
 	// Apply colors to regions
 	for (var i = 0; i < regions.length; i++) {

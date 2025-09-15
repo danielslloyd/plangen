@@ -365,11 +365,16 @@ function generatePlanetTerrain(planet, plateCount, oceanicRate, heatLevel, moist
 		}, 0)
 		.executeSubaction(function (action) {
 			ctimeEnd('4h. Biomes & Resources');
-			ctime('4i. Render Data Generation');
+			ctime('4i. Post-Generation Analysis');
+			runPostGeneration(planet, action);
+		}, 2, "Generating Regions")
+		.executeSubaction(function (action) {
+			ctimeEnd('4i. Post-Generation Analysis');
+			ctime('4j. Render Data Generation');
 			generatePlanetRenderData(planet.topology, random, action);
 		}, 1, "Building Visuals")
 		.getResult(function (result) {
-			ctimeEnd('4i. Render Data Generation');
+			ctimeEnd('4j. Render Data Generation');
 			// Store render data in planet object 
 			planet.renderData = result;
 		});
