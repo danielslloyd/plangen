@@ -1165,13 +1165,14 @@ function createPlanetMaterial(materialType) {
 }
 
 // Register a color overlay function
-function registerColorOverlay(id, name, description, colorFunction, materialType) {
+function registerColorOverlay(id, name, description, colorFunction, materialType, computationType) {
 	colorOverlayRegistry[id] = {
 		id: id,
 		name: name,
 		description: description,
 		colorFunction: colorFunction,
-		materialType: materialType || 'basic' // Default to basic material if not specified
+		materialType: materialType || 'basic', // Default to basic material if not specified
+		computationType: computationType || 'lazy' // 'precompute', 'lazy', or 'immediate'
 	};
 }
 
@@ -1686,12 +1687,7 @@ function applyGraphColoring(regions, getAdjacencies, colorProperty, regionType) 
 // Path Density color overlay - shows density of paths between boundary tiles within land/sea bodies
 registerColorOverlay("pathDensity", "Path Density", "Shows density of paths between boundary tiles within land/sea bodies using reverseShore color scheme", function(tile) {
 	if (!tile.hasOwnProperty('pathDensity')) {
-		// Calculate path density for all tiles if not already done
-		calculatePathDensity();
-	}
-
-	if (!tile.hasOwnProperty('pathDensity')) {
-		return new THREE.Color(0x888888); // Gray fallback if calculation failed
+		return new THREE.Color(0x888888); // Gray fallback if not pre-calculated
 	}
 
 	if (tile.pathDensity === 0) {
@@ -1734,7 +1730,7 @@ registerColorOverlay("pathDensity", "Path Density", "Shows density of paths betw
 		var darkGreen = new THREE.Color(0x006400);    // Dark green
 		return brightYellow.clone().lerp(darkGreen, normalizedValue);
 	}
-}, "basic");
+}, "basic", "precompute");
 
 // Function to calculate path density for all tiles
 function calculatePathDensity() {

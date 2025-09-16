@@ -177,15 +177,26 @@ function generatePlanetAsynchronous() {
 			planet.originalSeed = originalSeed;
 		})
 		.executeSubaction(function (action) {
+			// Display planet immediately with basic terrain
 			displayPlanet(planet);
 			setSeed(null);
-		}, 0)		
+
+			// Switch to secondary progress for background computations
+			ui.progressPanel.hide();
+			ui.backgroundProgressPanel.show();
+		}, 0)
         .executeSubaction(function (action) {
             setDistances(planet, action); // Build the graph here
-        }, 0)
+        }, 0, "Building pathfinding graph")
+		.executeSubaction(function (action) {
+			// Pre-calculate heavy overlays in background
+			var backgroundAction = new SteppedAction(updateBackgroundProgressUI);
+			calculateBackgroundOverlays(planet, backgroundAction);
+			backgroundAction.execute();
+		}, 0, "Computing overlay data")
 		.finalize(function (action) {
 			activeAction = null;
-			ui.progressPanel.hide();
+			ui.backgroundProgressPanel.hide();
 		}, 0)
 		.execute();
 }
@@ -912,6 +923,35 @@ function updateProgressUI(action) {
 	ui.progressBar.css("width", (progress * 100).toFixed(0) + "%");
 	ui.progressBarLabel.text((progress * 100).toFixed(0) + "%");
 	ui.progressActionLabel.text(action.getCurrentActionName());
+}
+
+function updateBackgroundProgressUI(action) {
+	var progress = action.getProgress();
+	ui.backgroundProgressBar.css("width", (progress * 100).toFixed(0) + "%");
+	ui.backgroundProgressBarLabel.text((progress * 100).toFixed(0) + "%");
+	ui.backgroundProgressActionLabel.text(action.getCurrentActionName());
+}
+
+// Calculate heavy overlays in background
+function calculateBackgroundOverlays(planet, action) {
+	action
+		.executeSubaction(function (action) {
+			ctime('Background: Path Density');
+			calculatePathDensity();
+			ctimeEnd('Background: Path Density');
+		}, 50, "Computing path density")
+		.executeSubaction(function (action) {
+			ctime('Background: Land Regions');
+			// Land regions calculation will be implemented here
+			// For now, just mark as completed
+			ctimeEnd('Background: Land Regions');
+		}, 25, "Computing land regions")
+		.executeSubaction(function (action) {
+			ctime('Background: Watershed Regions');
+			// Watershed regions calculation will be implemented here
+			// For now, just mark as completed
+			ctimeEnd('Background: Watershed Regions');
+		}, 25, "Computing watershed regions");
 }
 
 function Plate(color, driftAxis, driftRate, spinRate, elevation, oceanic, root) {

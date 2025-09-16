@@ -96,6 +96,13 @@ $(document).ready(function onDocumentReady() {
 	ui.progressCancelButton.click(cancelButtonHandler);
 	ui.progressPanel.hide();
 
+	ui.backgroundProgressPanel = $("#backgroundProgressPanel");
+	ui.backgroundProgressActionLabel = $("#backgroundProgressActionLabel");
+	ui.backgroundProgressBarFrame = $("#backgroundProgressBarFrame");
+	ui.backgroundProgressBar = $("#backgroundProgressBar");
+	ui.backgroundProgressBarLabel = $("#backgroundProgressBarLabel");
+	ui.backgroundProgressPanel.hide();
+
 	ui.tileCountLabel = $("#tileCountLabel");
 	ui.pentagonCountLabel = $("#pentagonCountLabel");
 	ui.hexagonCountLabel = $("#hexagonCountLabel");
