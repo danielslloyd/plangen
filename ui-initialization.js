@@ -59,7 +59,6 @@ $(document).ready(function onDocumentReady() {
 	// Set up change handler for dropdown
 	ui.colorOverlayDropdown.change(function() {
 		var selectedOverlay = $(this).val();
-		console.log('DEBUG: Dropdown changed to overlay:', selectedOverlay);
 		setSurfaceRenderMode(selectedOverlay);
 	});
 
@@ -76,10 +75,6 @@ $(document).ready(function onDocumentReady() {
 	ui.showRiversButton = $("#showRiversButton");
 	ui.showAirCurrentsButton = $("#showAirCurrentsButton");
 	
-	console.log("UI button elements found:");
-	console.log("  showRiversButton:", ui.showRiversButton.length);
-	console.log("  showPlateBoundariesButton:", ui.showPlateBoundariesButton.length);
-	console.log("  showAirCurrentsButton:", ui.showAirCurrentsButton.length);
 
 	ui.showSunlightButton.click(showHideSunlight);
 	ui.showPlateBoundariesButton.click(showHidePlateBoundaries);
@@ -311,8 +306,6 @@ function initializeTerrainColorPickers() {
 		}).catch(function() {
 			// Fallback if clipboard API fails
 			alert('Color code copied to console (clipboard API not available)');
-			console.log('Color Export Code:');
-			console.log(colorCode);
 		});
 	});
 }
@@ -348,7 +341,6 @@ function updateTerrainColorsAndRefresh() {
 	// Only update if we're currently viewing terrain mode and have a planet
 	var currentOverlay = getCurrentColorOverlay();
 	if (currentOverlay === 'terrain' && planet && planet.topology) {
-		console.log('Updating terrain colors...');
 		
 		// Regenerate render data with new colors
 		var startTime = Date.now();
@@ -379,11 +371,9 @@ function updateTerrainColorsAndRefresh() {
 				showHideAirCurrents(renderAirCurrents);
 				showHideRivers(renderRivers);
 				
-				console.log('Terrain color update complete in', (Date.now() - startTime), 'ms');
 			})
 			.execute();
 	} else {
-		console.log('Cannot apply color overlay - not in terrain mode or missing planet data');
 	}
 }
 
@@ -503,26 +493,21 @@ function setSurfaceRenderMode(mode, force) {
 	surfaceRenderMode = mode;
 
 	// Update labels based on the new overlay mode
-	console.log('DEBUG: setSurfaceRenderMode updating labels for mode:', mode);
 	if (planet && planet.topology && planet.topology.tiles) {
-		console.log('DEBUG: Calling collectLabeledTiles with mode:', mode);
 		collectLabeledTiles(planet.topology.tiles, mode);
 
 		// Rebuild and update label render objects
 		if (planet.renderData) {
-			console.log('DEBUG: Rebuilding label render objects');
 			// Remove old labels from scene first
 			if (planet.renderData.labels) {
 				scene.remove(planet.renderData.labels);
 			}
 
 			planet.renderData.labels = buildLabelsRenderObject();
-			console.log('DEBUG: New labels object:', planet.renderData.labels);
 
 			// Add new labels to scene if labels are enabled
 			if (renderLabels && planet.renderData.labels) {
 				scene.add(planet.renderData.labels);
-				console.log('DEBUG: Added new labels to scene');
 			}
 		}
 	}
@@ -542,39 +527,32 @@ function showHideSunlight(show) {
 			window.orbitingSunLight = new THREE.DirectionalLight(0xFFFFDD, 2.0);
 			window.orbitingSunLight.position.set(2000, 1000, 1000);
 			scene.add(window.orbitingSunLight);
-			console.log("Added orbiting sun light:", window.orbitingSunLight);
 		}
 	} else {
 		// Remove orbiting sun light
 		if (window.orbitingSunLight) {
 			scene.remove(window.orbitingSunLight);
-			console.log("Removed orbiting sun light");
 			window.orbitingSunLight = null;
 		}
 	}
 }
 
 function showHidePlateBoundaries(show) {
-	console.log("showHidePlateBoundaries called with:", show);
 	if (typeof (show) === "boolean") renderPlateBoundaries = show;
 	else renderPlateBoundaries = !renderPlateBoundaries;
 	if (renderPlateBoundaries) ui.showPlateBoundariesButton.addClass("toggled");
 	if (!renderPlateBoundaries) ui.showPlateBoundariesButton.removeClass("toggled");
 
 	if (!planet) {
-		console.log("Planet not available for plate boundaries");
 		return;
 	}
 	if (!planet.renderData) {
-		console.log("Planet renderData not available for plate boundaries");
 		return;
 	}
 	if (!planet.renderData.plateBoundaries) {
-		console.log("Planet renderData.plateBoundaries not available");
 		return;
 	}
 	if (!planet.renderData.plateBoundaries.renderObject) {
-		console.log("Planet renderData.plateBoundaries.renderObject not available");
 		return;
 	}
 
@@ -595,26 +573,21 @@ function showHidePlateMovements(show) {
 }
 
 function showHideAirCurrents(show) {
-	console.log("showHideAirCurrents called with:", show);
 	if (typeof (show) === "boolean") renderAirCurrents = show;
 	else renderAirCurrents = !renderAirCurrents;
 	if (renderAirCurrents) ui.showAirCurrentsButton.addClass("toggled");
 	if (!renderAirCurrents) ui.showAirCurrentsButton.removeClass("toggled");
 
 	if (!planet) {
-		console.log("Planet not available for air currents");
 		return;
 	}
 	if (!planet.renderData) {
-		console.log("Planet renderData not available for air currents");
 		return;
 	}
 	if (!planet.renderData.airCurrents) {
-		console.log("Planet renderData.airCurrents not available");
 		return;
 	}
 	if (!planet.renderData.airCurrents.renderObject) {
-		console.log("Planet renderData.airCurrents.renderObject not available");
 		return;
 	}
 
@@ -623,10 +596,8 @@ function showHideAirCurrents(show) {
 }
 
 function showHideRivers(show) {
-	console.log("showHideRivers called with:", show, "- renderRivers was:", renderRivers);
 	if (typeof (show) === "boolean") renderRivers = show;
 	else renderRivers = !renderRivers;
-	console.log("renderRivers is now:", renderRivers);
 	if (renderRivers) ui.showRiversButton.addClass("toggled");
 	if (!renderRivers) ui.showRiversButton.removeClass("toggled");
 
@@ -644,27 +615,21 @@ function showHideRivers(show) {
 	} */
 	
 	if (!planet) {
-		console.log("Planet not available for rivers");
 		return;
 	}
 	if (!planet.renderData) {
-		console.log("Planet renderData not available for rivers");
 		return;
 	}
 	if (!planet.renderData.Rivers) {
-		console.log("Planet renderData.Rivers not available");
 		return;
 	}
 	if (!planet.renderData.Rivers.renderObject) {
-		console.log("Planet renderData.Rivers.renderObject not available");
 		return;
 	}
 
 	if (renderRivers) {
-		console.log("Adding rivers to scene");
 		planet.renderData.surface.renderObject.add(planet.renderData.Rivers.renderObject);
 	} else {
-		console.log("Removing rivers from scene");
 		planet.renderData.surface.renderObject.remove(planet.renderData.Rivers.renderObject);
 	}
 }
@@ -677,28 +642,22 @@ function showHideMoon(show) {
 
 	if (renderMoon) {
 		scene.add(planet.renderData.moon.renderObject);
-		console.log("Added moon to scene for material testing");
 		
 		// Add all debugging test objects if they exist
 		if (planet.renderData.moon.testObjects) {
-			console.log("Adding", planet.renderData.moon.testObjects.length, "debugging test objects to scene");
 			for (var i = 0; i < planet.renderData.moon.testObjects.length; i++) {
 				var testObj = planet.renderData.moon.testObjects[i];
 				scene.add(testObj.object);
-				console.log("  - Added", testObj.name, "at position:", testObj.object.position);
 			}
 		}
 	} else {
 		scene.remove(planet.renderData.moon.renderObject);
-		console.log("Removed moon from scene");
 		
 		// Remove all debugging test objects if they exist
 		if (planet.renderData.moon.testObjects) {
-			console.log("Removing debugging test objects from scene");
 			for (var i = 0; i < planet.renderData.moon.testObjects.length; i++) {
 				var testObj = planet.renderData.moon.testObjects[i];
 				scene.remove(testObj.object);
-				console.log("  - Removed", testObj.name);
 			}
 		}
 	}
@@ -726,7 +685,6 @@ function populateColorOverlayDropdown() {
 function toggleElevationExaggeration() {
 	// Toggle binary displacement parameter
 	useElevationDisplacement = !useElevationDisplacement;
-	console.log("3D elevation", useElevationDisplacement ? "enabled (elevated terrain)" : "disabled (flat terrain)");
 	
 	// Update button state if we have the UI button
 	if (typeof ui !== 'undefined' && ui.projectRaisedGlobe) {
@@ -739,7 +697,6 @@ function toggleElevationExaggeration() {
 	
 	// Simple render data regeneration (no displacement recalculation needed)
 	if (planet && planet.topology) {
-		console.log("Applying instant elevation toggle...");
 		var startTime = Date.now();
 		
 		// Regenerate render data using existing displacement values and new binary parameter
@@ -771,7 +728,6 @@ function toggleElevationExaggeration() {
 				showHideAirCurrents(renderAirCurrents);
 				showHideRivers(renderRivers);
 				
-				console.log("Instant elevation toggle complete in", (Date.now() - startTime), "ms");
 			})
 			.execute();
 	}

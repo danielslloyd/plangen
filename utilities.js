@@ -89,7 +89,6 @@ XorShift128.prototype.reseed = function XorShift128_reseed(x, y, z, w) {
 								}, false);
 
 							fileWriter.write(new Blob([content]));
-							console.log("wrnb(c)");
 						},
 						function (error) { });
 				},

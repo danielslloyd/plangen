@@ -207,7 +207,6 @@ function selectTile(tile) {
         debugOverlay.updateSelectedTile(tile);
     }
 
-    console.log(tile);
 	//console.log(tile.id,'elevation:',tile.elevation,'neighbors elevation:',tile.tiles.map(n => n.elevation));
     // Highlight all tiles in the upstream array
     if (tile.upstream || tile.downstream) {
@@ -458,14 +457,11 @@ function createLabelSprite(text, color, fontSize) {
 }
 
 function buildLabelsRenderObject() {
-	console.log('DEBUG: buildLabelsRenderObject called');
-	console.log('DEBUG: labeledTiles array state:', labeledTiles ? labeledTiles.length : 'null', 'items');
 	
 	// Clear existing label sprites
 	clearLabelSprites();
 	
 	if (!labeledTiles || labeledTiles.length === 0) {
-		console.log('DEBUG: No labeled tiles to render - labeledTiles:', labeledTiles);
 		return null;
 	}
 	
@@ -485,7 +481,6 @@ function buildLabelsRenderObject() {
 		//console.log('DEBUG: Processing tile', i, 'with label:', tile.label);
 		
 		if (!tile.label || !tile.averagePosition) {
-			console.log('DEBUG: Skipping tile - missing label or averagePosition');
 			continue;
 		}
 		
@@ -521,8 +516,6 @@ function buildLabelsRenderObject() {
 		//console.log('DEBUG: Added sprite to group, position:', sprite.position);
 	}
 	
-	console.log('DEBUG: Created', labelSprites.length, 'label sprites from', validTiles, 'valid tiles');
-	console.log('DEBUG: Returning labelsGroup with', labelsGroup.children.length, 'children');
 	return labelsGroup;
 }
 

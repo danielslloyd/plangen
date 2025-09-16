@@ -787,7 +787,7 @@ function erodeElevation(planet, action) {
 		}
 		function bowlFill(lake,bowlEscapeRoute) {
 			if (!lake.tiles.includes(bowlEscapeRoute.routeA)) {
-				console.log('routeA not in lake', lake, bowlEscapeRoute);
+				console.warn('routeA not in lake', lake, bowlEscapeRoute);
 				bowlEscapeRoute.routeA.error = 'routeA not in lake';
 				return;
 			}
@@ -874,7 +874,7 @@ function erodeElevation(planet, action) {
 			assignWatershedColors(watersheds, 6);
 
 			if (watersheds.some(w=>!w.color)) {
-				console.log(watersheds.filter(w=>!w.color));
+				console.warn('Watersheds missing color:', watersheds.filter(w=>!w.color));
 			}
 
 			for (w of watersheds.filter(w=>!w.color)) {

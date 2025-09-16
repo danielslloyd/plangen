@@ -128,7 +128,6 @@ function addMountEverestLabel(tiles) {
     }
     
     if (highestTile && highestTile.averagePosition) {
-        console.log('Adding Mount Everest label at elevation:', highestTile.elevation);
         addTextLabelAtPosition(
             highestTile.averagePosition,
             'Mount Everest',

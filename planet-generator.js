@@ -193,10 +193,8 @@ function Planet() {}
 
 // Function to collect all tiles with labels into the global labeledTiles array
 function collectLabeledTiles(tiles, overlayMode) {
-	console.log('DEBUG: collectLabeledTiles called with overlayMode:', overlayMode);
 	labeledTiles = []; // Clear previous labels
 	if (!tiles) {
-		console.log('DEBUG: No tiles provided');
 		return labeledTiles;
 	}
 
@@ -244,8 +242,6 @@ function collectLabeledTiles(tiles, overlayMode) {
 		}
 	}
 
-	console.log('DEBUG: Found tiles with labels - landRegion:', landRegionCount, 'watershedRegion:', watershedRegionCount, 'regular:', regularLabelCount);
-	console.log('DEBUG: Collected', labeledTiles.length, 'tiles for display in mode:', overlayMode);
 
 	return labeledTiles;
 }

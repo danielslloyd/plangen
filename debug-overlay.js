@@ -19,7 +19,6 @@ var debugOverlay = {
         this.createCanvas();
         this.createTileInfoOverlay();
         this.setupEventListeners();
-        console.log("Debug overlay system initialized");
     },
     
     // Create and setup the canvas overlay
@@ -83,7 +82,6 @@ var debugOverlay = {
             this.render();
         }
         
-        console.log("Debug overlay:", this.enabled ? "enabled" : "disabled");
     },
     
     // Update selected tile info
@@ -131,58 +129,6 @@ var debugOverlay = {
             }
         }
         
-        // Add clockwise border traversal information
-        info.push('<div style="color: #ffaa00; font-weight: bold; margin-top: 10px; margin-bottom: 5px;">CLOCKWISE BORDER TRAVERSAL</div>');
-        
-        if (tile.corners && tile.corners.length > 0) {
-            for (var i = 0; i < tile.corners.length; i++) {
-                var corner1 = tile.corners[i];
-                var corner2 = tile.corners[(i + 1) % tile.corners.length];
-                
-                // Corner info with displacement validation
-                var cornerElevation = corner1.elevationMedian ? corner1.elevationMedian.toFixed(4) : 'undefined';
-                var cornerDisplacement = corner1.elevationDisplacement ? corner1.elevationDisplacement.toFixed(2) : '0.00';
-                
-                // Check if corner displacement is correct
-                var expectedCornerDisplacement = (corner1.elevationMedian && typeof elevationMultiplier !== 'undefined') ? 
-                    (corner1.elevationMedian > 0 ? elevationMultiplier * corner1.elevationMedian : 0) : 0;
-                var cornerDisplacementError = corner1.elevationDisplacement ? Math.abs(corner1.elevationDisplacement - expectedCornerDisplacement) > 0.01 : false;
-                var cornerDispColor = cornerDisplacementError ? '#ff4444' : '#888';
-                
-                info.push('<div style="margin-left: 10px;"><span style="color: #aaa;">Corner ' + i + ':</span> <span style="color: #fff;">elev ' + cornerElevation + '</span> <span style="color: ' + cornerDispColor + ';">(disp: ' + cornerDisplacement + ')</span></div>');
-                
-                // Find corresponding border and neighbor tile
-                var border = this.findBorderBetweenCorners(corner1, corner2, tile);
-                if (border) {
-                    var neighborTile = border.oppositeTile ? border.oppositeTile(tile) : null;
-                    var borderDisplacement = border.elevationDisplacement ? border.elevationDisplacement.toFixed(2) : '0.00';
-                    
-                    if (neighborTile) {
-                        var neighborElevation = neighborTile.elevation ? neighborTile.elevation.toFixed(4) : 'undefined';
-                        var neighborDisplacement = neighborTile.elevationDisplacement ? neighborTile.elevationDisplacement.toFixed(2) : '0.00';
-                        
-                        // Check neighbor tile displacement
-                        var expectedNeighborDisplacement = (neighborTile.elevation && typeof elevationMultiplier !== 'undefined') ? 
-                            (neighborTile.elevation > 0 ? elevationMultiplier * neighborTile.elevation : 0) : 0;
-                        var neighborDisplacementError = neighborTile.elevationDisplacement ? Math.abs(neighborTile.elevationDisplacement - expectedNeighborDisplacement) > 0.01 : false;
-                        var neighborDispColor = neighborDisplacementError ? '#ff4444' : '#888';
-                        
-                        // Border displacement should be average of corner displacements
-                        var expectedBorderDisplacement = (corner1.elevationDisplacement + corner2.elevationDisplacement) / 2;
-                        var borderDisplacementError = border.elevationDisplacement ? Math.abs(border.elevationDisplacement - expectedBorderDisplacement) > 0.01 : false;
-                        var borderDispColor = borderDisplacementError ? '#ff4444' : '#888';
-                        
-                        info.push('<div style="margin-left: 20px;"><span style="color: #888;">Border ' + i + '→' + ((i + 1) % tile.corners.length) + ':</span> <span style="color: ' + borderDispColor + ';">disp ' + borderDisplacement + '</span></div>');
-                        info.push('<div style="margin-left: 30px;"><span style="color: #888;">→ Neighbor:</span> <span style="color: #fff;">elev ' + neighborElevation + '</span> <span style="color: ' + neighborDispColor + ';">(disp: ' + neighborDisplacement + ')</span></div>');
-                    } else {
-                        info.push('<div style="margin-left: 20px;"><span style="color: #888;">Border ' + i + '→' + ((i + 1) % tile.corners.length) + ':</span> <span style="color: #888;">disp ' + borderDisplacement + ' → No neighbor</span></div>');
-                    }
-                } else {
-                    info.push('<div style="margin-left: 20px;"><span style="color: #f88;">Border ' + i + '→' + ((i + 1) % tile.corners.length) + ': NOT FOUND</span></div>');
-                }
-            }
-        }
-        
         // Add additional useful info
         info.push('<div style="color: #ffaa00; font-weight: bold; margin-top: 10px; margin-bottom: 5px;">ADDITIONAL INFO</div>');
         if (typeof tile.biome !== 'undefined') {
@@ -199,6 +145,16 @@ var debugOverlay = {
         }
         if (typeof tile.lake !== 'undefined' && tile.lake) {
             info.push('<div><span style="color: #888;">Lake:</span> <span style="color: #4488ff;">Yes</span></div>');
+        }
+        if (typeof tile.shore !== 'undefined') {
+            info.push('<div><span style="color: #888;">Shore Distance:</span> <span style="color: #fff;">' + tile.shore + '</span></div>');
+        }
+        if (typeof tile.reverseShore !== 'undefined') {
+            info.push('<div><span style="color: #888;">Reverse Shore:</span> <span style="color: #fff;">' + tile.reverseShore + '</span></div>');
+        }
+        if (typeof tile.shore !== 'undefined' && typeof tile.reverseShore !== 'undefined') {
+            var netShore = tile.reverseShore - tile.shore;
+            info.push('<div><span style="color: #888;">Net Shore:</span> <span style="color: #fff;">' + netShore + '</span></div>');
         }
         
         this.tileInfoOverlay.innerHTML = info.join('');
@@ -254,7 +210,6 @@ var debugOverlay = {
             this.render();
         }
         
-        console.log("Debug data collected:", this.data.landTiles.length, "land tiles");
     },
     
     // Calculate statistical summary

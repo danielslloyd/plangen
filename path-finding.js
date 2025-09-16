@@ -73,12 +73,12 @@ function aStarPathfinding(startTile, goalTile, planet) {
         const links = [...planet.graph.getLinks(fromId)];
         const link = links.find(l => l.toId === toId);
         if (link) {
-			console.log(link.data.weight);
+			//console.log(link.data.weight);
             totalCost += link.data.weight;
         }
     }
 
-    console.log("Actual Path Cost (graph weights):", totalCost);
+    //console.log("Actual Path Cost (graph weights):", totalCost);
     ctimeEnd("aStarPathfinding");
 
     return path;

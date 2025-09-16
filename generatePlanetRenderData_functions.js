@@ -190,8 +190,6 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 	
 	// Provide result as a function that returns finalResult when called
 	action.provideResult(function() {
-		console.log("=== MAIN FUNCTION RESULT FUNCTION CALLED ===");
-		console.log("Returning finalResult:", finalResult);
 		return finalResult;
 	});
 }
@@ -1028,11 +1026,9 @@ function buildMoonRenderObject(action) {
 
 // Function to create a test tile object with Lambert material for debugging
 function buildTestTileObject(tiles, random, action) {
-	console.log("=== BUILDING TEST TILE OBJECT ===");
 	
 	// Use only first 50 tiles for testing (smaller, faster)
 	var testTiles = tiles.slice(0, Math.min(50, tiles.length));
-	console.log("Using", testTiles.length, "tiles for test object");
 	
 	// Create Lambert material for testing
 	var testMaterial = new THREE.MeshLambertMaterial({
@@ -1040,21 +1036,15 @@ function buildTestTileObject(tiles, random, action) {
 		wireframe: false,
 		side: THREE.DoubleSide
 	});
-	console.log("Created Lambert test material:", testMaterial.type);
 	
 	// Use the same buildSurfaceRenderObject function with custom material
 	action.executeSubaction(function(action) {
 		buildSurfaceRenderObject(testTiles, null, random, action, testMaterial);
 	}, 1, "Building Test Tile Object")
 	.getResult(function(result) {
-		console.log("Test tile object result:", result);
 		
 		// Enhanced debugging for geometry comparison
 		if (result && result.geometry) {
-			console.log("=== TEST OBJECT GEOMETRY DEBUG ===");
-			console.log("Test geometry vertices:", result.geometry.attributes.position ? result.geometry.attributes.position.count : 'none');
-			console.log("Test geometry normals:", result.geometry.attributes.normal ? result.geometry.attributes.normal.count : 'none');
-			console.log("Test geometry colors:", result.geometry.attributes.color ? result.geometry.attributes.color.count : 'none');
 			
 			if (result.geometry.attributes.normal) {
 				var testNormals = result.geometry.attributes.normal.array;
@@ -1074,21 +1064,14 @@ function buildTestTileObject(tiles, random, action) {
 					}
 				}
 				
-				console.log("TEST OBJECT Normal Analysis:");
-				console.log("  Valid normals:", testValidNormals);
-				console.log("  Zero normals:", testZeroNormals);
-				console.log("  Normal sample (first 9):", Array.from(testNormals.slice(0, 9)));
 			}
 			
-			console.log("Test material type:", result.material.type);
-			console.log("Test material vertexColors:", result.material.vertexColors);
 		}
 		
 		// Position the test object between moon and planet
 		if (result && result.renderObject) {
 			result.renderObject.position.set(800, 200, 600);
 			result.renderObject.scale.set(0.3, 0.3, 0.3); // Make it smaller
-			console.log("Positioned test object at (800, 200, 600) with 0.3 scale");
 		}
 		
 		action.provideResult({
@@ -1101,18 +1084,15 @@ function buildTestTileObject(tiles, random, action) {
 
 // Function to create a simple test object for position validation
 function buildSimpleTestObject(action) {
-	console.log("=== BUILDING SIMPLE TEST OBJECT ===");
 	
 	// Create a simple cube geometry
 	var testGeometry = new THREE.BoxGeometry(100, 100, 100);
-	console.log("Created test cube geometry");
 	
 	// Create bright red Lambert material to test normals
 	var testMaterial = new THREE.MeshLambertMaterial({
 		color: 0xFF0000,  // Bright red
 		wireframe: false
 	});
-	console.log("Created bright red Lambert material for normal testing");
 	
 	// Create mesh
 	var testRenderObject = new THREE.Mesh(testGeometry, testMaterial);
@@ -1121,14 +1101,8 @@ function buildSimpleTestObject(action) {
 	testRenderObject.position.set(800, 200, 600);
 	testRenderObject.scale.set(0.3, 0.3, 0.3);
 	
-	console.log("Simple test object positioned at (800, 200, 600) with 0.3 scale");
-	console.log("Simple test object material:", testMaterial.type);
-	console.log("Simple test object color:", testMaterial.color);
 	
 	// Debug normals on simple geometry
-	console.log("=== SIMPLE GEOMETRY NORMALS DEBUG ===");
-	console.log("Simple geometry vertices:", testGeometry.attributes.position.count);
-	console.log("Simple geometry normals:", testGeometry.attributes.normal ? testGeometry.attributes.normal.count : 'none');
 	
 	if (testGeometry.attributes.normal) {
 		var simpleNormals = testGeometry.attributes.normal.array;
@@ -1148,12 +1122,8 @@ function buildSimpleTestObject(action) {
 			}
 		}
 		
-		console.log("SIMPLE GEOMETRY Normal Analysis (first 10):");
-		console.log("  Valid normals:", simpleValidNormals);
-		console.log("  Zero normals:", simpleZeroNormals);
-		console.log("  Normal sample (first 9):", Array.from(simpleNormals.slice(0, 9)));
 	} else {
-		console.log("ERROR: Simple geometry has no normals!");
+		console.error("ERROR: Simple geometry has no normals!");
 	}
 	
 	action.provideResult({
@@ -1245,8 +1215,8 @@ function recreateGeometryWithMaterial(materialType) {
 		return;
 	}
 
-	var surfaceRenderObject = planet.renderData.surface;
-	var oldGeometry = surfaceRenderObject.geometry;
+	var surfaceRenderObject = planet.renderData.surface.renderObject;
+	var oldGeometry = planet.renderData.surface.geometry;
 
 	// Create new material
 	var newMaterial = createPlanetMaterial(materialType);
@@ -1264,7 +1234,7 @@ function recreateGeometryWithMaterial(materialType) {
 	}
 
 	// Update planet render data reference
-	planet.renderData.surface = newMesh;
+	planet.renderData.surface.renderObject = newMesh;
 }
 
 // Register the existing color overlays
@@ -1487,7 +1457,6 @@ registerColorOverlay("watershedRegions", "Watershed Regions", "Shows watersheds 
 
 		// Fallback: Use constrained palette if region exists but missing color
 		if (finalRegion) {
-			console.warn("Final region", tile.finalRegionId, "missing color - using palette fallback");
 			var paletteColors = ["#606c38","#283618","#fefae0","#dda15e","#bc6c25"];
 			var paletteIndex = (tile.finalRegionId - 1) % 5;
 			return new THREE.Color(paletteColors[paletteIndex]);
@@ -1529,7 +1498,6 @@ function getRegionColorPalette(regionType) {
 // Graph coloring algorithm using Welsh-Powell (greedy with degree sorting)
 function applyGraphColoring(regions, getAdjacencies, colorProperty, regionType) {
 	if (!regions || regions.length === 0) {
-		console.log("No regions to color");
 		return;
 	}
 
@@ -1708,14 +1676,9 @@ function applyGraphColoring(regions, getAdjacencies, colorProperty, regionType) 
 		}
 	}
 
-	console.log("Graph coloring complete. Used", colorPalette.length, "colors for", regions.length, "regions");
-	console.log("Color usage:", colorUsage);
-	console.log("Color balance achieved after", iteration, "redistribution iterations");
-
-	// Calculate and log distribution statistics
+	// Graph coloring complete - statistics calculated for internal use
 	var usageCounts = Object.values(colorUsage);
 	var minUsage = Math.min.apply(Math, usageCounts);
 	var maxUsage = Math.max.apply(Math, usageCounts);
 	var avgUsage = usageCounts.reduce(function(a, b) { return a + b; }, 0) / usageCounts.length;
-	console.log("Usage distribution - Min:", minUsage, "Max:", maxUsage, "Avg:", avgUsage.toFixed(1));
 }
