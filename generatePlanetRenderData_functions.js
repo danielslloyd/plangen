@@ -1237,6 +1237,144 @@ registerColorOverlay("watersheds", "Watersheds", "Shows drainage basins with dis
 	return new THREE.Color(0x888888);
 });
 
+// Shore distance color overlay - shows distance from shoreline
+registerColorOverlay("shore", "Shore Distance", "Distance from shore: light blue (ocean edge) to dark blue (deep ocean), bright yellow (land edge) to dark green (inland)", function(tile) {
+	if (!tile.hasOwnProperty('shore')) {
+		return new THREE.Color(0x888888); // Gray fallback if shore not calculated
+	}
+
+	if (tile.shore === 0) {
+		return new THREE.Color(0x888888); // Gray for uncategorized tiles
+	}
+
+	if (tile.shore < 0) {
+		// Ocean tiles: negative values
+		// Light blue (-1) to dark blue (very negative)
+		var maxNegative = Math.min(...planet.topology.tiles.map(t => t.shore || 0));
+		var normalizedValue = Math.abs(tile.shore) / Math.abs(maxNegative);
+
+		// Lerp from light blue to dark blue
+		var lightBlue = new THREE.Color(0x87CEEB); // Light blue
+		var darkBlue = new THREE.Color(0x000080);  // Dark blue
+		return lightBlue.clone().lerp(darkBlue, normalizedValue);
+	} else {
+		// Land tiles: positive values
+		// Bright yellow (1) to dark green (very positive)
+		var maxPositive = Math.max(...planet.topology.tiles.map(t => t.shore || 0));
+		var normalizedValue = tile.shore / maxPositive;
+
+		// Lerp from bright yellow to dark green
+		var brightYellow = new THREE.Color(0xFFFF00); // Bright yellow
+		var darkGreen = new THREE.Color(0x006400);    // Dark green
+		return brightYellow.clone().lerp(darkGreen, normalizedValue);
+	}
+});
+
+// Reverse shore distance color overlay - shows distance from the extreme inland/deep ocean points
+registerColorOverlay("reverseShore", "Reverse Shore Distance", "Distance from extreme inland/deep ocean points: same color scheme as shore distance", function(tile) {
+	if (!tile.hasOwnProperty('reverseShore')) {
+		return new THREE.Color(0x888888); // Gray fallback if reverse shore not calculated
+	}
+
+	if (tile.reverseShore === 0) {
+		return new THREE.Color(0x888888); // Gray for uncategorized tiles
+	}
+
+	if (tile.reverseShore < 0) {
+		// Ocean tiles: negative values
+		// Light blue (-1) to dark blue (very negative)
+		var maxNegative = Math.min(...planet.topology.tiles.map(t => t.reverseShore || 0));
+		var normalizedValue = Math.abs(tile.reverseShore) / Math.abs(maxNegative);
+
+		// Lerp from light blue to dark blue
+		var lightBlue = new THREE.Color(0x87CEEB); // Light blue
+		var darkBlue = new THREE.Color(0x000080);  // Dark blue
+		return lightBlue.clone().lerp(darkBlue, normalizedValue);
+	} else {
+		// Land tiles: positive values
+		// Bright yellow (1) to dark green (very positive)
+		var maxPositive = Math.max(...planet.topology.tiles.map(t => t.reverseShore || 0));
+		var normalizedValue = tile.reverseShore / maxPositive;
+
+		// Lerp from bright yellow to dark green
+		var brightYellow = new THREE.Color(0xFFFF00); // Bright yellow
+		var darkGreen = new THREE.Color(0x006400);    // Dark green
+		return brightYellow.clone().lerp(darkGreen, normalizedValue);
+	}
+});
+
+// Net Shore color overlay - shows reverseShore minus shore
+registerColorOverlay("shoreRatio", "Net Shore", "Net shore distance (reverseShore - shore) with custom color schemes", function(tile) {
+	if (!tile.hasOwnProperty('shore') || !tile.hasOwnProperty('reverseShore')) {
+		return new THREE.Color(0x888888); // Gray fallback if data not calculated
+	}
+
+	if (tile.shore === 0 || tile.reverseShore === 0) {
+		return new THREE.Color(0x888888); // Gray for uncategorized tiles
+	}
+
+	// Calculate net shore: reverseShore - shore
+	var netShore = tile.reverseShore - tile.shore;
+
+	if (tile.shore > 0) {
+		// Land tiles: red (negative) -> yellow (0) -> dark green (positive)
+		var landNetShores = planet.topology.tiles
+			.filter(t => t.shore > 0 && t.hasOwnProperty('reverseShore'))
+			.map(t => t.reverseShore - t.shore);
+
+		if (landNetShores.length === 0) {
+			return new THREE.Color(0x888888);
+		}
+
+		var minLandNet = Math.min(...landNetShores);
+		var maxLandNet = Math.max(...landNetShores);
+
+		if (netShore < 0) {
+			// Negative: interpolate from yellow (0) to red (most negative)
+			var normalizedValue = Math.abs(netShore) / Math.abs(minLandNet);
+			var yellow = new THREE.Color(0xFFFF00);   // Yellow at 0
+			var red = new THREE.Color(0xFF0000);      // Red at most negative
+			return yellow.clone().lerp(red, normalizedValue);
+		} else if (netShore === 0) {
+			return new THREE.Color(0xFFFF00); // Yellow at exactly 0
+		} else {
+			// Positive: interpolate from yellow (0) to dark green (most positive)
+			var normalizedValue = netShore / maxLandNet;
+			var yellow = new THREE.Color(0xFFFF00);   // Yellow at 0
+			var darkGreen = new THREE.Color(0x006400); // Dark green at most positive
+			return yellow.clone().lerp(darkGreen, normalizedValue);
+		}
+	} else {
+		// Ocean tiles: dark blue (negative) -> blue (0) -> magenta (positive)
+		var oceanNetShores = planet.topology.tiles
+			.filter(t => t.shore < 0 && t.hasOwnProperty('reverseShore'))
+			.map(t => t.reverseShore - t.shore);
+
+		if (oceanNetShores.length === 0) {
+			return new THREE.Color(0x888888);
+		}
+
+		var minOceanNet = Math.min(...oceanNetShores);
+		var maxOceanNet = Math.max(...oceanNetShores);
+
+		if (netShore < 0) {
+			// Negative: interpolate from blue (0) to dark blue (most negative)
+			var normalizedValue = Math.abs(netShore) / Math.abs(minOceanNet);
+			var blue = new THREE.Color(0x0000FF);     // Blue at 0
+			var darkBlue = new THREE.Color(0x000080); // Dark blue at most negative
+			return blue.clone().lerp(darkBlue, normalizedValue);
+		} else if (netShore === 0) {
+			return new THREE.Color(0x0000FF); // Blue at exactly 0
+		} else {
+			// Positive: interpolate from blue (0) to magenta (most positive)
+			var normalizedValue = netShore / maxOceanNet;
+			var blue = new THREE.Color(0x0000FF);     // Blue at 0
+			var magenta = new THREE.Color(0xFF00FF);  // Magenta at most positive
+			return blue.clone().lerp(magenta, normalizedValue);
+		}
+	}
+});
+
 // Land Regions color overlay - shows K-means clustered land regions
 registerColorOverlay("landRegions", "Land Regions", "Shows clustered land regions in different colors", function(tile) {
 	// Ocean tiles get flat blue-gray

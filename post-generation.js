@@ -8,7 +8,6 @@
 
 // Clean watershed region absorption algorithm based on Ocean-Land (O-L) ratios
 function performWatershedAbsorption(watersheds) {
-	console.log("Starting clean watershed absorption algorithm...");
 
 	// Step 1: Initialize regions directly from watersheds (simple structure)
 	var regions = [];
@@ -27,8 +26,6 @@ function performWatershedAbsorption(watersheds) {
 
 		regions.push(region);
 	}
-
-	console.log("Initialized", regions.length, "regions from watersheds");
 
 	// Step 2: Calculate neighbors for each region
 	function updateNeighbors() {
@@ -54,8 +51,8 @@ function performWatershedAbsorption(watersheds) {
 		}
 	}
 
-	// Step 3: Calculate O-L ratio for a region
-	function calculateOLRatio(region) {
+	// Step 3: Calculate net O-L for a region
+	function calculateNetOL(region) {
 		var oceanBorders = 0;
 		var landBorders = 0;
 
@@ -79,8 +76,8 @@ function performWatershedAbsorption(watersheds) {
 		return oceanBorders - landBorders;
 	}
 
-	// Step 4: Calculate combined O-L ratio if two regions were merged
-	function calculateCombinedOLRatio(region1, region2) {
+	// Step 4: Calculate combined O-L if two regions were merged
+	function calculateCombinedNetOL(region1, region2) {
 		var combinedOceanBorders = 0;
 		var combinedLandBorders = 0;
 		var combinedTileIds = new Set();
@@ -121,23 +118,23 @@ function performWatershedAbsorption(watersheds) {
 	while (true) {
 		updateNeighbors();
 
-		// Sort regions by O-L ratio (highest first)
+		// Sort regions by net O-L (highest first)
 		regions.sort(function(a, b) {
-			return calculateOLRatio(b) - calculateOLRatio(a);
+			return calculateNetOL(b) - calculateNetOL(a);
 		});
 
 		var anyAbsorptions = false;
 
 		for (var i = 0; i < regions.length; i++) {
 			var region = regions[i];
-			var currentOL = calculateOLRatio(region);
+			var currentOL = calculateNetOL(region);
 
 			// Only regions with positive or zero O-L can absorb (coastal/ocean-favorable regions)
 			if (currentOL < 0) {
 				continue; // Skip inland regions
 			}
 
-			// Try to absorb each neighbor
+			// Try to absorb each neighbor individually
 			var neighborsArray = Array.from(region.neighbors);
 			for (var j = 0; j < neighborsArray.length; j++) {
 				var neighborId = neighborsArray[j];
@@ -152,11 +149,10 @@ function performWatershedAbsorption(watersheds) {
 				}
 
 				if (neighborRegion) {
-					var combinedOL = calculateCombinedOLRatio(region, neighborRegion);
+					var combinedOL = calculateCombinedNetOL(region, neighborRegion);
 
 					// If combined O-L is same or better, absorb
 					if (combinedOL >= currentOL) {
-						console.log("Region", region.id, "(O-L:", currentOL, ") absorbing region", neighborRegion.id, "-> combined O-L:", combinedOL);
 
 						// Merge neighbor into region
 						for (var l = 0; l < neighborRegion.tiles.length; l++) {
@@ -176,9 +172,7 @@ function performWatershedAbsorption(watersheds) {
 			if (anyAbsorptions) break; // Start over with updated regions
 		}
 
-		console.log("Round", round, "complete.", regions.length, "regions remaining");
 		if (!anyAbsorptions) {
-			console.log("No more absorptions possible. Algorithm complete.");
 			break;
 		}
 		round++;
@@ -196,8 +190,6 @@ function performWatershedAbsorption(watersheds) {
 		}
 	}
 
-	console.log("Watershed absorption complete.", regions.length, "final regions created.");
-
 	// Store regions globally for coloring and labeling
 	if (typeof window !== 'undefined') {
 		window.watershedFinalRegions = regions;
@@ -212,7 +204,6 @@ function performWatershedAbsorption(watersheds) {
 
 // Enhanced graph coloring with iterative balancing
 function applySimpleGraphColoring(regions) {
-	console.log("Applying enhanced 5-color graph coloring to", regions.length, "regions");
 
 	// Enhanced adjacency function for simple regions
 	function getRegionAdjacencies(region, allRegions) {
@@ -220,34 +211,12 @@ function applySimpleGraphColoring(regions) {
 		return adjacentIds;
 	}
 
-	// Apply the enhanced graph coloring algorithm
+	// Apply the working graph coloring algorithm
 	applyGraphColoring(regions, getRegionAdjacencies, 'color', 'watershedRegion');
-
-	// Validation
-	var regionsWithColors = 0;
-	var colorDistribution = {};
-
-	for (var i = 0; i < regions.length; i++) {
-		var region = regions[i];
-		if (region.color) {
-			regionsWithColors++;
-			var colorKey = region.color;
-			if (!colorDistribution[colorKey]) {
-				colorDistribution[colorKey] = 0;
-			}
-			colorDistribution[colorKey]++;
-		}
-	}
-
-	console.log("=== FINAL REGION COLOR VALIDATION ===");
-	console.log("Regions with colors:", regionsWithColors, "/", regions.length);
-	console.log("Color distribution by region:", colorDistribution);
-	console.log("Number of unique colors used:", Object.keys(colorDistribution).length);
 }
 
 // Simple region label creation
 function createSimpleRegionLabels(regions) {
-	console.log("Creating simple region labels...");
 
 	var regionsLabeled = 0;
 
@@ -296,17 +265,9 @@ function createSimpleRegionLabels(regions) {
 				highestTile.watershedRegionLabel = labelText;
 				highestTile.watershedRegionLabelId = region.id;
 				regionsLabeled++;
-
-				console.log("DEBUG: Created region label for region", region.id, ':"', labelText, '" at elevation', highestTile.elevation.toFixed(3), "(", region.tiles.length, "total tiles,", landTiles.length, "land tiles)");
 			}
-		} else {
-			console.log("DEBUG: No land tiles found in region", region.id, "- skipping label (", region.tiles.length, "total tiles)");
 		}
 	}
-
-	console.log("=== REGION LABEL VALIDATION ===");
-	console.log("Regions labeled:", regionsLabeled, "/", regions.length);
-	console.log("Label creation complete");
 }
 
 // ============================================================================
@@ -316,11 +277,8 @@ function createSimpleRegionLabels(regions) {
 // Graph coloring for land regions (K-means clustered)
 function applyLandRegionGraphColoring(landTiles, regionCount) {
 	if (!landTiles || landTiles.length === 0) {
-		console.log("No land tiles provided for land region graph coloring");
 		return;
 	}
-
-	console.log("Applying graph coloring to", regionCount, "land regions");
 
 	// Extract unique regions from land tiles
 	var regionMap = {};
@@ -338,7 +296,6 @@ function applyLandRegionGraphColoring(landTiles, regionCount) {
 	}
 
 	var regions = Object.values(regionMap);
-	console.log("Found", regions.length, "land regions from tiles");
 
 	// Adjacency function for land regions
 	function getLandRegionAdjacencies(region, allRegions) {
@@ -375,8 +332,6 @@ function applyLandRegionGraphColoring(landTiles, regionCount) {
 			}
 		}
 	}
-
-	console.log("Land region graph coloring complete");
 }
 
 // ============================================================================
@@ -390,7 +345,7 @@ function generatePlanetBiomesResources(tiles, planetRadius, action) {
 	var seaTemps = tiles.filter(t => t.elevation < 0).sort((a, b) => parseFloat(a.temperature) - parseFloat(b.temperature));
 	var optimalTemp = seaTemps[Math.floor(seaTemps.length * .4)].temperature;
 	const fibVectors = generateEvenVectors(Math.floor(Math.pow(tiles.length,0.5)), 1000)
-	//console.log(fibVectors);
+
 	function calculateAngleBetweenVectors(v1, v2) {
 		// Calculate the dot product of the vectors
 		const dotProduct = v1.dot(v2);
@@ -501,14 +456,11 @@ function generatePlanetBiomesResources(tiles, planetRadius, action) {
 				}, new THREE.Vector3()).divideScalar(tile.corners.length);
 				let angle = calculateAngleBetweenVectors(shoreVector, airCurrent);
 				let nearShore = [...tile.tiles.map(n => Math.min(-1,n.shore))].reduce((sum, num) => sum - num, 0);
-				//if (tile.shore > -3) {
-					//not sure why z matters, I think because the sign of the angle difference switches
-					tile.fish = 0.1*tile.slope+7*Math.max(0,Math.sin(angle)*(-Math.sign(tile.averagePosition.y)*Math.sign(tile.averagePosition.z)))/nearShore+0.1*(1-Math.pow(temperature-optimalTemp,2));
-				//}
+				tile.fish = 0.1*tile.slope+7*Math.max(0,Math.sin(angle)*(-Math.sign(tile.averagePosition.y)*Math.sign(tile.averagePosition.z)))/nearShore+0.1*(1-Math.pow(temperature-optimalTemp,2));
 			} else {
 				tile.biome = "seaIce";
 			}
-		} else if (tile.elevation > 0.9 || tile.temperature < 0 || (tile.temperature < 0 && (Math.min(tile.moisture, 1) > 0.45 || (tile.drain && tile.outflow > flowThreshold)))) { //
+		} else if (tile.elevation > 0.9 || tile.temperature < 0 || (tile.temperature < 0 && (Math.min(tile.moisture, 1) > 0.45 || (tile.drain && tile.outflow > flowThreshold)))) {
 			tile.biome = "glacier";
 		} else if (tile.lake) {
 			tile.biome = "lake";
@@ -566,11 +518,9 @@ function generatePlanetBiomesResources(tiles, planetRadius, action) {
 		tile.calories = Math.max(0, tile.wheat * 7, tile.corn * 15, tile.rice * 11, tile.pasture*1000,tile.fish*1300);
 	}
 
-	//}
 	for (t of tiles.filter(t => t.upstream)) {
 		t.upstreamCalories = t.upstream.reduce((s, v) => s + v.calories, 0)
 	}
-
 
 	const percentiles = {
 		iron: 90,
@@ -599,8 +549,6 @@ function generatePlanetBiomesResources(tiles, planetRadius, action) {
 			}
 			}
 		}
-
-		//return tiles;
 	}
 	normalizeTiles(tiles.filter(t => t.elevation > 0), percentiles);
 
@@ -631,47 +579,10 @@ function generatePlanetBiomesResources(tiles, planetRadius, action) {
 
 	sumUpstreamWeights(tiles.filter(t => t.elevation > 0), weights);
 	normalizeTiles(tiles.filter(t => t.elevation > 0), {upstreamWeight: 0});
-	/*
-
-		//fish color
-		var fishColor = terrainColor.clone()
-		if (tile.elevation < 0 && tile.biome != "seaIce"&&tile.shore>-5) {// && tile.elevation >= -0.2) {
-			tile.fish = 100-100*Math.pow(Math.abs(tile.elevation+0.2),0.15);
-			fishColor = fishColor.lerp(new THREE.Color(0xFF00FF), tile.fish / 100);
-		}
-		var calorieColor = terrainColor.clone()
-		calorieColor = calorieColor.lerp(new THREE.Color(0xFF00FF), tile.calories / 1500);
-
-
-		function assignResourceDeposits(tiles) {
-			tiles.forEach(tile => {
-				if (tile.elevation > 0) { // Only assign resources to land tiles
-					// Gold deposits are often found in mountainous regions and near plate boundaries
-					tile.goldDeposits = (tile.elevation > 0.5 && tile.plate.boundaryBorders.length > 0) ? Math.random() * 100 : 0;
-
-					// Iron ore deposits are often found in ancient geological formations, typically away from plate boundaries
-					tile.ironOreDeposits = (tile.elevation > 0.3 && tile.plate.boundaryBorders.length === 0) ? Math.random() * 200 : 0;
-
-					// Oil deposits are often found in sedimentary basins, typically in low elevation areas
-					tile.oilDeposits = (tile.elevation < 0.2 && tile.moisture > 0.5) ? Math.random() * 50 : 0;
-
-					// Aluminum ore deposits (bauxite) are often found in tropical regions with high moisture
-					tile.aluminumOreDeposits = (tile.moisture * tile.temperature) ? Math.random() * 150 : 0;
-				} else {
-					tile.goldDeposits = 0;
-					tile.ironOreDeposits = 0;
-					tile.oilDeposits = 0;
-					tile.aluminumOreDeposits = 0;
-				}
-			});
-		}
-			*/
 
 	// Add labeling system - find highest elevation tile and label it
-	console.log('DEBUG: Starting label assignment phase');
 	if (tiles && tiles.length > 0) {
-		console.log('DEBUG: Processing', tiles.length, 'tiles for labeling');
-		// Find tile with highest elevation (tiles are already sorted by elevation descending at line 1134)
+		// Find tile with highest elevation
 		var highestTile = tiles[0];
 		for (var i = 1; i < tiles.length; i++) {
 			if (tiles[i].elevation > highestTile.elevation) {
@@ -679,19 +590,10 @@ function generatePlanetBiomesResources(tiles, planetRadius, action) {
 			}
 		}
 
-		console.log('DEBUG: Found highest tile with elevation:', highestTile.elevation);
-		console.log('DEBUG: Highest tile ID/position:', highestTile.id || 'no-id', highestTile.averagePosition);
-
 		// Add label to highest elevation tile
 		if (highestTile && highestTile.elevation > 0) {
 			highestTile.label = 'Mount Everest';
-			console.log('DEBUG: Successfully assigned label "Mount Everest" to tile');
-			console.log('DEBUG: Tile now has label property:', highestTile.label);
-		} else {
-			console.log('DEBUG: No suitable tile found for labeling (highest elevation <= 0)');
 		}
-	} else {
-		console.log('DEBUG: No tiles provided for labeling');
 	}
 
 	// Add K-means clustering for geographical features
@@ -702,10 +604,8 @@ function generatePlanetBiomesResources(tiles, planetRadius, action) {
 
 // Sphere-constrained K-means clustering for land features
 function clusterLandFeatures(tiles) {
-	console.log('DEBUG: Starting land feature clustering');
 
 	if (!tiles || tiles.length === 0) {
-		console.log('DEBUG: No tiles for clustering');
 		return;
 	}
 
@@ -714,16 +614,12 @@ function clusterLandFeatures(tiles) {
 		return tile.elevation > 0;
 	});
 
-	console.log('DEBUG: Found', landTiles.length, 'land tiles for clustering');
-
 	if (landTiles.length === 0) {
-		console.log('DEBUG: No land tiles found for clustering');
 		return;
 	}
 
 	// Calculate number of clusters (land tiles / 100, minimum 1)
 	var k = Math.max(1, Math.floor(landTiles.length / 100));
-	console.log('DEBUG: Using', k, 'clusters for', landTiles.length, 'land tiles');
 
 	// Extract 3D positions from land tiles
 	var positions = landTiles.map(function(tile) {
@@ -740,18 +636,12 @@ function clusterLandFeatures(tiles) {
 		landTiles[i].landRegion = assignments[i] + 1; // 1-based indexing for display
 	}
 
-	// Apply graph-based coloring to land regions
-	// Note: Land region graph coloring moved to post-generation.js
-
 	// Assign labels to tiles closest to cluster centers
 	for (var i = 0; i < clusters.length; i++) {
 		var center = clusters[i];
 		var closestTile = findClosestTile(landTiles, center);
 		if (closestTile && !closestTile.landRegionLabel) { // Don't override existing land region labels
 			closestTile.landRegionLabel = 'Land ' + (i + 1);
-			console.log('DEBUG: Created land region label:', closestTile.landRegionLabel, 'at tile with elevation:', closestTile.elevation);
-		} else {
-			console.log('DEBUG: Skipping land region label - closestTile:', !!closestTile, 'existing label:', closestTile ? closestTile.landRegionLabel : 'N/A');
 		}
 	}
 }
@@ -774,8 +664,6 @@ function kMeansSphereClustering(positions, landTiles, k) {
 		center.normalize().multiplyScalar(sphereRadius);
 		centers.push(center);
 	}
-
-	console.log('DEBUG: Initialized', k, 'cluster centers on sphere surface');
 
 	var finalAssignments = [];
 
@@ -829,12 +717,10 @@ function kMeansSphereClustering(positions, landTiles, k) {
 
 		// Check for convergence
 		if (maxMovement < convergenceThreshold) {
-			console.log('DEBUG: K-means converged after', iteration + 1, 'iterations');
 			break;
 		}
 	}
 
-	console.log('DEBUG: K-means clustering completed, returning', centers.length, 'cluster centers and assignments');
 	return {
 		centers: centers,
 		assignments: finalAssignments
@@ -857,32 +743,211 @@ function findClosestTile(tiles, position) {
 }
 
 // ============================================================================
+// SHORE DISTANCE FUNCTIONS
+// ============================================================================
+
+// Calculate shore distance values for all tiles
+// Shore values: -1 for ocean tiles bordering land, 1 for land tiles bordering ocean
+// Then -2 for ocean neighbors of -1 tiles, 2 for land neighbors of 1 tiles, etc.
+function calculateShoreDistances(tiles) {
+	// Initialize all shore values to 0
+	for (var i = 0; i < tiles.length; i++) {
+		tiles[i].shore = 0;
+	}
+
+	// First pass: identify immediate shore tiles
+	for (var i = 0; i < tiles.length; i++) {
+		var tile = tiles[i];
+		if (tile.shore == 0) {
+			if (tile.elevation > 0) {
+				// Land tile: check if any neighbors are ocean
+				if (Math.min.apply(0, tile.tiles.map(function(neighbor) { return neighbor.elevation; })) < 0) {
+					tile.shore = 1;
+				}
+			} else if (tile.elevation < 0) {
+				// Ocean tile: check if any neighbors are land
+				if (Math.max.apply(0, tile.tiles.map(function(neighbor) { return neighbor.elevation; })) > 0) {
+					tile.shore = -1;
+				}
+			}
+		}
+	}
+
+	// Iterative expansion: propagate shore values outward
+	var currentDistance = 1;
+	while (!Math.min.apply(0, tiles.map(function(tile) { return Math.abs(tile.shore); })) > 0) {
+		for (var i = 0; i < tiles.length; i++) {
+			var tile = tiles[i];
+
+			if (Math.abs(tile.shore) == currentDistance) {
+				for (var j = 0; j < tile.tiles.length; j++) {
+					var neighbor = tile.tiles[j];
+					if (neighbor.shore == 0) {
+						if (neighbor.elevation > 0) {
+							// Land neighbor gets positive value
+							neighbor.shore = tile.shore + 1;
+						} else {
+							// Ocean neighbor gets negative value
+							neighbor.shore = tile.shore - 1;
+						}
+					}
+				}
+			}
+		}
+		currentDistance += 1;
+
+		// Safety check to prevent infinite loops
+		if (currentDistance > tiles.length) {
+			break;
+		}
+	}
+}
+
+// Calculate reverse shore distances for each connected land/ocean body
+// Finds the max/min shore tile in each body, then calculates distances from those points
+function calculateReverseShoreDistances(tiles) {
+	// Initialize reverse shore values to 0
+	for (var i = 0; i < tiles.length; i++) {
+		tiles[i].reverseShore = 0;
+		tiles[i].visited = false;
+	}
+
+	// Find all connected bodies (land and ocean separately)
+	var bodies = [];
+
+	for (var i = 0; i < tiles.length; i++) {
+		var tile = tiles[i];
+		if (tile.visited) continue;
+
+		// Start a new body
+		var body = {
+			tiles: [],
+			isLand: tile.elevation > 0,
+			extremeTile: null
+		};
+
+		// Flood fill to find all tiles in this connected body
+		var queue = [tile];
+		tile.visited = true;
+
+		while (queue.length > 0) {
+			var currentTile = queue.shift();
+			body.tiles.push(currentTile);
+
+			// Check neighbors
+			for (var j = 0; j < currentTile.tiles.length; j++) {
+				var neighbor = currentTile.tiles[j];
+				if (!neighbor.visited &&
+					((body.isLand && neighbor.elevation > 0) || (!body.isLand && neighbor.elevation <= 0))) {
+					neighbor.visited = true;
+					queue.push(neighbor);
+				}
+			}
+		}
+
+		bodies.push(body);
+	}
+
+	// For each body, find the extreme shore tile (max for land, min for ocean)
+	for (var i = 0; i < bodies.length; i++) {
+		var body = bodies[i];
+		var extremeTile = body.tiles[0];
+
+		for (var j = 1; j < body.tiles.length; j++) {
+			var tile = body.tiles[j];
+			var isExtreme = false;
+
+			if (body.isLand) {
+				// Land: find max shore (furthest inland)
+				if (tile.shore > extremeTile.shore) {
+					isExtreme = true;
+				} else if (tile.shore === extremeTile.shore && tile.elevation > extremeTile.elevation) {
+					isExtreme = true;
+				}
+			} else {
+				// Ocean: find min shore (furthest from land)
+				if (tile.shore < extremeTile.shore) {
+					isExtreme = true;
+				} else if (tile.shore === extremeTile.shore && tile.elevation < extremeTile.elevation) {
+					isExtreme = true;
+				}
+			}
+
+			if (isExtreme) {
+				extremeTile = tile;
+			}
+		}
+
+		body.extremeTile = extremeTile;
+	}
+
+	// Calculate reverse shore distances from each extreme tile
+	for (var i = 0; i < bodies.length; i++) {
+		var body = bodies[i];
+		if (!body.extremeTile) continue;
+
+		// Reset visited flags for this body
+		for (var j = 0; j < body.tiles.length; j++) {
+			body.tiles[j].visited = false;
+		}
+
+		// BFS from extreme tile
+		var queue = [{tile: body.extremeTile, distance: body.isLand ? 1 : -1}];
+		body.extremeTile.reverseShore = body.isLand ? 1 : -1;
+		body.extremeTile.visited = true;
+
+		while (queue.length > 0) {
+			var current = queue.shift();
+			var currentTile = current.tile;
+			var currentDistance = current.distance;
+
+			// Check neighbors within the same body
+			for (var j = 0; j < currentTile.tiles.length; j++) {
+				var neighbor = currentTile.tiles[j];
+
+				if (!neighbor.visited &&
+					((body.isLand && neighbor.elevation > 0) || (!body.isLand && neighbor.elevation <= 0))) {
+
+					var nextDistance = body.isLand ? currentDistance + 1 : currentDistance - 1;
+					neighbor.reverseShore = nextDistance;
+					neighbor.visited = true;
+					queue.push({tile: neighbor, distance: nextDistance});
+				}
+			}
+		}
+	}
+
+	// Clean up visited flags
+	for (var i = 0; i < tiles.length; i++) {
+		delete tiles[i].visited;
+	}
+}
+
+// ============================================================================
 // MAIN POST-GENERATION FUNCTION
 // ============================================================================
 
 // Main post-generation analysis function - runs after all planet attributes are finalized
 function runPostGeneration(planet, action) {
-	console.log("=== STARTING POST-GENERATION ANALYSIS ===");
 
 	action
 		.executeSubaction(function(action) {
-			console.log("Running biomes and resources generation...");
 			generatePlanetBiomesResources(planet.topology.tiles, 1000, action);
 		}, 1, "Generating Biomes & Resources")
 		.executeSubaction(function(action) {
-			console.log("Running watershed region analysis...");
+			calculateShoreDistances(planet.topology.tiles);
+			calculateReverseShoreDistances(planet.topology.tiles);
+			action.provideResult("Shore distances complete");
+		}, 1, "Calculating Shore Distances")
+		.executeSubaction(function(action) {
 
 			if (planet.topology && planet.topology.watersheds) {
-				console.log(planet.topology.watersheds);
 				performWatershedAbsorption(planet.topology.watersheds);
-			} else {
-				console.warn("No watersheds found for region analysis");
 			}
 
 			action.provideResult("Watershed regions complete");
 		}, 1, "Generating Watershed Regions")
 		.executeSubaction(function(action) {
-			console.log("Running land region analysis...");
 
 			var landTiles = planet.topology.tiles.filter(function(tile) {
 				return tile.elevation > 0 && tile.landRegion && tile.landRegion > 0;
@@ -891,14 +956,11 @@ function runPostGeneration(planet, action) {
 			if (landTiles.length > 0) {
 				var maxRegion = Math.max.apply(Math, landTiles.map(function(tile) { return tile.landRegion; }));
 				applyLandRegionGraphColoring(landTiles, maxRegion);
-			} else {
-				console.warn("No land regions found for coloring");
 			}
 
 			action.provideResult("Land regions complete");
 		}, 1, "Processing Land Regions")
 		.executeSubaction(function(action) {
-			console.log("=== POST-GENERATION ANALYSIS COMPLETE ===");
 			action.provideResult("Post-generation complete");
 		}, 0);
 }
