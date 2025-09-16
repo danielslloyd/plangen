@@ -1166,13 +1166,42 @@ function buildSimpleTestObject(action) {
 // Modular Color Overlay System
 var colorOverlayRegistry = {};
 
+// Material management system
+var materialCache = {};
+var currentMaterialType = 'basic';
+
+// Create planet material of specified type
+function createPlanetMaterial(materialType) {
+	if (materialCache[materialType]) {
+		return materialCache[materialType];
+	}
+
+	var material;
+	if (materialType === 'lambert') {
+		material = new THREE.MeshLambertMaterial({
+			vertexColors: true,
+			side: THREE.DoubleSide
+		});
+	} else {
+		// Default to basic material
+		material = new THREE.MeshBasicMaterial({
+			vertexColors: true,
+			side: THREE.DoubleSide
+		});
+	}
+
+	materialCache[materialType] = material;
+	return material;
+}
+
 // Register a color overlay function
-function registerColorOverlay(id, name, description, colorFunction) {
+function registerColorOverlay(id, name, description, colorFunction, materialType) {
 	colorOverlayRegistry[id] = {
 		id: id,
 		name: name,
 		description: description,
-		colorFunction: colorFunction
+		colorFunction: colorFunction,
+		materialType: materialType || 'basic' // Default to basic material if not specified
 	};
 }
 
@@ -1193,31 +1222,67 @@ function applyColorOverlay(overlayId) {
 		console.error("Color overlay not found:", overlayId);
 		return;
 	}
-	
+
 	if (!planet || !planet.topology || !planet.topology.tiles) {
 		console.error("Cannot apply color overlay - missing planet data");
 		return;
 	}
-	
+
+	// Check if material type needs to change
+	var needsMaterialChange = (currentMaterialType !== overlay.materialType);
+
+	if (needsMaterialChange) {
+		recreateGeometryWithMaterial(overlay.materialType);
+		currentMaterialType = overlay.materialType;
+	}
+
 	recalculateBufferGeometryColors(planet.topology.tiles, planet.renderData.surface.geometry, overlayId);
 }
 
+// Recreate geometry with new material type
+function recreateGeometryWithMaterial(materialType) {
+	if (!planet || !planet.renderData || !planet.renderData.surface) {
+		return;
+	}
+
+	var surfaceRenderObject = planet.renderData.surface;
+	var oldGeometry = surfaceRenderObject.geometry;
+
+	// Create new material
+	var newMaterial = createPlanetMaterial(materialType);
+
+	// Create new mesh with same geometry but new material
+	var newMesh = new THREE.Mesh(oldGeometry, newMaterial);
+	newMesh.position.copy(surfaceRenderObject.position);
+	newMesh.rotation.copy(surfaceRenderObject.rotation);
+	newMesh.scale.copy(surfaceRenderObject.scale);
+
+	// Replace in scene
+	if (scene) {
+		scene.remove(surfaceRenderObject);
+		scene.add(newMesh);
+	}
+
+	// Update planet render data reference
+	planet.renderData.surface = newMesh;
+}
+
 // Register the existing color overlays
-registerColorOverlay("terrain", "Realistic Terrain", "Realistic biome-based terrain coloring", calculateTerrainColor);
-registerColorOverlay("elevation", "Elevation Map", "Height-based visualization from brown (low) to white (high)", calculateElevationColor);
-registerColorOverlay("temperature", "Temperature Map", "Thermal visualization from blue (cold) to red (hot)", calculateTemperatureColor);
-registerColorOverlay("moisture", "Moisture Map", "Precipitation visualization from brown (dry) to green (wet)", calculateMoistureColor);
-registerColorOverlay("plates", "Tectonic Plates", "Tectonic plate boundaries and colors", calculatePlatesColor);
+registerColorOverlay("terrain", "Realistic Terrain", "Realistic biome-based terrain coloring", calculateTerrainColor, "lambert");
+registerColorOverlay("elevation", "Elevation Map", "Height-based visualization from brown (low) to white (high)", calculateElevationColor, "lambert");
+registerColorOverlay("temperature", "Temperature Map", "Thermal visualization from blue (cold) to red (hot)", calculateTemperatureColor, "lambert");
+registerColorOverlay("moisture", "Moisture Map", "Precipitation visualization from brown (dry) to green (wet)", calculateMoistureColor, "lambert");
+registerColorOverlay("plates", "Tectonic Plates", "Tectonic plate boundaries and colors", calculatePlatesColor, "basic");
 
 // Example: Add new overlays - demonstrating how easy it is to extend
 registerColorOverlay("simple", "Simple Land/Water", "Basic land (green) vs water (blue) visualization", function(tile) {
 	return tile.elevation <= 0 ? new THREE.Color(0x0066CC) : new THREE.Color(0x00AA44);
-});
+}, "basic");
 
 registerColorOverlay("heat", "Heat Map", "Red-hot visualization based on elevation and temperature", function(tile) {
 	var intensity = Math.max(0, Math.min(1, (tile.elevation || 0) + (tile.temperature || 0) * 0.5));
 	return new THREE.Color(intensity, 0, 0);
-});
+}, "basic");
 
 // Watersheds color overlay - shows drainage basins in different colors
 registerColorOverlay("watersheds", "Watersheds", "Shows drainage basins with distinct colors", function(tile) {
@@ -1235,7 +1300,7 @@ registerColorOverlay("watersheds", "Watersheds", "Shows drainage basins with dis
 	}
 	// Default color for land tiles without watershed assignment
 	return new THREE.Color(0x888888);
-});
+}, "basic");
 
 // Shore distance color overlay - shows distance from shoreline
 registerColorOverlay("shore", "Shore Distance", "Distance from shore: light blue (ocean edge) to dark blue (deep ocean), bright yellow (land edge) to dark green (inland)", function(tile) {
@@ -1268,7 +1333,7 @@ registerColorOverlay("shore", "Shore Distance", "Distance from shore: light blue
 		var darkGreen = new THREE.Color(0x006400);    // Dark green
 		return brightYellow.clone().lerp(darkGreen, normalizedValue);
 	}
-});
+}, "basic");
 
 // Reverse shore distance color overlay - shows distance from the extreme inland/deep ocean points
 registerColorOverlay("reverseShore", "Reverse Shore Distance", "Distance from extreme inland/deep ocean points: same color scheme as shore distance", function(tile) {
@@ -1301,7 +1366,7 @@ registerColorOverlay("reverseShore", "Reverse Shore Distance", "Distance from ex
 		var darkGreen = new THREE.Color(0x006400);    // Dark green
 		return brightYellow.clone().lerp(darkGreen, normalizedValue);
 	}
-});
+}, "basic");
 
 // Net Shore color overlay - shows reverseShore minus shore
 registerColorOverlay("shoreRatio", "Net Shore", "Net shore distance (reverseShore - shore) with custom color schemes", function(tile) {
@@ -1373,7 +1438,7 @@ registerColorOverlay("shoreRatio", "Net Shore", "Net shore distance (reverseShor
 			return blue.clone().lerp(magenta, normalizedValue);
 		}
 	}
-});
+}, "basic");
 
 // Land Regions color overlay - shows K-means clustered land regions
 registerColorOverlay("landRegions", "Land Regions", "Shows clustered land regions in different colors", function(tile) {
@@ -1402,7 +1467,7 @@ registerColorOverlay("landRegions", "Land Regions", "Shows clustered land region
 
 	// Fallback for land tiles without region assignment
 	return new THREE.Color(0x888888); // Gray for unassigned land
-});
+}, "basic");
 
 // Watershed Regions color overlay - shows watersheds after coastal absorption
 registerColorOverlay("watershedRegions", "Watershed Regions", "Shows watersheds with coastal absorption based on O:L ratios", function(tile) {
@@ -1440,7 +1505,7 @@ registerColorOverlay("watershedRegions", "Watershed Regions", "Shows watersheds 
 	// Default color for land tiles without watershed assignment
 	console.warn("Land tile without watershed assignment found");
 	return new THREE.Color(0x888888);
-});
+}, "basic");
 
 // Color palette arrays for different region types
 var WATERSHED_COLORS = ["#606c38","#283618","#fefae0","#dda15e","#bc6c25"];
