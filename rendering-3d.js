@@ -44,10 +44,23 @@ function render() {
 		var sunTime = Math.PI * 2 * currentRenderFrameTime / 60000 + sunTimeOffset;
 		var sunDistance = 2000;
 		window.orbitingSunLight.position.set(
-			Math.cos(sunTime) * sunDistance, 
+			Math.cos(sunTime) * sunDistance,
 			Math.sin(sunTime * 0.3) * 500,  // Slight vertical oscillation
 			Math.sin(sunTime) * sunDistance
 		);
+
+		// Update hemisphere sky light to follow the sun orientation
+		if (window.orbitingSkyLight) {
+			// Orient the hemisphere so the blue "sky" side points toward the sun direction
+			var sunDirection = new THREE.Vector3(
+				Math.cos(sunTime),
+				Math.sin(sunTime * 0.3) * 0.25, // Reduced vertical variation for hemisphere
+				Math.sin(sunTime)
+			);
+			sunDirection.normalize();
+			// Position the hemisphere light to orient its "up" direction toward the sun
+			window.orbitingSkyLight.position.copy(sunDirection.multiplyScalar(100));
+		}
 	}
 
 	// Update FPS counter

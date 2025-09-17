@@ -118,7 +118,7 @@ function clearAllTextLabels() {
  */
 function addMountEverestLabel(tiles) {
     if (!tiles || tiles.length === 0) return;
-    
+
     // Find tile with highest elevation
     var highestTile = tiles[0];
     for (var i = 1; i < tiles.length; i++) {
@@ -126,7 +126,7 @@ function addMountEverestLabel(tiles) {
             highestTile = tiles[i];
         }
     }
-    
+
     if (highestTile && highestTile.averagePosition) {
         addTextLabelAtPosition(
             highestTile.averagePosition,
@@ -136,4 +136,33 @@ function addMountEverestLabel(tiles) {
             80 // Higher offset for mountain peaks
         );
     }
+}
+
+/**
+ * Adds city labels for all tiles marked as cities
+ * @param {Array} tiles - Array of planet tiles
+ */
+function addCityLabels(tiles) {
+    if (!tiles || tiles.length === 0) return;
+
+    var cityCount = 0;
+    for (var i = 0; i < tiles.length; i++) {
+        var tile = tiles[i];
+        if (tile.isCity === true && tile.averagePosition) {
+            cityCount++;
+
+            // Simple naming for now - just "City #"
+            var cityName = 'City ' + cityCount;
+
+            addTextLabelAtPosition(
+                tile.averagePosition,
+                cityName,
+                'yellow',
+                32,
+                60 // Offset for cities
+            );
+        }
+    }
+
+    console.log(`Added ${cityCount} city labels`);
 }

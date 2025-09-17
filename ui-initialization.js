@@ -531,20 +531,35 @@ function showHideSunlight(show) {
 	if (renderSunlight) {
 		// Add orbiting sun light if it doesn't exist
 		if (!window.orbitingSunLight) {
-			window.orbitingSunLight = new THREE.DirectionalLight(0xFFFFDD, 2.0);
+			window.orbitingSunLight = new THREE.DirectionalLight(0xFFFFFF, 1);
 			window.orbitingSunLight.position.set(2000, 1000, 1000);
 			scene.add(window.orbitingSunLight);
 		}
+		// Add orbiting hemisphere sky light that follows the sun
+		if (!window.orbitingSkyLight) {
+			var skyColor = 0x0000FF;//0x87CEEB;    // Sky blue for the upper hemisphere
+			var groundColor = 0x443322; // Warm brown for ground reflection
+			window.orbitingSkyLight = new THREE.HemisphereLight(skyColor, groundColor, 0.5);
+			// Position it to orient the hemisphere relative to the sun
+			var sunPos = window.orbitingSunLight.position.clone();
+			window.orbitingSkyLight.position.copy(sunPos.normalize().multiplyScalar(100));
+			scene.add(window.orbitingSkyLight);
+		}
 		// Make ambient light much dimmer and blue-tinted when sun is on
 		if (window.ambientLight) {
-			window.ambientLight.color.setHex(0x4488BB); // Blue tint
-			window.ambientLight.intensity = 0.2; // Much dimmer
+			window.ambientLight.color.setHex(0x4488FF); // Blue tint
+			window.ambientLight.intensity = 0.3; // Much dimmer
 		}
 	} else {
 		// Remove orbiting sun light
 		if (window.orbitingSunLight) {
 			scene.remove(window.orbitingSunLight);
 			window.orbitingSunLight = null;
+		}
+		// Remove orbiting sky light
+		if (window.orbitingSkyLight) {
+			scene.remove(window.orbitingSkyLight);
+			window.orbitingSkyLight = null;
 		}
 		// Restore ambient light to normal when sun is off
 		if (window.ambientLight) {

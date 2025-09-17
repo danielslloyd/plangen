@@ -803,6 +803,11 @@ function displayPlanet(newPlanet) {
         if (planet.renderData && planet.renderData.labels) {
             scene.remove(planet.renderData.labels);
         }
+
+        // Clear all text sprites (city labels, etc.)
+        if (typeof clearAllTextLabels !== 'undefined') {
+            clearAllTextLabels();
+        }
     } else {
         sunTimeOffset = Math.PI * 2 * (1 / 12 - Date.now() / 60000);
     }
@@ -836,6 +841,11 @@ function displayPlanet(newPlanet) {
 
     // Add nodes and edges to the graph
     //buildGraph(planet.aStarVertices, planet.aStarEdges);
+
+    // Add city labels if they exist
+    if (typeof addCityLabels !== 'undefined' && planet.topology && planet.topology.tiles) {
+        addCityLabels(planet.topology.tiles);
+    }
 }
 
 function showHideLabels(show) {
