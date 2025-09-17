@@ -1761,7 +1761,7 @@ function calculatePathDensityIncremental(action) {
 		// Count extrema tiles for debugging
 		var extremaCount = 0;
 		for (var i = 0; i < planet.topology.tiles.length; i++) {
-			if (planet.topology.tiles[i].error === 'local max') {
+			if (planet.topology.tiles[i].joint === true) {
 				extremaCount++;
 			}
 		}
@@ -1778,7 +1778,7 @@ function calculatePathDensityIncremental(action) {
 	if (!action.pathDensityState) {
 		for (var i = 0; i < planet.topology.tiles.length; i++) {
 			var tile = planet.topology.tiles[i];
-			if (tile.error === 'local max' && tile.elevation >= 0) {
+			if (tile.joint === true && tile.elevation >= 0) {
 				allLandExtrema.push(tile);
 			}
 		}
@@ -1880,3 +1880,59 @@ function calculatePathDensity() {
 	};
 	calculatePathDensityIncremental(mockAction);
 }
+
+// Resource overlay color functions
+function calculateCornColor(tile) {
+	var terrainColor = calculateTerrainColor(tile);
+	var magenta = new THREE.Color(0xFF00FF);
+	var cornValue = Math.min(1, Math.max(0, tile.corn || 0));
+	return terrainColor.clone().lerp(magenta, cornValue);
+}
+
+function calculateWheatColor(tile) {
+	var terrainColor = calculateTerrainColor(tile);
+	var magenta = new THREE.Color(0xFF00FF);
+	var wheatValue = Math.min(1, Math.max(0, tile.wheat || 0));
+	return terrainColor.clone().lerp(magenta, wheatValue);
+}
+
+function calculateRiceColor(tile) {
+	var terrainColor = calculateTerrainColor(tile);
+	var magenta = new THREE.Color(0xFF00FF);
+	var riceValue = Math.min(1, Math.max(0, tile.rice || 0));
+	return terrainColor.clone().lerp(magenta, riceValue);
+}
+
+function calculateFishColor(tile) {
+	var terrainColor = calculateTerrainColor(tile);
+	var magenta = new THREE.Color(0xFF00FF);
+	var fishValue = Math.min(1, Math.max(0, tile.fish || 0));
+	return terrainColor.clone().lerp(magenta, fishValue);
+}
+
+function calculateCaloriesColor(tile) {
+	// Find the maximum calories value across all tiles for normalization
+	var maxCalories = 0;
+	for (var i = 0; i < planet.topology.tiles.length; i++) {
+		var tileCalories = planet.topology.tiles[i].calories || 0;
+		if (tileCalories > maxCalories) {
+			maxCalories = tileCalories;
+		}
+	}
+
+	// Normalize the current tile's calories value (0-1)
+	var normalizedCalories = maxCalories > 0 ? (tile.calories || 0) / maxCalories : 0;
+	normalizedCalories = Math.min(1, Math.max(0, normalizedCalories));
+
+	// Lerp terrain color toward magenta based on normalized calories
+	var terrainColor = calculateTerrainColor(tile);
+	var magenta = new THREE.Color(0xFF00FF);
+	return terrainColor.clone().lerp(magenta, normalizedCalories);
+}
+
+// Register resource overlays
+registerColorOverlay("corn", "Corn Resources", "Terrain colored toward magenta based on corn resource values", calculateCornColor, "lambert");
+registerColorOverlay("wheat", "Wheat Resources", "Terrain colored toward magenta based on wheat resource values", calculateWheatColor, "lambert");
+registerColorOverlay("rice", "Rice Resources", "Terrain colored toward magenta based on rice resource values", calculateRiceColor, "lambert");
+registerColorOverlay("fish", "Fish Resources", "Terrain colored toward magenta based on fish resource values", calculateFishColor, "lambert");
+registerColorOverlay("calories", "Calories (Normalized)", "Terrain colored toward magenta based on normalized calories values (max = 1)", calculateCaloriesColor, "lambert");

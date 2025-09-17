@@ -465,28 +465,29 @@ function generatePlanetBiomesResources(tiles, planetRadius, action) {
 		} else if (tile.lake) {
 			tile.biome = "lake";
 			tile.fish = tile.upstream.length/20;
-		} else if (tile.drain) {
-			// Check if any individual inflow (not total) exceeds threshold
-			var hasSignificantInflow = false;
-			var alreadyRiver = false;
-			var significantSources = [];
+		} else {
+			if (tile.drain) {
+				// Check if any individual inflow (not total) exceeds threshold
+				var hasSignificantInflow = false;
+				var alreadyRiver = false;
+				var significantSources = [];
 
-			if (tile.sources && tile.sources.length > 0) {
-				for (var source of tile.sources) {
-					if (source.outflow > flowThreshold) {
-						hasSignificantInflow = true;
-						alreadyRiver = source.river;
-						significantSources.push(source);
+				if (tile.sources && tile.sources.length > 0) {
+					for (var source of tile.sources) {
+						if (source.outflow > flowThreshold) {
+							hasSignificantInflow = true;
+							alreadyRiver = source.river;
+							significantSources.push(source);
+						}
 					}
 				}
-			}
 
-			if (hasSignificantInflow && (alreadyRiver||(tile.downstream && tile.downstream.length > 0))) {
-				tile.river = true;
-				tile.riverSources = significantSources; // Store which sources qualify for rendering
-				tile.fish = Math.max(.125,Math.min(.25,tile.upstream.length/20))+Math.min(.75,(tile.upstream.length/(tile.downstream.length+1))/45);
+				if (hasSignificantInflow && (alreadyRiver||(tile.downstream && tile.downstream.length > 0))) {
+					tile.river = true;
+					tile.riverSources = significantSources; // Store which sources qualify for rendering
+					tile.fish = Math.max(.125,Math.min(.25,tile.upstream.length/20))+Math.min(.75,(tile.upstream.length/(tile.downstream.length+1))/45);
+				}
 			}
-		} else {
 			if (tile.elevation <= 0.8 && tile.elevation >= 0 && tile.lake === undefined && tile.temperature > 0.2) {
 				tile.wheat = Math.round(100 * Math.max(0, 1 - 2 * (Math.abs(tile.temperature - .3) + Math.abs(tile.moisture - .3))));
 			}
@@ -523,6 +524,9 @@ function generatePlanetBiomesResources(tiles, planetRadius, action) {
 	}
 
 	const percentiles = {
+		corn: 50,
+		rice: 60,
+		wheat: 30,
 		iron: 90,
 		oil: 95,
 		bauxite: 98,
@@ -900,10 +904,10 @@ function consolidateExtremaGroups(extremaTiles) {
 		}
 
 		// Mark only the best tile in the group
-		bestTile.error = 'local max';
+		bestTile.joint = true;
 
 		// Debug: Log body assignment
-		console.log(`Marked extrema tile ${bestTile.id}: elevation=${bestTile.elevation}, shore=${bestTile.shore}, body=${bestTile.body ? bestTile.body.id : 'no body'}`);
+		//console.log(`Marked extrema tile ${bestTile.id}: elevation=${bestTile.elevation}, shore=${bestTile.shore}, body=${bestTile.body ? bestTile.body.id : 'no body'}`);
 	}
 }
 

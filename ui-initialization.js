@@ -12,8 +12,8 @@ $(document).ready(function onDocumentReady() {
 	renderer.setClearColor(0x000033, 1); // Dark blue background instead of black
 
 	// Add multiple debug lights for better illumination
-	var ambientLight = new THREE.AmbientLight(0xFFFFFF, 0.8); // Bright ambient light
-	scene.add(ambientLight);
+	window.ambientLight = new THREE.AmbientLight(0xFFFFFF, 0.8); // Bright ambient light
+	scene.add(window.ambientLight);
 
 	// Main directional light
 	directionalLight = new THREE.DirectionalLight(0xFFFFFF, 0.6);
@@ -535,11 +535,21 @@ function showHideSunlight(show) {
 			window.orbitingSunLight.position.set(2000, 1000, 1000);
 			scene.add(window.orbitingSunLight);
 		}
+		// Make ambient light much dimmer and blue-tinted when sun is on
+		if (window.ambientLight) {
+			window.ambientLight.color.setHex(0x4488BB); // Blue tint
+			window.ambientLight.intensity = 0.2; // Much dimmer
+		}
 	} else {
 		// Remove orbiting sun light
 		if (window.orbitingSunLight) {
 			scene.remove(window.orbitingSunLight);
 			window.orbitingSunLight = null;
+		}
+		// Restore ambient light to normal when sun is off
+		if (window.ambientLight) {
+			window.ambientLight.color.setHex(0xFFFFFF); // White
+			window.ambientLight.intensity = 0.8; // Bright
 		}
 	}
 }

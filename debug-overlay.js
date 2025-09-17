@@ -156,6 +156,34 @@ var debugOverlay = {
             var netShore = tile.reverseShore - tile.shore;
             info.push('<div><span style="color: #888;">Net Shore:</span> <span style="color: #fff;">' + netShore + '</span></div>');
         }
+
+        // Resource values
+        info.push('<div style="color: #ff88aa; font-weight: bold; margin-top: 10px; margin-bottom: 5px;">RESOURCES</div>');
+        if (typeof tile.corn !== 'undefined') {
+            info.push('<div><span style="color: #888;">Corn:</span> <span style="color: #fff;">' + (tile.corn ? tile.corn.toFixed(3) : '0.000') + '</span></div>');
+        } else {
+            info.push('<div><span style="color: #888;">Corn:</span> <span style="color: #ff4444;">undefined</span></div>');
+        }
+        if (typeof tile.wheat !== 'undefined') {
+            info.push('<div><span style="color: #888;">Wheat:</span> <span style="color: #fff;">' + (tile.wheat ? tile.wheat.toFixed(3) : '0.000') + '</span></div>');
+        } else {
+            info.push('<div><span style="color: #888;">Wheat:</span> <span style="color: #ff4444;">undefined</span></div>');
+        }
+        if (typeof tile.rice !== 'undefined') {
+            info.push('<div><span style="color: #888;">Rice:</span> <span style="color: #fff;">' + (tile.rice ? tile.rice.toFixed(3) : '0.000') + '</span></div>');
+        } else {
+            info.push('<div><span style="color: #888;">Rice:</span> <span style="color: #ff4444;">undefined</span></div>');
+        }
+        if (typeof tile.fish !== 'undefined') {
+            info.push('<div><span style="color: #888;">Fish:</span> <span style="color: #fff;">' + (tile.fish ? tile.fish.toFixed(3) : '0.000') + '</span></div>');
+        } else {
+            info.push('<div><span style="color: #888;">Fish:</span> <span style="color: #ff4444;">undefined</span></div>');
+        }
+        if (typeof tile.calories !== 'undefined') {
+            info.push('<div><span style="color: #888;">Calories:</span> <span style="color: #fff;">' + (tile.calories ? tile.calories.toFixed(3) : '0.000') + '</span></div>');
+        } else {
+            info.push('<div><span style="color: #888;">Calories:</span> <span style="color: #ff4444;">undefined</span></div>');
+        }
         
         this.tileInfoOverlay.innerHTML = info.join('');
         this.tileInfoOverlay.style.display = 'block';
