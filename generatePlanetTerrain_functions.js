@@ -233,6 +233,11 @@ function groupBodies(planet) {
 		  bodyTile.body = newBody;
 		  newBody.tiles.push(bodyTile);
 		}
+
+		// Debug body assignment for first few bodies
+		if (bodyTypeCount <= 3) {
+			console.log(`Created body ${bodyId} with ${bodyTiles.length} tiles (${isLand ? 'land' : 'water'})`);
+		}
 	  }
 	}
 
@@ -376,6 +381,12 @@ function erodeElevation(planet, action) {
 	ctime("groupBodies");
 	groupBodies(planet);
 	ctimeEnd("groupBodies");
+
+	// Calculate shore distances immediately after body grouping
+	ctime("Shore Distances");
+	calculateShoreDistances(planet.topology.tiles);
+	calculateReverseShoreDistances(planet.topology.tiles);
+	ctimeEnd("Shore Distances");
 
 	ctime("randomLocalMax");
 	randomLocalMax();

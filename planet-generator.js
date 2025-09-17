@@ -190,9 +190,7 @@ function generatePlanetAsynchronous() {
         }, 0, "Building pathfinding graph")
 		.executeSubaction(function (action) {
 			// Pre-calculate heavy overlays in background
-			var backgroundAction = new SteppedAction(updateBackgroundProgressUI);
-			calculateBackgroundOverlays(planet, backgroundAction);
-			backgroundAction.execute();
+			calculateBackgroundOverlays(planet, action);
 		}, 0, "Computing overlay data")
 		.finalize(function (action) {
 			activeAction = null;
@@ -929,7 +927,21 @@ function updateBackgroundProgressUI(action) {
 	var progress = action.getProgress();
 	ui.backgroundProgressBar.css("width", (progress * 100).toFixed(0) + "%");
 	ui.backgroundProgressBarLabel.text((progress * 100).toFixed(0) + "%");
-	ui.backgroundProgressActionLabel.text(action.getCurrentActionName());
+
+	// Enhanced progress text with details
+	var actionName = action.getCurrentActionName();
+	var detailText = actionName;
+
+	// Add specific details for path density calculation
+	if (actionName === "Computing path density" && action.pathDensityState) {
+		var state = action.pathDensityState;
+		detailText = `Computing path density: Body ${state.bodyIndex + 1}/${state.totalBodies}`;
+		if (state.totalPairs > 0) {
+			detailText += ` (${state.currentPairIndex}/${state.totalPairs} paths)`;
+		}
+	}
+
+	ui.backgroundProgressActionLabel.text(detailText);
 }
 
 // Calculate heavy overlays in background
@@ -937,7 +949,7 @@ function calculateBackgroundOverlays(planet, action) {
 	action
 		.executeSubaction(function (action) {
 			ctime('Background: Path Density');
-			calculatePathDensity();
+			calculatePathDensityIncremental(action);
 			ctimeEnd('Background: Path Density');
 		}, 50, "Computing path density")
 		.executeSubaction(function (action) {

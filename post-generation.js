@@ -801,6 +801,110 @@ function calculateShoreDistances(tiles) {
 			break;
 		}
 	}
+
+	// After shore calculation, find local extrema and mark them
+	markLocalExtrema(tiles);
+}
+
+// Mark tiles that are local extrema of shore values
+function markLocalExtrema(tiles) {
+	// First pass: identify potential local extrema
+	var potentialExtrema = [];
+
+	for (var i = 0; i < tiles.length; i++) {
+		var tile = tiles[i];
+		var neighbors = tile.tiles || [];
+
+		if (neighbors.length === 0) continue;
+
+		var isLocalMax = true;
+		var isLocalMin = true;
+
+		// Check if this tile is a local extremum compared to its neighbors
+		for (var j = 0; j < neighbors.length; j++) {
+			var neighbor = neighbors[j];
+
+			// For land tiles (positive shore), look for local maxima
+			// For ocean tiles (negative shore), look for local minima (most negative)
+			if (tile.elevation >= 0) {
+				// Land tile: check if it's a local maximum
+				if (neighbor.shore > tile.shore) {
+					isLocalMax = false;
+				}
+			} else {
+				// Ocean tile: check if it's a local minimum (most negative)
+				if (neighbor.shore < tile.shore) {
+					isLocalMin = false;
+				}
+			}
+		}
+
+		// Collect potential extrema - only those close to shore (|shore| <= 4) for significance
+		if ((tile.elevation >= 0 && isLocalMax && tile.shore > 1 && tile.shore <= 4) ||
+		    (tile.elevation < 0 && isLocalMin && tile.shore < -1 && tile.shore >= -4)) {
+			potentialExtrema.push(tile);
+		}
+	}
+
+	// Second pass: consolidate contiguous groups of extrema
+	consolidateExtremaGroups(potentialExtrema);
+}
+
+// Consolidate contiguous groups of local extrema, keeping only the most extreme tile
+function consolidateExtremaGroups(extremaTiles) {
+	var visited = new Set();
+
+	for (var i = 0; i < extremaTiles.length; i++) {
+		var startTile = extremaTiles[i];
+		if (visited.has(startTile.id)) continue;
+
+		// Find all connected extrema tiles
+		var group = [];
+		var queue = [startTile];
+		var groupVisited = new Set([startTile.id]);
+
+		while (queue.length > 0) {
+			var currentTile = queue.shift();
+			group.push(currentTile);
+			visited.add(currentTile.id);
+
+			// Check neighbors for other extrema tiles
+			var neighbors = currentTile.tiles || [];
+			for (var j = 0; j < neighbors.length; j++) {
+				var neighbor = neighbors[j];
+
+				// If neighbor is also an extrema tile and not visited
+				if (extremaTiles.includes(neighbor) && !groupVisited.has(neighbor.id)) {
+					queue.push(neighbor);
+					groupVisited.add(neighbor.id);
+				}
+			}
+		}
+
+		// Find the most extreme tile in this group
+		var bestTile = group[0];
+		for (var j = 1; j < group.length; j++) {
+			var tile = group[j];
+
+			if (tile.elevation >= 0) {
+				// For land: highest elevation (furthest from sea level)
+				if (tile.elevation > bestTile.elevation) {
+					bestTile = tile;
+				}
+			} else {
+				// For ocean: lowest elevation (deepest)
+				if (tile.elevation < bestTile.elevation) {
+					bestTile = tile;
+				}
+			}
+		}
+
+		// Mark only the best tile in the group
+		bestTile.error = 'local max';
+
+		// Debug: Log body assignment
+		console.log(`Marked extrema tile ${bestTile.id}: elevation=${bestTile.elevation}, shore=${bestTile.shore}, body=${bestTile.body ? bestTile.body.id : 'no body'}`);
+	}
 }
 
 // Calculate reverse shore distances for each connected land/ocean body
@@ -935,10 +1039,9 @@ function runPostGeneration(planet, action) {
 			generatePlanetBiomesResources(planet.topology.tiles, 1000, action);
 		}, 1, "Generating Biomes & Resources")
 		.executeSubaction(function(action) {
-			calculateShoreDistances(planet.topology.tiles);
-			calculateReverseShoreDistances(planet.topology.tiles);
+			// Shore distances now calculated earlier in terrain generation
 			action.provideResult("Shore distances complete");
-		}, 1, "Calculating Shore Distances")
+		}, 0, "Shore Distances (already calculated)")
 		.executeSubaction(function(action) {
 
 			if (planet.topology && planet.topology.watersheds) {

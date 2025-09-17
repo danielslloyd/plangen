@@ -1685,13 +1685,20 @@ function applyGraphColoring(regions, getAdjacencies, colorProperty, regionType) 
 }
 
 // Path Density color overlay - shows density of paths between boundary tiles within land/sea bodies
-registerColorOverlay("pathDensity", "Path Density", "Shows density of paths between boundary tiles within land/sea bodies using reverseShore color scheme", function(tile) {
+registerColorOverlay("pathDensity", "Path Density", "Shows density of paths between boundary tiles within land/sea bodies using bright colors", function(tile) {
 	if (!tile.hasOwnProperty('pathDensity')) {
 		return new THREE.Color(0x888888); // Gray fallback if not pre-calculated
 	}
 
 	if (tile.pathDensity === 0) {
-		return new THREE.Color(0x888888); // Gray for tiles not used in any paths
+		// Show zero-density tiles in base terrain colors
+		if (tile.elevation >= 0) {
+			// Land: use minimum land color (bright orange)
+			return new THREE.Color(0xFF8000);  // Bright orange
+		} else {
+			// Ocean: use minimum ocean color (bright cyan)
+			return new THREE.Color(0x00FFFF);  // Bright cyan
+		}
 	}
 
 	// Use the same color scheme as reverseShore
@@ -1701,7 +1708,7 @@ registerColorOverlay("pathDensity", "Path Density", "Shows density of paths betw
 
 	if (densityValue < 0) {
 		// Ocean tiles: negative values
-		// Light blue (low density) to dark blue (high density)
+		// Bright cyan (low density) to deep blue (high density) - more vibrant
 		var allOceanDensities = planet.topology.tiles
 			.filter(t => t.elevation < 0 && t.hasOwnProperty('pathDensity'))
 			.map(t => t.pathDensity);
@@ -1711,12 +1718,12 @@ registerColorOverlay("pathDensity", "Path Density", "Shows density of paths betw
 		if (maxOceanDensity === 0) return new THREE.Color(0x888888);
 
 		var normalizedValue = tile.pathDensity / maxOceanDensity;
-		var lightBlue = new THREE.Color(0x87CEEB); // Light blue
-		var darkBlue = new THREE.Color(0x000080);  // Dark blue
-		return lightBlue.clone().lerp(darkBlue, normalizedValue);
+		var brightCyan = new THREE.Color(0x00FFFF);   // Bright cyan
+		var deepBlue = new THREE.Color(0x000080);     // Deep blue
+		return brightCyan.clone().lerp(deepBlue, normalizedValue);
 	} else {
 		// Land tiles: positive values
-		// Bright yellow (low density) to dark green (high density)
+		// Bright orange (low density) to deep red (high density) - more vibrant
 		var allLandDensities = planet.topology.tiles
 			.filter(t => t.elevation >= 0 && t.hasOwnProperty('pathDensity'))
 			.map(t => t.pathDensity);
@@ -1726,131 +1733,150 @@ registerColorOverlay("pathDensity", "Path Density", "Shows density of paths betw
 		if (maxLandDensity === 0) return new THREE.Color(0x888888);
 
 		var normalizedValue = tile.pathDensity / maxLandDensity;
-		var brightYellow = new THREE.Color(0xFFFF00); // Bright yellow
-		var darkGreen = new THREE.Color(0x006400);    // Dark green
-		return brightYellow.clone().lerp(darkGreen, normalizedValue);
+		var brightOrange = new THREE.Color(0xFF8000);  // Bright orange
+		var deepRed = new THREE.Color(0x800000);       // Deep red
+		return brightOrange.clone().lerp(deepRed, normalizedValue);
 	}
 }, "basic", "precompute");
 
-// Function to calculate path density for all tiles
-function calculatePathDensity() {
-	ctime("calculatePathDensity");
+// Function to calculate path density for all tiles - incremental version
+function calculatePathDensityIncremental(action) {
+	// Only prevent if starting fresh calculation (no existing state)
+	if (window.pathDensityCalculating && !action.pathDensityState) {
+		console.log("Path density calculation already in progress, skipping");
+		return;
+	}
+	if (!action.pathDensityState) {
+		window.pathDensityCalculating = true;
+	}
 
-	// Initialize path density for all tiles
+	// Only show debug info on first run
+	if (!action.pathDensityState) {
+		ctime("calculatePathDensity");
+
+		console.log("=== Path Density Calculation Starting ===");
+		console.log(`Total tiles: ${planet.topology.tiles.length}`);
+		console.log(`Total bodies: ${planet.topology.bodies.length}`);
+
+		// Count extrema tiles for debugging
+		var extremaCount = 0;
+		for (var i = 0; i < planet.topology.tiles.length; i++) {
+			if (planet.topology.tiles[i].error === 'local max') {
+				extremaCount++;
+			}
+		}
+		console.log(`Found ${extremaCount} local extrema tiles`);
+
+		// Initialize path density for all tiles
+		for (var i = 0; i < planet.topology.tiles.length; i++) {
+			planet.topology.tiles[i].pathDensity = 0;
+		}
+	}
+
+	// Collect all land extrema globally (across all land bodies)
+	var allLandExtrema = [];
+	if (!action.pathDensityState) {
+		for (var i = 0; i < planet.topology.tiles.length; i++) {
+			var tile = planet.topology.tiles[i];
+			if (tile.error === 'local max' && tile.elevation >= 0) {
+				allLandExtrema.push(tile);
+			}
+		}
+
+		// Limit to prevent computational explosion
+		if (allLandExtrema.length > 50) {
+			var step = Math.floor(allLandExtrema.length / 50);
+			var sampledExtrema = [];
+			for (var i = 0; i < allLandExtrema.length; i += step) {
+				sampledExtrema.push(allLandExtrema[i]);
+			}
+			allLandExtrema = sampledExtrema;
+		}
+
+		console.log(`Found ${allLandExtrema.length} land extrema for global trade network`);
+	}
+
+	// State variables for incremental processing
+	if (!action.pathDensityState) {
+		action.pathDensityState = {
+			currentPairIndex: 0,
+			landExtrema: allLandExtrema,
+			totalPairs: (allLandExtrema.length * (allLandExtrema.length - 1)) / 2,
+			processedPairs: 0
+		};
+	}
+
+	var state = action.pathDensityState;
+	var batchSize = 5; // Smaller batch size for global pathfinding
+
+	// Process all land-to-land pairs globally
+	var processedInBatch = 0;
+	for (var i = 0; i < state.landExtrema.length && processedInBatch < batchSize; i++) {
+		for (var j = i + 1; j < state.landExtrema.length && processedInBatch < batchSize; j++) {
+			// Skip pairs we've already processed
+			var pairIndex = i * (state.landExtrema.length - 1) - (i * (i - 1)) / 2 + (j - i - 1);
+			if (pairIndex < state.currentPairIndex) continue;
+
+			var startTile = state.landExtrema[i];
+			var endTile = state.landExtrema[j];
+
+			// Use A* pathfinding for global land-to-land routes
+			var path = aStarPathfinding(startTile, endTile, planet);
+			if (path && path.length > 0) {
+				// Count usage for each tile in the path
+				for (var k = 0; k < path.length; k++) {
+					path[k].pathDensity += 1;
+				}
+			}
+
+			state.currentPairIndex++;
+			state.processedPairs++;
+			processedInBatch++;
+
+			// Progress feedback
+			if (state.processedPairs % 50 === 0) {
+				console.log(`Computed ${state.processedPairs}/${state.totalPairs} global trade routes`);
+			}
+		}
+	}
+
+	// Check if all pairs are complete
+	if (state.currentPairIndex >= state.totalPairs) {
+		// All land-to-land paths computed
+		console.log("Global land trade network complete");
+	} else {
+		// Yield control after each batch
+		var overallProgress = state.currentPairIndex / state.totalPairs;
+		action.loop(overallProgress);
+		return; // Exit to yield control
+	}
+
+	// Final debug summary
+	var totalDensity = 0;
+	var nonZeroTiles = 0;
 	for (var i = 0; i < planet.topology.tiles.length; i++) {
-		planet.topology.tiles[i].pathDensity = 0;
-	}
-
-	// Process each body separately
-	for (var bodyIndex = 0; bodyIndex < planet.topology.bodies.length; bodyIndex++) {
-		var body = planet.topology.bodies[bodyIndex];
-		if (!body.tiles || body.tiles.length === 0) continue;
-
-		// Determine if this is a land or sea body
-		var isLandBody = body.id > 0;
-
-		// Find boundary tiles - those without neighbors having higher/lower reverseShore values
-		var boundaryTiles = [];
-		for (var i = 0; i < body.tiles.length; i++) {
-			var tile = body.tiles[i];
-			if (!tile.hasOwnProperty('reverseShore')) continue;
-
-			var isBoundary = true;
-			var neighbors = tile.tiles || [];
-
-			for (var j = 0; j < neighbors.length; j++) {
-				var neighbor = neighbors[j];
-				if (neighbor.body === body && neighbor.hasOwnProperty('reverseShore')) {
-					// Check if neighbor has higher or lower reverseShore value
-					// For land bodies, boundary tiles have no neighbors with higher reverseShore
-					// For sea bodies, boundary tiles have no neighbors with lower reverseShore
-					if (isLandBody && neighbor.reverseShore > tile.reverseShore) {
-						isBoundary = false;
-						break;
-					} else if (!isLandBody && neighbor.reverseShore < tile.reverseShore) {
-						isBoundary = false;
-						break;
-					}
-				}
-			}
-
-			if (isBoundary) {
-				boundaryTiles.push(tile);
-			}
-		}
-
-		// Skip if no boundary tiles found
-		if (boundaryTiles.length < 2) continue;
-
-		// Create unweighted graph for this body
-		var bodyGraph = createUnweightedBodyGraph(body);
-
-		// Find paths between all pairs of boundary tiles
-		for (var i = 0; i < boundaryTiles.length; i++) {
-			for (var j = i + 1; j < boundaryTiles.length; j++) {
-				var startTile = boundaryTiles[i];
-				var endTile = boundaryTiles[j];
-
-				var path = findUnweightedPath(startTile, endTile, bodyGraph);
-				if (path && path.length > 0) {
-					// Count usage for each tile in the path
-					for (var k = 0; k < path.length; k++) {
-						path[k].pathDensity += 1;
-					}
-				}
-			}
+		if (planet.topology.tiles[i].pathDensity > 0) {
+			totalDensity += planet.topology.tiles[i].pathDensity;
+			nonZeroTiles++;
 		}
 	}
 
+	console.log("=== Path Density Calculation Complete ===");
+	console.log(`Total density: ${totalDensity}`);
+	console.log(`Non-zero tiles: ${nonZeroTiles} out of ${planet.topology.tiles.length}`);
+	console.log(`Max density: ${Math.max(...planet.topology.tiles.map(t => t.pathDensity || 0))}`);
+
+	// Cleanup and finish
+	delete action.pathDensityState;
+	window.pathDensityCalculating = false;
 	ctimeEnd("calculatePathDensity");
 }
 
-// Create an unweighted graph for tiles within a body
-function createUnweightedBodyGraph(body) {
-	var graph = {};
-	var bodyTileSet = new Set(body.tiles);
-
-	for (var i = 0; i < body.tiles.length; i++) {
-		var tile = body.tiles[i];
-		graph[tile.id] = [];
-
-		var neighbors = tile.tiles || [];
-		for (var j = 0; j < neighbors.length; j++) {
-			var neighbor = neighbors[j];
-			if (bodyTileSet.has(neighbor)) {
-				graph[tile.id].push(neighbor);
-			}
-		}
-	}
-
-	return graph;
-}
-
-// Find unweighted path using BFS
-function findUnweightedPath(startTile, endTile, graph) {
-	if (startTile.id === endTile.id) return [startTile];
-
-	var queue = [[startTile]];
-	var visited = new Set([startTile.id]);
-
-	while (queue.length > 0) {
-		var path = queue.shift();
-		var currentTile = path[path.length - 1];
-
-		var neighbors = graph[currentTile.id] || [];
-		for (var i = 0; i < neighbors.length; i++) {
-			var neighbor = neighbors[i];
-
-			if (neighbor.id === endTile.id) {
-				return path.concat([neighbor]);
-			}
-
-			if (!visited.has(neighbor.id)) {
-				visited.add(neighbor.id);
-				queue.push(path.concat([neighbor]));
-			}
-		}
-	}
-
-	return null; // No path found
+// Legacy function for backward compatibility
+function calculatePathDensity() {
+	// Create a minimal action object for the incremental version
+	var mockAction = {
+		loop: function() {} // No-op for synchronous version
+	};
+	calculatePathDensityIncremental(mockAction);
 }
