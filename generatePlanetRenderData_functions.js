@@ -1758,14 +1758,14 @@ function calculatePathDensityIncremental(action) {
 		console.log(`Total tiles: ${planet.topology.tiles.length}`);
 		console.log(`Total bodies: ${planet.topology.bodies.length}`);
 
-		// Count extrema tiles for debugging
-		var extremaCount = 0;
+		// Count city tiles for debugging
+		var cityCount = 0;
 		for (var i = 0; i < planet.topology.tiles.length; i++) {
-			if (planet.topology.tiles[i].joint === true) {
-				extremaCount++;
+			if (planet.topology.tiles[i].isCity === true) {
+				cityCount++;
 			}
 		}
-		console.log(`Found ${extremaCount} local extrema tiles`);
+		console.log(`Found ${cityCount} city locations`);
 
 		// Initialize path density for all tiles
 		for (var i = 0; i < planet.topology.tiles.length; i++) {
@@ -1773,35 +1773,35 @@ function calculatePathDensityIncremental(action) {
 		}
 	}
 
-	// Collect all land extrema globally (across all land bodies)
-	var allLandExtrema = [];
+	// Collect all city locations globally (land cities only)
+	var allCities = [];
 	if (!action.pathDensityState) {
 		for (var i = 0; i < planet.topology.tiles.length; i++) {
 			var tile = planet.topology.tiles[i];
-			if (tile.joint === true && tile.elevation >= 0) {
-				allLandExtrema.push(tile);
+			if (tile.isCity === true && tile.elevation >= 0) {
+				allCities.push(tile);
 			}
 		}
 
 		// Limit to prevent computational explosion
-		if (allLandExtrema.length > 50) {
-			var step = Math.floor(allLandExtrema.length / 50);
-			var sampledExtrema = [];
-			for (var i = 0; i < allLandExtrema.length; i += step) {
-				sampledExtrema.push(allLandExtrema[i]);
+		if (allCities.length > 50) {
+			var step = Math.floor(allCities.length / 50);
+			var sampledCities = [];
+			for (var i = 0; i < allCities.length; i += step) {
+				sampledCities.push(allCities[i]);
 			}
-			allLandExtrema = sampledExtrema;
+			allCities = sampledCities;
 		}
 
-		console.log(`Found ${allLandExtrema.length} land extrema for global trade network`);
+		console.log(`Found ${allCities.length} land cities for global trade network`);
 	}
 
 	// State variables for incremental processing
 	if (!action.pathDensityState) {
 		action.pathDensityState = {
 			currentPairIndex: 0,
-			landExtrema: allLandExtrema,
-			totalPairs: (allLandExtrema.length * (allLandExtrema.length - 1)) / 2,
+			cities: allCities,
+			totalPairs: (allCities.length * (allCities.length - 1)) / 2,
 			processedPairs: 0
 		};
 	}
@@ -1809,18 +1809,18 @@ function calculatePathDensityIncremental(action) {
 	var state = action.pathDensityState;
 	var batchSize = 5; // Smaller batch size for global pathfinding
 
-	// Process all land-to-land pairs globally
+	// Process all city-to-city pairs globally
 	var processedInBatch = 0;
-	for (var i = 0; i < state.landExtrema.length && processedInBatch < batchSize; i++) {
-		for (var j = i + 1; j < state.landExtrema.length && processedInBatch < batchSize; j++) {
+	for (var i = 0; i < state.cities.length && processedInBatch < batchSize; i++) {
+		for (var j = i + 1; j < state.cities.length && processedInBatch < batchSize; j++) {
 			// Skip pairs we've already processed
-			var pairIndex = i * (state.landExtrema.length - 1) - (i * (i - 1)) / 2 + (j - i - 1);
+			var pairIndex = i * (state.cities.length - 1) - (i * (i - 1)) / 2 + (j - i - 1);
 			if (pairIndex < state.currentPairIndex) continue;
 
-			var startTile = state.landExtrema[i];
-			var endTile = state.landExtrema[j];
+			var startTile = state.cities[i];
+			var endTile = state.cities[j];
 
-			// Use A* pathfinding for global land-to-land routes
+			// Use A* pathfinding for global city-to-city routes
 			var path = aStarPathfinding(startTile, endTile, planet);
 			if (path && path.length > 0) {
 				// Count usage for each tile in the path
@@ -1835,15 +1835,15 @@ function calculatePathDensityIncremental(action) {
 
 			// Progress feedback
 			if (state.processedPairs % 50 === 0) {
-				console.log(`Computed ${state.processedPairs}/${state.totalPairs} global trade routes`);
+				console.log(`Computed ${state.processedPairs}/${state.totalPairs} global city trade routes`);
 			}
 		}
 	}
 
 	// Check if all pairs are complete
 	if (state.currentPairIndex >= state.totalPairs) {
-		// All land-to-land paths computed
-		console.log("Global land trade network complete");
+		// All city-to-city paths computed
+		console.log("Global city trade network complete");
 	} else {
 		// Yield control after each batch
 		var overallProgress = state.currentPairIndex / state.totalPairs;
@@ -1910,6 +1910,13 @@ function calculateFishColor(tile) {
 	return terrainColor.clone().lerp(magenta, fishValue);
 }
 
+function calculatePastureColor(tile) {
+	var terrainColor = calculateTerrainColor(tile);
+	var magenta = new THREE.Color(0xFF00FF);
+	var pastureValue = Math.min(1, Math.max(0, tile.pasture || 0));
+	return terrainColor.clone().lerp(magenta, pastureValue);
+}
+
 function calculateCaloriesColor(tile) {
 	// Find the maximum calories value across all tiles for normalization
 	var maxCalories = 0;
@@ -1935,4 +1942,5 @@ registerColorOverlay("corn", "Corn Resources", "Terrain colored toward magenta b
 registerColorOverlay("wheat", "Wheat Resources", "Terrain colored toward magenta based on wheat resource values", calculateWheatColor, "lambert");
 registerColorOverlay("rice", "Rice Resources", "Terrain colored toward magenta based on rice resource values", calculateRiceColor, "lambert");
 registerColorOverlay("fish", "Fish Resources", "Terrain colored toward magenta based on fish resource values", calculateFishColor, "lambert");
+registerColorOverlay("pasture", "Pasture Resources", "Terrain colored toward magenta based on pasture resource values", calculatePastureColor, "lambert");
 registerColorOverlay("calories", "Calories (Normalized)", "Terrain colored toward magenta based on normalized calories values (max = 1)", calculateCaloriesColor, "lambert");

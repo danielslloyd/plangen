@@ -516,7 +516,7 @@ function generatePlanetBiomesResources(tiles, planetRadius, action) {
 				Math.exp(-0.2 * distanceToPlateBoundary) *
 				Math.exp(-0.002 * tile.rain);
 		}
-		tile.calories = Math.max(0, tile.wheat * 7, tile.corn * 15, tile.rice * 11, tile.pasture*1000,tile.fish*1300);
+		tile.calories = Math.max(0, tile.wheat * 7, tile.corn * 15, tile.rice * 11, tile.pasture*200, tile.fish*1300);
 	}
 
 	for (t of tiles.filter(t => t.upstream)) {
@@ -527,6 +527,7 @@ function generatePlanetBiomesResources(tiles, planetRadius, action) {
 		corn: 50,
 		rice: 60,
 		wheat: 30,
+		pasture: 15,
 		iron: 90,
 		oil: 95,
 		bauxite: 98,
@@ -808,6 +809,7 @@ function calculateShoreDistances(tiles) {
 
 	// After shore calculation, find local extrema and mark them
 	markLocalExtrema(tiles);
+	selectTopCityLocations(tiles);
 }
 
 // Mark tiles that are local extrema of shore values
@@ -852,6 +854,38 @@ function markLocalExtrema(tiles) {
 
 	// Second pass: consolidate contiguous groups of extrema
 	consolidateExtremaGroups(potentialExtrema);
+}
+
+// Select top city locations based on upstream calories
+function selectTopCityLocations(tiles) {
+	// Find all shore tiles (shore = 1)
+	var shoreTiles = tiles.filter(tile => tile.shore === 1);
+
+	// Calculate upstream calories for each shore tile
+	for (var i = 0; i < shoreTiles.length; i++) {
+		var tile = shoreTiles[i];
+		tile.upstreamCalories = tile.upstreamCalories || 0; // Use existing or default to 0
+	}
+
+	// Sort by upstream calories (descending)
+	shoreTiles.sort((a, b) => b.upstreamCalories - a.upstreamCalories);
+
+	// Take top 2% of shore tiles
+	var topCount = Math.max(1, Math.floor(shoreTiles.length * 0.02));
+	var topCities = shoreTiles.slice(0, topCount);
+
+	// Clear previous city markers
+	for (var i = 0; i < tiles.length; i++) {
+		tiles[i].isCity = false;
+	}
+
+	// Mark top cities
+	for (var i = 0; i < topCities.length; i++) {
+		topCities[i].isCity = true;
+	}
+
+	console.log(`Selected ${topCities.length} top city locations out of ${shoreTiles.length} shore tiles`);
+	return topCities;
 }
 
 // Consolidate contiguous groups of local extrema, keeping only the most extreme tile

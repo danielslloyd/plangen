@@ -184,6 +184,12 @@ var debugOverlay = {
         } else {
             info.push('<div><span style="color: #888;">Calories:</span> <span style="color: #ff4444;">undefined</span></div>');
         }
+        if (typeof tile.upstreamCalories !== 'undefined') {
+            info.push('<div><span style="color: #888;">Upstream Calories:</span> <span style="color: #fff;">' + (tile.upstreamCalories ? tile.upstreamCalories.toFixed(3) : '0.000') + '</span></div>');
+        }
+        if (tile.isCity === true) {
+            info.push('<div><span style="color: #888;">City Location:</span> <span style="color: #00ff00; font-weight: bold;">YES</span></div>');
+        }
         
         this.tileInfoOverlay.innerHTML = info.join('');
         this.tileInfoOverlay.style.display = 'block';
