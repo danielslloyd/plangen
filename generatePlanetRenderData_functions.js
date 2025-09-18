@@ -1249,11 +1249,11 @@ registerColorOverlay("plates", "Tectonic Plates", "Tectonic plate boundaries and
 registerColorOverlay("simple", "Simple Land/Water", "Basic land (green) vs water (blue) visualization", function(tile) {
 	return tile.elevation <= 0 ? new THREE.Color(0x0066CC) : new THREE.Color(0x00AA44);
 }, "basic");
-
+/* 
 registerColorOverlay("heat", "Heat Map", "Red-hot visualization based on elevation and temperature", function(tile) {
 	var intensity = Math.max(0, Math.min(1, (tile.elevation || 0) + (tile.temperature || 0) * 0.5));
 	return new THREE.Color(intensity, 0, 0);
-}, "basic");
+}, "basic"); */
 
 // Watersheds color overlay - shows drainage basins in different colors
 registerColorOverlay("watersheds", "Watersheds", "Shows drainage basins with distinct colors", function(tile) {
@@ -1686,6 +1686,11 @@ function applyGraphColoring(regions, getAdjacencies, colorProperty, regionType) 
 
 // Path Density color overlay - shows density of paths between boundary tiles within land/sea bodies
 registerColorOverlay("pathDensity", "Path Density", "Shows density of paths between boundary tiles within land/sea bodies using bright colors", function(tile) {
+	// Check if path density calculation is enabled
+	if (typeof enablePathDensityCalculation !== 'undefined' && !enablePathDensityCalculation) {
+		return new THREE.Color(0x666666); // Dark gray when disabled
+	}
+
 	if (!tile.hasOwnProperty('pathDensity')) {
 		return new THREE.Color(0x888888); // Gray fallback if not pre-calculated
 	}
@@ -1937,6 +1942,26 @@ function calculateCaloriesColor(tile) {
 	return terrainColor.clone().lerp(magenta, normalizedCalories);
 }
 
+function calculateUpstreamCaloriesColor(tile) {
+	// Find the maximum city priority score across all tiles for normalization
+	var maxCityPriorityScore = 0;
+	for (var i = 0; i < planet.topology.tiles.length; i++) {
+		var tilePriorityScore = planet.topology.tiles[i].cityPriorityScore || 0;
+		if (tilePriorityScore > maxCityPriorityScore) {
+			maxCityPriorityScore = tilePriorityScore;
+		}
+	}
+
+	// Normalize the current tile's city priority score (0-1)
+	var normalizedPriorityScore = maxCityPriorityScore > 0 ? (tile.cityPriorityScore || 0) / maxCityPriorityScore : 0;
+	normalizedPriorityScore = Math.min(1, Math.max(0, normalizedPriorityScore));
+
+	// Lerp terrain color toward magenta based on normalized city priority score
+	var terrainColor = calculateTerrainColor(tile);
+	var magenta = new THREE.Color(0xFF00FF);
+	return terrainColor.clone().lerp(magenta, normalizedPriorityScore);
+}
+
 // Register resource overlays
 registerColorOverlay("corn", "Corn Resources", "Terrain colored toward magenta based on corn resource values", calculateCornColor, "lambert");
 registerColorOverlay("wheat", "Wheat Resources", "Terrain colored toward magenta based on wheat resource values", calculateWheatColor, "lambert");
@@ -1944,3 +1969,131 @@ registerColorOverlay("rice", "Rice Resources", "Terrain colored toward magenta b
 registerColorOverlay("fish", "Fish Resources", "Terrain colored toward magenta based on fish resource values", calculateFishColor, "lambert");
 registerColorOverlay("pasture", "Pasture Resources", "Terrain colored toward magenta based on pasture resource values", calculatePastureColor, "lambert");
 registerColorOverlay("calories", "Calories (Normalized)", "Terrain colored toward magenta based on normalized calories values (max = 1)", calculateCaloriesColor, "lambert");
+registerColorOverlay("upstreamCalories", "City Priority Score", "Terrain colored toward magenta based on city priority score (calorie flux + bonuses)", calculateUpstreamCaloriesColor, "lambert");
+
+// ============================================================================
+// GLOBAL STRIPE SYSTEM FOR RESOURCES
+// ============================================================================
+
+// Configurable stripe system for displaying resource overlays with horizontal bands
+var stripeConfig = {
+	coverage: 0.5,        // 50% of tile area covered by stripes (0.0 to 1.0)
+	stripeCount: 7,       // Number of stripes per average tile
+	colors: {
+		oil: '#000000',   // Black stripes for oil
+		gold: '#FFD700',  // Gold stripes for gold
+		iron: '#8B4513',  // Brown stripes for iron
+		coal: '#2F2F2F',  // Dark gray stripes for coal
+		copper: '#B87333', // Copper color stripes
+		silver: '#C0C0C0', // Silver stripes
+		uranium: '#00FF00' // Green stripes for uranium
+	}
+};
+
+// Convert Cartesian coordinates to spherical coordinates
+function cartesianToSpherical(position) {
+	var r = position.length();
+	var theta = Math.atan2(position.y, position.x); // longitude (-π to π)
+	var phi = Math.acos(Math.max(-1, Math.min(1, position.z / r))); // latitude (0 to π), clamped for safety
+	return { r: r, theta: theta, phi: phi };
+}
+
+// Calculate if a position is within a stripe based on global coordinates
+function isPositionInStripe(position, stripeConfig) {
+	var spherical = cartesianToSpherical(position);
+
+	// Use latitude (phi) for horizontal stripes around the planet
+	// phi ranges from 0 (north pole) to π (south pole)
+	var normalizedLatitude = spherical.phi / Math.PI; // 0 to 1 from north to south
+
+	// Calculate stripe boundaries
+	// Each stripe covers (coverage / stripeCount) of the total latitude range
+	var stripeWidth = stripeConfig.coverage / stripeConfig.stripeCount;
+	var totalStripedArea = stripeConfig.coverage;
+	var nonStripedArea = 1.0 - totalStripedArea;
+	var stripeStart = nonStripedArea / 2.0; // Center the striped area
+
+	// Check if we're within the overall striped region
+	if (normalizedLatitude < stripeStart || normalizedLatitude > (stripeStart + totalStripedArea)) {
+		return false;
+	}
+
+	// Calculate position within the striped area
+	var positionInStripedArea = (normalizedLatitude - stripeStart) / totalStripedArea;
+
+	// Determine which stripe band we're in
+	var scaledPosition = positionInStripedArea * stripeConfig.stripeCount;
+	var stripeIndex = Math.floor(scaledPosition);
+
+	// Alternate between stripe and non-stripe bands
+	return (stripeIndex % 2) === 0;
+}
+
+// Generic resource solid color calculation function
+function calculateResourceStripesColor(tile, resourceType) {
+	var resourceValue = tile[resourceType] || 0;
+
+	// Only show resource color if the resource is present
+	if (resourceValue <= 0) {
+		return calculateTerrainColor(tile);
+	}
+
+	// Return solid color for this resource type
+	var resourceColor = stripeConfig.colors[resourceType] || '#FF00FF'; // Fallback to magenta
+	return new THREE.Color(resourceColor);
+}
+
+// Specific resource stripe functions
+function calculateOilStripesColor(tile) {
+	return calculateResourceStripesColor(tile, 'oil');
+}
+
+function calculateGoldStripesColor(tile) {
+	return calculateResourceStripesColor(tile, 'gold');
+}
+
+function calculateIronStripesColor(tile) {
+	return calculateResourceStripesColor(tile, 'iron');
+}
+
+function calculateCoalStripesColor(tile) {
+	return calculateResourceStripesColor(tile, 'coal');
+}
+
+function calculateCopperStripesColor(tile) {
+	return calculateResourceStripesColor(tile, 'copper');
+}
+
+function calculateSilverStripesColor(tile) {
+	return calculateResourceStripesColor(tile, 'silver');
+}
+
+function calculateUraniumStripesColor(tile) {
+	return calculateResourceStripesColor(tile, 'uranium');
+}
+
+// Function to update stripe configuration at runtime
+function updateStripeConfig(newConfig) {
+	if (newConfig.coverage !== undefined) stripeConfig.coverage = Math.max(0.0, Math.min(1.0, newConfig.coverage));
+	if (newConfig.stripeCount !== undefined) stripeConfig.stripeCount = Math.max(1, Math.floor(newConfig.stripeCount));
+	if (newConfig.colors !== undefined) {
+		for (var resource in newConfig.colors) {
+			stripeConfig.colors[resource] = newConfig.colors[resource];
+		}
+	}
+
+	// If planet is loaded, trigger a re-render to show changes
+	if (planet && planet.renderData && planet.renderData.surface) {
+		// The active overlay will automatically pick up the new config on next render
+		console.log("Stripe configuration updated:", stripeConfig);
+	}
+}
+
+// Register resource overlays in the color system
+registerColorOverlay("oilStripes", "Oil Resources", "Shows oil resources with solid black coloring", calculateOilStripesColor, "lambert");
+registerColorOverlay("goldStripes", "Gold Resources", "Shows gold resources with solid gold coloring", calculateGoldStripesColor, "lambert");
+registerColorOverlay("ironStripes", "Iron Resources", "Shows iron resources with solid brown coloring", calculateIronStripesColor, "lambert");
+registerColorOverlay("coalStripes", "Coal Resources", "Shows coal resources with solid dark gray coloring", calculateCoalStripesColor, "lambert");
+registerColorOverlay("copperStripes", "Copper Resources", "Shows copper resources with solid copper coloring", calculateCopperStripesColor, "lambert");
+registerColorOverlay("silverStripes", "Silver Resources", "Shows silver resources with solid silver coloring", calculateSilverStripesColor, "lambert");
+registerColorOverlay("uraniumStripes", "Uranium Resources", "Shows uranium resources with solid green coloring", calculateUraniumStripesColor, "lambert");

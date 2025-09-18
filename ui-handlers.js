@@ -201,6 +201,14 @@ function keyUpHandler(event) {
             toggleElevationExaggeration();
             event.preventDefault();
             break;
+        case KEY.L:
+            setSurfaceRenderMode("oilStripes");
+            event.preventDefault();
+            break;
+        case KEY.N:
+            setSurfaceRenderMode("upstreamCalories");
+            event.preventDefault();
+            break;
 	}
 }
 

@@ -6,28 +6,71 @@
 // WATERSHED REGION FUNCTIONS
 // ============================================================================
 
-// Clean watershed region absorption algorithm based on Ocean-Land (O-L) ratios
+// Simplified watershed region assignment using land-only BFS to joint tiles
 function performWatershedAbsorption(watersheds) {
 
-	// Step 1: Initialize regions directly from watersheds (simple structure)
-	var regions = [];
+	console.log("Starting simplified watershed region assignment...");
+
+	// Step 1: Find all joint tiles (marked as extrema in previous processing)
+	var jointTiles = [];
+	var allTiles = [];
+
+	// Collect all tiles from all watersheds
 	for (var i = 0; i < watersheds.length; i++) {
-		var watershed = watersheds[i];
-		var region = {
-			id: i + 1,
-			tiles: watershed.tiles.slice(), // Copy tile array
-			neighbors: new Set()
-		};
-
-		// Set direct reference on each tile
-		for (var j = 0; j < region.tiles.length; j++) {
-			region.tiles[j].finalRegionId = region.id;
+		for (var j = 0; j < watersheds[i].tiles.length; j++) {
+			var tile = watersheds[i].tiles[j];
+			allTiles.push(tile);
+			if (tile.joint === true) {
+				jointTiles.push(tile);
+			}
 		}
-
-		regions.push(region);
 	}
 
-	// Step 2: Calculate neighbors for each region
+	console.log(`Found ${jointTiles.length} joint tiles from ${watersheds.length} watersheds`);
+
+	// Step 2: Assign each watershed to its closest joint tile using land-only BFS from watershed mouth
+	var regions = [];
+	var regionMap = new Map(); // joint tile -> region
+
+	for (var i = 0; i < watersheds.length; i++) {
+		var watershed = watersheds[i];
+		var watershedMouth = watershed.tiles[0]; // First tile is the mouth (drains to ocean)
+
+		// Find closest joint tile using land-only BFS
+		var closestJoint = findClosestJointTile(watershedMouth, jointTiles, allTiles);
+
+		if (closestJoint) {
+			// Get or create region for this joint tile
+			var region;
+			if (regionMap.has(closestJoint)) {
+				region = regionMap.get(closestJoint);
+			} else {
+				region = {
+					id: regionMap.size + 1,
+					jointTile: closestJoint,
+					tiles: [],
+					neighbors: new Set()
+				};
+				regions.push(region);
+				regionMap.set(closestJoint, region);
+			}
+
+			// Add all watershed tiles to this region
+			for (var j = 0; j < watershed.tiles.length; j++) {
+				var tile = watershed.tiles[j];
+				tile.finalRegionId = region.id;
+				region.tiles.push(tile);
+			}
+
+			//console.log(`Assigned watershed ${watershed.id} (${watershed.tiles.length} tiles) to joint tile region ${region.id}`);
+		} else {
+			//console.warn(`Could not find joint tile for watershed ${watershed.id}`);
+		}
+	}
+
+	//console.log(`Created ${regions.length} watershed regions from ${watersheds.length} watersheds`);
+
+	// Step 3: Calculate neighbors for each region
 	function updateNeighbors() {
 		// Clear all neighbor sets
 		for (var i = 0; i < regions.length; i++) {
@@ -51,144 +94,61 @@ function performWatershedAbsorption(watersheds) {
 		}
 	}
 
-	// Step 3: Calculate net O-L for a region
-	function calculateNetOL(region) {
-		var oceanBorders = 0;
-		var landBorders = 0;
+	// Land-only BFS to find closest joint tile
+	function findClosestJointTile(startTile, jointTiles, allTiles) {
+		if (!startTile || !jointTiles || jointTiles.length === 0) {
+			return null;
+		}
 
-		for (var i = 0; i < region.tiles.length; i++) {
-			var tile = region.tiles[i];
-			if (tile.tiles) {
-				for (var j = 0; j < tile.tiles.length; j++) {
-					var neighbor = tile.tiles[j];
-					// Count external borders (to other regions or ocean)
-					if (!neighbor.finalRegionId || neighbor.finalRegionId !== region.id) {
-						if (neighbor.elevation <= 0) {
-							oceanBorders++;
-						} else {
-							landBorders++;
-						}
+		// BFS queue: [{tile, distance}]
+		var queue = [{tile: startTile, distance: 0}];
+		var visited = new Set();
+		visited.add(startTile.id || startTile.index);
+
+		while (queue.length > 0) {
+			var current = queue.shift();
+			var currentTile = current.tile;
+
+			// Check if current tile is a joint tile
+			if (currentTile.joint === true) {
+				return currentTile;
+			}
+
+			// Add land neighbors to queue
+			if (currentTile.tiles) {
+				for (var i = 0; i < currentTile.tiles.length; i++) {
+					var neighbor = currentTile.tiles[i];
+					var neighborId = neighbor.id || neighbor.index;
+
+					// Only traverse land tiles and avoid revisiting
+					if (neighbor.elevation > 0 && !visited.has(neighborId)) {
+						visited.add(neighborId);
+						queue.push({tile: neighbor, distance: current.distance + 1});
 					}
 				}
 			}
 		}
 
-		return oceanBorders - landBorders;
-	}
+		// If no joint tile found via BFS, return closest joint tile by direct distance
+		var closestJoint = null;
+		var closestDistance = Infinity;
 
-	// Step 4: Calculate combined O-L if two regions were merged
-	function calculateCombinedNetOL(region1, region2) {
-		var combinedOceanBorders = 0;
-		var combinedLandBorders = 0;
-		var combinedTileIds = new Set();
-
-		// Collect all tile IDs in combined region
-		for (var i = 0; i < region1.tiles.length; i++) {
-			combinedTileIds.add(region1.tiles[i].index || region1.tiles[i].id);
-		}
-		for (var i = 0; i < region2.tiles.length; i++) {
-			combinedTileIds.add(region2.tiles[i].index || region2.tiles[i].id);
-		}
-
-		// Count external borders for combined region
-		var allTiles = region1.tiles.concat(region2.tiles);
-		for (var i = 0; i < allTiles.length; i++) {
-			var tile = allTiles[i];
-			if (tile.tiles) {
-				for (var j = 0; j < tile.tiles.length; j++) {
-					var neighbor = tile.tiles[j];
-					var neighborTileId = neighbor.index || neighbor.id;
-					// If neighbor is not in combined region
-					if (!combinedTileIds.has(neighborTileId)) {
-						if (neighbor.elevation <= 0) {
-							combinedOceanBorders++;
-						} else {
-							combinedLandBorders++;
-						}
-					}
+		for (var i = 0; i < jointTiles.length; i++) {
+			var joint = jointTiles[i];
+			if (joint.averagePosition && startTile.averagePosition) {
+				var distance = joint.averagePosition.distanceTo(startTile.averagePosition);
+				if (distance < closestDistance) {
+					closestDistance = distance;
+					closestJoint = joint;
 				}
 			}
 		}
 
-		return combinedOceanBorders - combinedLandBorders;
+		return closestJoint;
 	}
 
-	// Step 5: Main absorption loop
-	var round = 1;
-	while (true) {
-		updateNeighbors();
-
-		// Sort regions by net O-L (highest first)
-		regions.sort(function(a, b) {
-			return calculateNetOL(b) - calculateNetOL(a);
-		});
-
-		var anyAbsorptions = false;
-
-		for (var i = 0; i < regions.length; i++) {
-			var region = regions[i];
-			var currentOL = calculateNetOL(region);
-
-			// Only regions with positive or zero O-L can absorb (coastal/ocean-favorable regions)
-			if (currentOL < 0) {
-				continue; // Skip inland regions
-			}
-
-			// Try to absorb each neighbor individually
-			var neighborsArray = Array.from(region.neighbors);
-			for (var j = 0; j < neighborsArray.length; j++) {
-				var neighborId = neighborsArray[j];
-				var neighborRegion = null;
-
-				// Find neighbor region
-				for (var k = 0; k < regions.length; k++) {
-					if (regions[k].id === neighborId) {
-						neighborRegion = regions[k];
-						break;
-					}
-				}
-
-				if (neighborRegion) {
-					var combinedOL = calculateCombinedNetOL(region, neighborRegion);
-
-					// If combined O-L is same or better, absorb
-					if (combinedOL >= currentOL) {
-
-						// Merge neighbor into region
-						for (var l = 0; l < neighborRegion.tiles.length; l++) {
-							var tile = neighborRegion.tiles[l];
-							tile.finalRegionId = region.id;
-							region.tiles.push(tile);
-						}
-
-						// Remove neighbor from regions array
-						regions.splice(regions.indexOf(neighborRegion), 1);
-						anyAbsorptions = true;
-						break; // Process this region again with new neighbors
-					}
-				}
-			}
-
-			if (anyAbsorptions) break; // Start over with updated regions
-		}
-
-		if (!anyAbsorptions) {
-			break;
-		}
-		round++;
-	}
-
-	// Step 6: Assign final sequential IDs
-	for (var i = 0; i < regions.length; i++) {
-		var newId = i + 1;
-		var oldId = regions[i].id;
-		regions[i].id = newId;
-
-		// Update all tile references
-		for (var j = 0; j < regions[i].tiles.length; j++) {
-			regions[i].tiles[j].finalRegionId = newId;
-		}
-	}
+	// Step 4: Update region neighbors and finalize
+	updateNeighbors();
 
 	// Store regions globally for coloring and labeling
 	if (typeof window !== 'undefined') {
@@ -522,6 +482,7 @@ function generatePlanetBiomesResources(tiles, planetRadius, action) {
 	for (t of tiles.filter(t => t.upstream)) {
 		t.upstreamCalories = t.upstream.reduce((s, v) => s + v.calories, 0)
 	}
+	//console.log("Upstream Calories calculated");
 
 	const percentiles = {
 		corn: 50,
@@ -603,7 +564,8 @@ function generatePlanetBiomesResources(tiles, planetRadius, action) {
 
 	// Add K-means clustering for geographical features
 	clusterLandFeatures(tiles);
-
+	selectTopCityLocations(tiles);
+	
 	action.provideResult("Biomes and resources complete");
 }
 
@@ -809,7 +771,6 @@ function calculateShoreDistances(tiles) {
 
 	// After shore calculation, find local extrema and mark them
 	markLocalExtrema(tiles);
-	selectTopCityLocations(tiles);
 }
 
 // Mark tiles that are local extrema of shore values
@@ -856,36 +817,164 @@ function markLocalExtrema(tiles) {
 	consolidateExtremaGroups(potentialExtrema);
 }
 
-// Select top city locations based on upstream calories
-function selectTopCityLocations(tiles) {
-	// Find all shore tiles (shore = 1)
-	var shoreTiles = tiles.filter(tile => tile.shore === 1);
+// Calculate calorie flux for river junctions and coastal bonus
+function calculateCalorieFlux(tiles) {
+	//console.log("Calculating calorie flux for city prioritization...");
 
-	// Calculate upstream calories for each shore tile
-	for (var i = 0; i < shoreTiles.length; i++) {
-		var tile = shoreTiles[i];
-		tile.upstreamCalories = tile.upstreamCalories || 0; // Use existing or default to 0
+	for (var i = 0; i < tiles.length; i++) {
+		var tile = tiles[i];
+		tile.cityPriorityScore = 0;
+
+		// Skip ocean tiles
+		if (tile.elevation <= 0) {
+			continue;
+		}
+
+		var tileUpstreamCalories = tile.upstreamCalories || 0;
+
+		// Check if tile is coastal (shore = 1)
+		if (tile.shore === 1) {
+			// Coastal tiles get their full upstream calories value
+			tile.cityPriorityScore = tileUpstreamCalories;
+		} else {
+			// Non-coastal tiles: tile.upstreamCalories - [highest upstreamCalories of upstream neighbors]
+			var maxNeighborUpstreamCalories = 0;
+
+			if (tile.upstream && tile.upstream.length > 0) {
+				// Find highest upstream calories among upstream neighbors
+				for (var j = 0; j < tile.upstream.length; j++) {
+					var upstreamNeighbor = tile.upstream[j];
+					var neighborUpstreamCalories = upstreamNeighbor.upstreamCalories || 0;
+					if (neighborUpstreamCalories > maxNeighborUpstreamCalories) {
+						maxNeighborUpstreamCalories = neighborUpstreamCalories;
+					}
+				}
+			}
+
+			// Calculate flux as difference (prioritizes river junctions where calories accumulate)
+			tile.cityPriorityScore = Math.max(0, tileUpstreamCalories - maxNeighborUpstreamCalories);
+		}
 	}
 
-	// Sort by upstream calories (descending)
-	shoreTiles.sort((a, b) => b.upstreamCalories - a.upstreamCalories);
+	//console.log("Calorie flux calculation complete");
+}
 
-	// Take top 2% of shore tiles
-	var topCount = Math.max(1, Math.floor(shoreTiles.length * 0.02));
-	var topCities = shoreTiles.slice(0, topCount);
+// Select top city locations based on calorie flux, preferring non-river neighbors
+function selectTopCityLocations(tiles) {
+	// Calculate calorie flux for all tiles
+	calculateCalorieFlux(tiles);
+
+	// Find all land tiles (elevation > 0) for city consideration
+	var landTiles = tiles.filter(tile => tile.elevation > 0);
+
+	// Sort by city priority score (descending)
+	landTiles.sort((a, b) => b.cityPriorityScore - a.cityPriorityScore);
 
 	// Clear previous city markers
 	for (var i = 0; i < tiles.length; i++) {
 		tiles[i].isCity = false;
 	}
 
-	// Mark top cities
-	for (var i = 0; i < topCities.length; i++) {
-		topCities[i].isCity = true;
+	var cityCount = Math.max(1, Math.floor(Math.pow(landTiles.length,0.35))); // 0.5% of land tiles
+	var selectedCities = [];
+	var candidateIndex = 0;
+
+	console.log(`Selecting ${cityCount} cities from ${landTiles.length} land tiles...`);
+
+	while (selectedCities.length < cityCount && candidateIndex < landTiles.length) {
+		var candidate = landTiles[candidateIndex];
+		candidateIndex++;
+
+		// If candidate is a river tile, try to find the best non-river neighbor
+		if (candidate.river && candidate.tiles) {
+			var bestNeighbor = null;
+			var bestNeighborScore = -1;
+
+			// Check if this is a coastal river tile
+			var isCoastalRiver = candidate.shore === 1;
+			var oceanDrainTile = null;
+
+			if (isCoastalRiver && candidate.drain && candidate.drain.elevation <= 0) {
+				oceanDrainTile = candidate.drain;
+			}
+
+			for (var j = 0; j < candidate.tiles.length; j++) {
+				var neighbor = candidate.tiles[j];
+
+				// Skip rivers and oceans
+				if (neighbor.river || neighbor.elevation <= 0) {
+					continue;
+				}
+
+				// Skip if already selected as city
+				if (neighbor.isCity) {
+					continue;
+				}
+
+				var neighborScore = 0;
+
+				if (isCoastalRiver && oceanDrainTile) {
+					// Coastal river logic: prefer neighbor that is also adjacent to the ocean drain tile
+					var isNeighborToOcean = false;
+					if (neighbor.tiles) {
+						for (var k = 0; k < neighbor.tiles.length; k++) {
+							if (neighbor.tiles[k] === oceanDrainTile) {
+								isNeighborToOcean = true;
+								break;
+							}
+						}
+					}
+
+					if (isNeighborToOcean) {
+						neighborScore = 1000 - neighbor.elevation; // High bonus for river-ocean adjacency
+						//console.log(`Found neighbor adjacent to both river and ocean drain`);
+					} else {
+						neighborScore = -neighbor.elevation; // Standard elevation preference
+					}
+				} else {
+					// Non-coastal river logic: prefer neighbor with most river neighbors
+					var riverNeighborCount = 0;
+					if (neighbor.tiles) {
+						for (var k = 0; k < neighbor.tiles.length; k++) {
+							if (neighbor.tiles[k].river) {
+								riverNeighborCount++;
+							}
+						}
+					}
+
+					neighborScore = riverNeighborCount * 100 - neighbor.elevation; // Prioritize river connectivity
+				}
+
+				if (neighborScore > bestNeighborScore) {
+					bestNeighbor = neighbor;
+					bestNeighborScore = neighborScore;
+				}
+			}
+
+			if (bestNeighbor) {
+				bestNeighbor.isCity = true;
+				selectedCities.push(bestNeighbor);
+			}
+		} else if (!candidate.river && candidate.elevation > 0) {
+			// Non-river land tile is suitable for city
+			candidate.isCity = true;
+			selectedCities.push(candidate);
+		}
 	}
 
-	console.log(`Selected ${topCities.length} top city locations out of ${shoreTiles.length} shore tiles`);
-	return topCities;
+/* 	// Debug information
+	console.log("=== CITY LOCATION DEBUG ===");
+	console.log(`Number of land tiles: ${landTiles.length}`);
+	console.log(`Number of cities: ${selectedCities.length}`);
+	if (selectedCities.length > 0) {
+		var scores = selectedCities.map(city => city.cityPriorityScore || 0);
+		var minScore = Math.min(...scores);
+		var maxScore = Math.max(...scores);
+		console.log(`City priority scores range: ${maxScore.toFixed(1)} (highest) to ${minScore.toFixed(1)} (lowest)`);
+	}
+	console.log("==========================="); */
+
+	return selectedCities;
 }
 
 // Consolidate contiguous groups of local extrema, keeping only the most extreme tile

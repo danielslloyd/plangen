@@ -63,6 +63,7 @@ var riverElevationDeltaThreshold = 0.1; // Minimum elevation difference for whit
 var enableElevationDistributionReshaping = true; // Apply realistic elevation distribution
 var elevationExponent = 4; // Exponential curve steepness for elevation distribution (higher = more contrast)
 var renderEdgeCosts = false;
+var enablePathDensityCalculation = false; // Enable/disable expensive path density computation and overlay
 var sunTimeOffset = 0;
 var pressedKeys = {};
 var disableKeys = false;
@@ -211,11 +212,13 @@ function collectLabeledTiles(tiles, overlayMode) {
 	var landRegionCount = 0;
 	var watershedRegionCount = 0;
 	var regularLabelCount = 0;
+	var cityCount = 0;
 
 	for (var i = 0; i < tiles.length; i++) {
 		if (tiles[i].landRegionLabel) landRegionCount++;
 		if (tiles[i].watershedRegionLabel) watershedRegionCount++;
 		if (tiles[i].label) regularLabelCount++;
+		if (tiles[i].isCity === true) cityCount++;
 
 		var tileToAdd = null;
 		var labelToShow = null;
@@ -239,6 +242,21 @@ function collectLabeledTiles(tiles, overlayMode) {
 				elevation: tiles[i].elevation,
 				elevationDisplacement: tiles[i].elevationDisplacement
 			};
+		} else if (tiles[i].isCity === true) {
+			// Show city labels for all overlay modes
+			if (!tiles[i].cityLabel) {
+				// Generate city label if it doesn't exist
+				var cityNumber = labeledTiles.filter(function(tile) { return tile.label && tile.label.indexOf('City') === 0; }).length + 1;
+				tiles[i].cityLabel = 'City ' + cityNumber;
+			}
+			labelToShow = tiles[i].cityLabel;
+			tileToAdd = {
+				label: labelToShow,
+				averagePosition: tiles[i].averagePosition,
+				elevation: tiles[i].elevation,
+				elevationDisplacement: tiles[i].elevationDisplacement,
+				isCity: true
+			};
 		} else if (overlayMode !== "landRegions" && overlayMode !== "watershedRegions" && tiles[i].label) {
 			// Show regular labels (like Mount Everest) for all other overlays
 			labelToShow = tiles[i].label;
@@ -251,6 +269,7 @@ function collectLabeledTiles(tiles, overlayMode) {
 		}
 	}
 
+	console.log(`Found ${cityCount} cities, ${regularLabelCount} regular labels, ${landRegionCount} land region labels, ${watershedRegionCount} watershed region labels`);
 
 	return labeledTiles;
 }
@@ -958,10 +977,14 @@ function updateBackgroundProgressUI(action) {
 function calculateBackgroundOverlays(planet, action) {
 	action
 		.executeSubaction(function (action) {
-			ctime('Background: Path Density');
-			calculatePathDensityIncremental(action);
-			ctimeEnd('Background: Path Density');
-		}, 50, "Computing path density")
+			if (enablePathDensityCalculation) {
+				ctime('Background: Path Density');
+				calculatePathDensityIncremental(action);
+				ctimeEnd('Background: Path Density');
+			} else {
+				console.log("Path density calculation disabled (enablePathDensityCalculation = false)");
+			}
+		}, enablePathDensityCalculation ? 50 : 0, enablePathDensityCalculation ? "Computing path density" : "Skipping path density")
 		.executeSubaction(function (action) {
 			ctime('Background: Land Regions');
 			// Land regions calculation will be implemented here

@@ -235,9 +235,9 @@ function groupBodies(planet) {
 		}
 
 		// Debug body assignment for first few bodies
-		if (bodyTypeCount <= 3) {
-			console.log(`Created body ${bodyId} with ${bodyTiles.length} tiles (${isLand ? 'land' : 'water'})`);
-		}
+		//if (bodyTypeCount <= 3) {
+			//console.log(`Created body ${bodyId} with ${bodyTiles.length} tiles (${isLand ? 'land' : 'water'})`);
+		//}
 	  }
 	}
 

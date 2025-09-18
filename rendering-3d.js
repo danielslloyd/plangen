@@ -498,7 +498,16 @@ function buildLabelsRenderObject() {
 		}
 		
 		validTiles++;
-		var sprite = createLabelSprite(tile.label, 'yellow', 24);
+
+		// Choose color and size based on tile type
+		var labelColor = 'yellow';
+		var fontSize = 24;
+		if (tile.isCity === true) {
+			labelColor = 'orange';
+			fontSize = 28;
+		}
+
+		var sprite = createLabelSprite(tile.label, labelColor, fontSize);
 		
 		// Position sprite above the tile
 		var labelPosition = tile.averagePosition.clone();

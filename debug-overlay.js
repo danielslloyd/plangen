@@ -184,11 +184,25 @@ var debugOverlay = {
         } else {
             info.push('<div><span style="color: #888;">Calories:</span> <span style="color: #ff4444;">undefined</span></div>');
         }
+
+        // Always show city priority score with prominent styling
+        var cityPriorityScore = typeof tile.cityPriorityScore !== 'undefined' ? tile.cityPriorityScore : 0;
+        var priorityColor = cityPriorityScore > 0 ? '#00ffff' : '#888';
+        info.push('<div><span style="color: #888;">City Priority Score:</span> <span style="color: ' + priorityColor + '; font-weight: bold;">' + cityPriorityScore.toFixed(3) + '</span></div>');
+
+        // Also show upstream calories if available for comparison
         if (typeof tile.upstreamCalories !== 'undefined') {
-            info.push('<div><span style="color: #888;">Upstream Calories:</span> <span style="color: #fff;">' + (tile.upstreamCalories ? tile.upstreamCalories.toFixed(3) : '0.000') + '</span></div>');
+            info.push('<div><span style="color: #888;">Upstream Calories:</span> <span style="color: #fff;">' + tile.upstreamCalories.toFixed(3) + '</span></div>');
         }
+
         if (tile.isCity === true) {
             info.push('<div><span style="color: #888;">City Location:</span> <span style="color: #00ff00; font-weight: bold;">YES</span></div>');
+        }
+
+        // Show shore value if available (important for city selection)
+        if (typeof tile.shore !== 'undefined') {
+            var shoreColor = tile.shore === 1 ? '#ffff00' : '#888';
+            info.push('<div><span style="color: #888;">Shore Tile:</span> <span style="color: ' + shoreColor + '; font-weight: bold;">' + (tile.shore === 1 ? 'YES' : 'NO') + '</span> <span style="color: #888;">(value: ' + tile.shore + ')</span></div>');
         }
         
         this.tileInfoOverlay.innerHTML = info.join('');
