@@ -114,6 +114,39 @@ Core files loaded in order (see `PlanGen.html`):
 
 The codebase uses ES5 JavaScript with global variables and function declarations for browser compatibility.
 
+## Coordinate System
+
+**CRITICAL**: The planet uses a rotated coordinate system that differs from traditional geographic orientation.
+
+**Verified Coordinate Mappings** (confirmed via magenta tile debugging):
+- **Front-facing point (0°,0°)**: `phi = 0` (what user sees when planet loads)
+- **North pole**: `theta = π/2, phi = π/2`
+- **South pole**: `theta = -π/2, phi = π/2` (or `theta = 3π/2, phi = π/2`)
+- **Backside (180° from front)**: `theta = 0 or ±π, phi = π`
+
+**Key Insights:**
+- The sphere is rotated 90° from traditional geographic orientation
+- `phi = 0` is the front-facing point, NOT the north pole
+- `phi = π/2` corresponds to the actual north/south poles
+- `theta` varies around the "equator" perpendicular to traditional orientation
+
+**Implications for Development:**
+- The `cartesianToMercator()` function in `utilities.js` needs correction based on this orientation
+- Meridian selection requires understanding that traditional lat/lon assumptions don't apply
+- The current Mercator projection math assumes wrong coordinate orientation, causing tile stretching
+- For debugging coordinates, use narrow ranges around specific theta/phi values rather than broad bands
+
+**Debugging Methodology:**
+Test specific coordinate ranges with magenta tiles in `generatePlanetRenderData_functions.js`:
+```javascript
+// Example: Mark specific coordinate region
+var thetaDiff = Math.abs(spherical.theta - targetTheta);
+var phiDiff = Math.abs(spherical.phi - targetPhi);
+if (thetaDiff < 0.2 && phiDiff < 0.2) {
+    tile.error = 'test'; // Makes tiles magenta
+}
+```
+
 ## UI System & Customization
 
 **Color System**: Interactive terrain color panel allows real-time customization of:

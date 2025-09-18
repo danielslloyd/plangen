@@ -19,21 +19,50 @@ function render() {
 
 	var cameraZoomDelta = getZoomDelta();
 	if (frameDuration > 0 && cameraZoomDelta !== 0) {
-		zoom = Math.max(0, Math.min(zoom + frameDuration * cameraZoomDelta * 0.5, 1));
+		zoom = Math.max(-2, Math.min(zoom + frameDuration * cameraZoomDelta * 0.5, 2));
 		cameraNeedsUpdated = true;
 	}
 
 	var cameraLatitudeDelta = getLatitudeDelta();
 	if (frameDuration > 0 && cameraLatitudeDelta !== 0) {
-		cameraLatitude += frameDuration * -cameraLatitudeDelta * Math.PI * (zoom * 0.5 + (1 - zoom) * 1 / 20);
-		cameraLatitude = Math.max(-Math.PI * 0.49, Math.min(cameraLatitude, Math.PI * 0.49));
+		if (projectionMode === "mercator") {
+			// In Mercator mode, move the center of the map instead of the camera
+			var panSpeed = 0.5; // Adjust this for comfortable panning speed
+			var oldLat = mercatorCenterLat;
+			mercatorCenterLat += frameDuration * -cameraLatitudeDelta * panSpeed;
+			mercatorCenterLat = Math.max(-Math.PI * 0.45, Math.min(mercatorCenterLat, Math.PI * 0.45)); // Keep away from poles
+
+			// If center changed, regenerate render data immediately
+			if (Math.abs(mercatorCenterLat - oldLat) > 0.001) {
+				regenerateRenderDataForProjection();
+			}
+		} else {
+			// Original 3D globe camera movement
+			cameraLatitude += frameDuration * -cameraLatitudeDelta * Math.PI * (zoom * 0.5 + (1 - zoom) * 1 / 20);
+			cameraLatitude = Math.max(-Math.PI * 0.49, Math.min(cameraLatitude, Math.PI * 0.49));
+		}
 		cameraNeedsUpdated = true;
 	}
 
 	var cameraLongitudeDelta = getLongitudeDelta();
 	if (frameDuration > 0 && cameraLongitudeDelta !== 0) {
-		cameraLongitude += frameDuration * cameraLongitudeDelta * Math.PI * (zoom * Math.PI / 8 + (1 - zoom) / (20 * Math.max(Math.cos(cameraLatitude), 0.1)));
-		cameraLongitude = cameraLongitude - Math.floor(cameraLongitude / (Math.PI * 2)) * Math.PI * 2;
+		if (projectionMode === "mercator") {
+			// In Mercator mode, move the center of the map instead of the camera
+			var panSpeed = 0.5; // Adjust this for comfortable panning speed
+			var oldLon = mercatorCenterLon;
+			mercatorCenterLon += frameDuration * cameraLongitudeDelta * panSpeed;
+			// Allow longitude to wrap around freely
+			mercatorCenterLon = mercatorCenterLon - Math.floor(mercatorCenterLon / (Math.PI * 2)) * Math.PI * 2;
+
+			// If center changed, regenerate render data immediately
+			if (Math.abs(mercatorCenterLon - oldLon) > 0.001) {
+				regenerateRenderDataForProjection();
+			}
+		} else {
+			// Original 3D globe camera movement
+			cameraLongitude += frameDuration * cameraLongitudeDelta * Math.PI * (zoom * Math.PI / 8 + (1 - zoom) / (20 * Math.max(Math.cos(cameraLatitude), 0.1)));
+			cameraLongitude = cameraLongitude - Math.floor(cameraLongitude / (Math.PI * 2)) * Math.PI * 2;
+		}
 		cameraNeedsUpdated = true;
 	}
 
@@ -88,15 +117,57 @@ function resetCamera() {
 }
 
 function updateCamera() {
-	camera.aspect = window.innerWidth / window.innerHeight;
+	if (projectionMode === "mercator") {
+		// Mercator 2D mode - use orthographic camera
+		if (!(camera instanceof THREE.OrthographicCamera)) {
+			// Switch to orthographic camera
+			var oldCamera = camera;
+			var aspect = window.innerWidth / window.innerHeight;
+			var viewSize = 7; // Base view size for Mercator projection
+			var zoomFactor = Math.pow(2, zoom); // Exponential zoom mapping that works for negative values
+			var actualViewSize = viewSize / zoomFactor;
 
-	var transformation = new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(cameraLatitude, cameraLongitude, 0, "YXZ"));
-	camera.position.set(0, -50, 1050);
-	camera.position.lerp(new THREE.Vector3(0, 0, 2000), Math.pow(zoom, 2.0));
-	camera.position.applyMatrix4(transformation);
-	camera.up.set(0, 1, 0);
-	camera.up.applyMatrix4(transformation);
-	camera.lookAt(new THREE.Vector3(0, 0, 1000).applyMatrix4(transformation));
+			camera = new THREE.OrthographicCamera(
+				-actualViewSize * aspect, actualViewSize * aspect,
+				actualViewSize, -actualViewSize,
+				0.1, 2000
+			);
+		}
+
+		// Position camera for 2D top-down view (use same scale factor as coordinates)
+		camera.position.set(0, 0, 1000); // Fixed camera position
+		camera.lookAt(0, 0, 0); // Look at center of projected coordinates
+		camera.up.set(0, 1, 0);
+
+		// Update orthographic camera zoom
+		var aspect = window.innerWidth / window.innerHeight;
+		var viewSize = 7;
+		var zoomFactor = Math.pow(2, zoom); // Exponential zoom mapping that works for negative values
+		var actualViewSize = viewSize / zoomFactor;
+
+		camera.left = -actualViewSize * aspect;
+		camera.right = actualViewSize * aspect;
+		camera.top = actualViewSize;
+		camera.bottom = -actualViewSize;
+
+	} else {
+		// Globe 3D mode - use perspective camera
+		if (!(camera instanceof THREE.PerspectiveCamera)) {
+			// Switch to perspective camera
+			camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.2, 2000);
+		}
+
+		camera.aspect = window.innerWidth / window.innerHeight;
+
+		var transformation = new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(cameraLatitude, cameraLongitude, 0, "YXZ"));
+		camera.position.set(0, -50, 1050);
+		camera.position.lerp(new THREE.Vector3(0, 0, 2000), Math.pow(zoom, 2.0));
+		camera.position.applyMatrix4(transformation);
+		camera.up.set(0, 1, 0);
+		camera.up.applyMatrix4(transformation);
+		camera.lookAt(new THREE.Vector3(0, 0, 1000).applyMatrix4(transformation));
+	}
+
 	camera.updateProjectionMatrix();
 }
 
@@ -572,9 +643,131 @@ function updateFPS() {
         if (fpsElement) {
             fpsElement.textContent = 'FPS: ' + fpsCounter.currentFPS;
         }
+
+        // Update zoom display
+        var zoomElement = document.getElementById('zoomCounter');
+        if (zoomElement) {
+            zoomElement.textContent = 'Zoom: ' + zoom.toFixed(2) + ' | Mode: ' + projectionMode;
+        }
         
         // Reset counters
         fpsCounter.frameCount = 0;
         fpsCounter.lastTime = currentTime;
     }
+}
+
+// Mercator projection toggle function
+function toggleMercatorProjection() {
+	if (projectionMode === "globe") {
+		projectionMode = "mercator";
+		// Reset zoom for good initial Mercator view
+		zoom = 1.0; // Good overview level based on user testing
+		console.log("Switched to Mercator projection mode");
+	} else {
+		projectionMode = "globe";
+		// Reset zoom for 3D globe view
+		zoom = 1.0; // Standard globe zoom level
+		console.log("Switched to Globe projection mode");
+	}
+
+	// Update camera for the new projection mode
+	updateCamera();
+
+	// Update UI button states
+	updateProjectionButtonStates();
+
+	// Regenerate render data to reflect the new projection
+	if (planet && planet.topology) {
+		regenerateRenderDataForProjection();
+	}
+}
+
+// Update the visual state of projection buttons
+function updateProjectionButtonStates() {
+	if (typeof ui !== 'undefined') {
+		// Clear all projection button states
+		if (ui.projectGlobe) ui.projectGlobe.removeClass("toggled");
+		if (ui.projectRaisedGlobe) ui.projectRaisedGlobe.removeClass("toggled");
+		if (ui.projectMercatorMap) ui.projectMercatorMap.removeClass("toggled");
+
+		// Set active button based on current mode
+		if (projectionMode === "mercator") {
+			if (ui.projectMercatorMap) ui.projectMercatorMap.addClass("toggled");
+		} else if (useElevationDisplacement) {
+			if (ui.projectRaisedGlobe) ui.projectRaisedGlobe.addClass("toggled");
+		} else {
+			if (ui.projectGlobe) ui.projectGlobe.addClass("toggled");
+		}
+	}
+}
+
+// Regeneration control variables
+var isRegenerating = false; // Flag to prevent double regeneration
+
+// Regenerate render data when switching projection modes
+function regenerateRenderDataForProjection() {
+	console.log("Regenerating render data for projection mode:", projectionMode);
+
+	if (planet && planet.topology) {
+		// Use the same regeneration pattern as the working elevation toggle
+		var regenerateAction = new SteppedAction("Updating Projection Mode");
+		regenerateAction
+			.executeSubaction(function(action) {
+				return generatePlanetRenderData(planet.topology, planet.random, action);
+			})
+			.getResult(function(renderData) {
+				console.log("Starting cleanup - Scene children before:", scene.children.length);
+
+				// More thorough cleanup - remove ALL existing planet render objects
+				if (planet.renderData) {
+					console.log("Existing render data keys:", Object.keys(planet.renderData));
+					Object.keys(planet.renderData).forEach(function(key) {
+						if (planet.renderData[key] && planet.renderData[key].renderObject) {
+							console.log("Removing render object for key:", key);
+							scene.remove(planet.renderData[key].renderObject);
+							// Also dispose of geometry and materials to prevent memory leaks
+							if (planet.renderData[key].renderObject.geometry) {
+								planet.renderData[key].renderObject.geometry.dispose();
+							}
+							if (planet.renderData[key].renderObject.material) {
+								if (Array.isArray(planet.renderData[key].renderObject.material)) {
+									planet.renderData[key].renderObject.material.forEach(mat => mat.dispose());
+								} else {
+									planet.renderData[key].renderObject.material.dispose();
+								}
+							}
+						} else {
+							console.log("No render object found for key:", key);
+						}
+					});
+				}
+
+				console.log("Scene children after cleanup:", scene.children.length);
+
+				// Update the planet's render data using same pattern as elevation toggle
+				Object.keys(renderData).forEach(function(key) {
+					planet.renderData[key] = renderData[key];
+
+					// Only automatically add the surface render object to the scene
+					// Overlays will be handled by their visibility functions
+					if (key === 'surface' && renderData[key] && renderData[key].renderObject) {
+						scene.add(renderData[key].renderObject);
+					}
+				});
+
+				// Reapply current visibility settings (this will add/remove overlays as needed)
+				showHideSunlight(renderSunlight);
+				showHidePlateBoundaries(renderPlateBoundaries);
+				showHidePlateMovements(renderPlateMovements);
+				showHideAirCurrents(renderAirCurrents);
+				showHideRivers(renderRivers);
+				showHideMoon(renderMoon);
+
+				console.log("Render data regenerated for", projectionMode, "projection");
+				console.log("Surface geometry vertices:", renderData.surface ? renderData.surface.geometry.attributes.position.count : "none");
+				console.log("Scene children count:", scene.children.length);
+
+			})
+			.execute();
+	}
 }

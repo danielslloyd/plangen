@@ -233,3 +233,89 @@ function calculateAverageBorderLength(borders) {
 	var calculatedABL = totalLength / validBorders;
 	return calculatedABL;
 }
+
+// Mercator projection coordinate conversion functions
+
+// Convert 3D Cartesian coordinates to Mercator x,y coordinates
+// centered on the specified mercatorCenterLat/mercatorCenterLon
+function cartesianToMercator(position, centerLat, centerLon) {
+	// First convert to spherical coordinates (lat/lon)
+	var spherical = cartesianToSpherical(position);
+
+	// Now cartesianToSpherical returns proper geographic coordinates
+	var lat = spherical.phi; // phi is now latitude (-π/2 to π/2)
+	var lon = spherical.theta; // theta is longitude (-π to π)
+
+	// Adjust longitude relative to center
+	var adjustedLon = lon - centerLon;
+	// Wrap longitude to [-π, π] range
+	while (adjustedLon > Math.PI) adjustedLon -= 2 * Math.PI;
+	while (adjustedLon < -Math.PI) adjustedLon += 2 * Math.PI;
+
+	// Adjust latitude relative to center
+	var adjustedLat = lat - centerLat;
+
+	// Clamp adjustedLat to safe range for Mercator projection to prevent NaN
+	// Safe range prevents Math.tan() from going negative in Math.log()
+	adjustedLat = Math.max(-1.4, Math.min(1.4, adjustedLat));
+
+	// Apply Mercator projection formulas
+	var x = adjustedLon;
+	var tanArg = Math.PI/4 + adjustedLat/2;
+	var tanValue = Math.tan(tanArg);
+
+	// Ensure tanValue is positive to prevent NaN from Math.log()
+	if (tanValue <= 0) {
+		tanValue = 0.001; // Small positive value as fallback
+	}
+
+	var y = Math.log(tanValue);
+
+	// Clamp y to reasonable bounds to avoid extreme distortion near poles
+	y = Math.max(-3, Math.min(3, y));
+
+	return { x: x, y: y };
+}
+
+// Convert Mercator x,y coordinates back to 3D Cartesian position
+function mercatorToCartesian(x, y, centerLat, centerLon, radius) {
+	radius = radius || 1000; // Default sphere radius
+
+	// Reverse Mercator projection
+	var adjustedLon = x;
+	var adjustedLat = 2 * (Math.atan(Math.exp(y)) - Math.PI/4);
+
+	// Add back the center offsets
+	var lat = adjustedLat + centerLat;
+	var lon = adjustedLon + centerLon;
+
+	// Clamp latitude to valid range
+	lat = Math.max(-Math.PI/2 + 0.01, Math.min(Math.PI/2 - 0.01, lat));
+
+	// Convert back to spherical coordinates (phi/theta)
+	// Now using standard geographic coordinates
+	var phi = lat; // phi is latitude (-π/2 to π/2)
+	var theta = lon; // theta is longitude (-π to π)
+
+	// Convert from geographic coordinates to standard Cartesian
+	var geo_x = radius * Math.cos(phi) * Math.cos(theta);
+	var geo_y = radius * Math.cos(phi) * Math.sin(theta);
+	var geo_z = radius * Math.sin(phi);
+
+	// Transform back to original coordinate system (inverse of cartesianToSpherical rotation)
+	// Original: geo_x = position.z, geo_y = position.x, geo_z = position.y
+	// Inverse: position.x = geo_y, position.y = geo_z, position.z = geo_x
+	var x3d = geo_y;
+	var y3d = geo_z;
+	var z3d = geo_x;
+
+	return new THREE.Vector3(x3d, y3d, z3d);
+}
+
+// Convert a tile's 3D position to 2D Mercator coordinates for rendering
+function projectTileToMercator(tile, centerLat, centerLon) {
+	if (!tile.averagePosition) return null;
+
+	var mercator = cartesianToMercator(tile.averagePosition, centerLat, centerLon);
+	return mercator;
+}

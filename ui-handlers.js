@@ -2,12 +2,12 @@ function zoomHandler(event) {
 	if (zoomAnimationStartTime === null) {
 		zoomAnimationStartTime = Date.now();
 		zoomAnimationStartValue = zoom;
-		zoomAnimationEndValue = Math.max(0, Math.min(zoomAnimationStartValue - event.deltaY * 0.04, 1));
+		zoomAnimationEndValue = Math.max(-2, Math.min(zoomAnimationStartValue - event.deltaY * 0.01, 2));
 		zoomAnimationDuration = Math.abs(zoomAnimationStartValue - zoomAnimationEndValue) * 1000;
 	} else {
 		zoomAnimationStartTime = Date.now();
 		zoomAnimationStartValue = zoom;
-		zoomAnimationEndValue = Math.max(0, Math.min(zoomAnimationEndValue - event.deltaY * 0.04, 1));
+		zoomAnimationEndValue = Math.max(-2, Math.min(zoomAnimationEndValue - event.deltaY * 0.01, 2));
 		zoomAnimationDuration = Math.abs(zoomAnimationStartValue - zoomAnimationEndValue) * 1000;
 	}
 }
@@ -194,7 +194,7 @@ function keyUpHandler(event) {
 			event.preventDefault();
 			break;
         case KEY.J:
-            showHideEdgeCosts();
+            toggleMercatorProjection();
             event.preventDefault();
             break;
         case KEY.H:

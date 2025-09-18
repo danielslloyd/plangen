@@ -44,40 +44,84 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 		}
 
 		var tile = tiles[i];
-		
-		
+
+		// Debug coordinate system - mark tiles based on different criteria
+		var spherical = cartesianToSpherical(tile.averagePosition);
+		var pos = tile.averagePosition;
+
+		// Test 10: Create proper north-south meridian at prime meridian (theta = 0)
+		// Now with corrected coordinates: constant longitude, varying latitude
+		if (Math.abs(spherical.theta) < 0.2) { // Prime meridian ±11.5 degrees
+			tile.error = 'test';
+		}
+
+		// Debug logging for first few tiles to understand coordinate mapping
+		if (i < 5) {
+			console.log("Tile", i, "Cartesian:", pos.x.toFixed(2), pos.y.toFixed(2), pos.z.toFixed(2),
+						"Spherical theta:", (spherical.theta * 180/Math.PI).toFixed(1), "phi:", (spherical.phi * 180/Math.PI).toFixed(1));
+		}
+
 		// Calculate terrain color using extracted function
 		var terrainColor = calculateTerrainColor(tile);
 		
-		// Calculate tile center position (with elevation)
+		// Calculate tile center position (with elevation and projection)
 		var centerPos = tile.averagePosition.clone();
-		if (tile.elevation > 0) {
-			var centerDistance = centerPos.length();
-			var displacement = useElevationDisplacement ? tile.elevationDisplacement : 0;
-			centerPos.normalize().multiplyScalar(centerDistance + displacement);
+		if (projectionMode === "mercator") {
+			// Project to Mercator coordinates
+			var mercatorCoords = cartesianToMercator(centerPos, mercatorCenterLat, mercatorCenterLon);
+			// Scale coordinates for experimental zoom range (larger world)
+			// Add small Z-offset based on tile index to prevent Z-fighting
+			var zOffset = i * 0.001;
+			centerPos = new THREE.Vector3(mercatorCoords.x * 2.0, mercatorCoords.y * 2.0, zOffset);
+
+			// Debug logging for first few tiles
+			if (i < 3) {
+				console.log("Tile", i, "center - Original:", tile.averagePosition, "Mercator:", mercatorCoords, "Final:", centerPos);
+			}
+		} else {
+			// Original 3D positioning
+			if (tile.elevation > 0) {
+				var centerDistance = centerPos.length();
+				var displacement = useElevationDisplacement ? tile.elevationDisplacement : 0;
+				centerPos.normalize().multiplyScalar(centerDistance + displacement);
+			}
 		}
 		
-		// Calculate corner positions (with elevation)
+		// Calculate corner positions (with elevation and projection)
 		var cornerPositions = [];
 		for (var j = 0; j < tile.corners.length; j++) {
 			var corner = tile.corners[j];
 			var cornerPos = corner.position.clone();
-			
-			// Apply elevation to corners
-			var hasOceanTile = false;
-			for (var k = 0; k < corner.tiles.length; k++) {
-				if (corner.tiles[k].elevation <= 0) {
-					hasOceanTile = true;
-					break;
+
+			if (projectionMode === "mercator") {
+				// Project to Mercator coordinates
+				var mercatorCoords = cartesianToMercator(cornerPos, mercatorCenterLat, mercatorCenterLon);
+				// Scale coordinates for experimental zoom range (larger world)
+				// Use same Z-offset as tile center to keep triangle coplanar
+				var zOffset = i * 0.001;
+				cornerPos = new THREE.Vector3(mercatorCoords.x * 2.0, mercatorCoords.y * 2.0, zOffset);
+
+				// Debug logging for first tile's corners
+				if (i < 1 && j < 3) {
+					console.log("Tile", i, "corner", j, "- Original:", corner.position, "Mercator:", mercatorCoords, "Final:", cornerPos);
+				}
+			} else {
+				// Original 3D positioning with elevation
+				var hasOceanTile = false;
+				for (var k = 0; k < corner.tiles.length; k++) {
+					if (corner.tiles[k].elevation <= 0) {
+						hasOceanTile = true;
+						break;
+					}
+				}
+
+				if (!hasOceanTile && corner.elevationMedian > 0) {
+					var cornerDistance = cornerPos.length();
+					var cornerDisplacement = useElevationDisplacement ? corner.elevationDisplacement : 0;
+					cornerPos.normalize().multiplyScalar(cornerDistance + cornerDisplacement);
 				}
 			}
-			
-			if (!hasOceanTile && corner.elevationMedian > 0) {
-				var cornerDistance = cornerPos.length();
-				var cornerDisplacement = useElevationDisplacement ? corner.elevationDisplacement : 0;
-				cornerPos.normalize().multiplyScalar(cornerDistance + cornerDisplacement);
-			}
-			
+
 			cornerPositions.push(cornerPos);
 		}
 		
@@ -1993,8 +2037,22 @@ var stripeConfig = {
 // Convert Cartesian coordinates to spherical coordinates
 function cartesianToSpherical(position) {
 	var r = position.length();
-	var theta = Math.atan2(position.y, position.x); // longitude (-π to π)
-	var phi = Math.acos(Math.max(-1, Math.min(1, position.z / r))); // latitude (0 to π), clamped for safety
+
+	// CORRECTED: Return proper geographic coordinates
+	// From our testing: front-facing was phi=0, north pole was theta=π/2,phi=π/2
+	// This suggests Y-axis points to north pole, Z-axis points to front-facing
+	// For standard coordinates: Z should point to north pole, X to prime meridian
+
+	// Corrected axis rotation: adjust longitude offset by π/2
+	// From testing: front-facing should be prime meridian, Y-axis points to north pole
+	var geo_x = position.z;  // Front-facing (Z) becomes prime meridian (X-axis)
+	var geo_y = position.x;  // Original X becomes 90°E direction (Y-axis)
+	var geo_z = position.y;  // North pole (Y) becomes Z-axis
+
+	// Calculate standard spherical coordinates
+	var phi = Math.asin(Math.max(-1, Math.min(1, geo_z / r))); // latitude (-π/2 to π/2)
+	var theta = Math.atan2(geo_y, geo_x); // longitude (-π to π)
+
 	return { r: r, theta: theta, phi: phi };
 }
 

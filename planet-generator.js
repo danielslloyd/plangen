@@ -58,6 +58,9 @@ var renderRivers = true;
 var renderMoon = false;
 var renderLabels = true;
 var elevationMultiplier = 80; // Controls how exaggerated the 3D terrain elevation appears
+var projectionMode = "globe"; // "globe" or "mercator"
+var mercatorCenterLat = 0; // Center latitude for Mercator projection (-π/2 to π/2)
+var mercatorCenterLon = 0; // Center longitude for Mercator projection (-π to π)
 var useElevationDisplacement = false; // Binary parameter: use stored displacement values (true) or sphere positions (false)
 var riverElevationDeltaThreshold = 0.1; // Minimum elevation difference for white waterfall rivers
 var enableElevationDistributionReshaping = true; // Apply realistic elevation distribution
@@ -832,7 +835,9 @@ function displayPlanet(newPlanet) {
     }
     planet = newPlanet;
     scene.add(planet.renderData.surface.renderObject);
-    setSurfaceRenderMode(surfaceRenderMode, true);
+    // Preserve current surface render mode instead of resetting to stored value
+    var currentMode = ui.colorOverlayDropdown ? ui.colorOverlayDropdown.val() : surfaceRenderMode;
+    setSurfaceRenderMode(currentMode, true);
     showHideSunlight(renderSunlight);
     showHidePlateBoundaries(renderPlateBoundaries);
     showHidePlateMovements(renderPlateMovements);

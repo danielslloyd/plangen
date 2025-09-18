@@ -67,7 +67,17 @@ $(document).ready(function onDocumentReady() {
 	ui.projectRaisedGlobe = $("#projectRaisedGlobe");
 	ui.projectMercatorMap = $("#projectMercatorMap");
 	
+	ui.projectGlobe.click(function() {
+		if (projectionMode === "mercator") {
+			toggleMercatorProjection(); // Switch back to globe mode
+		}
+		// If already in globe mode, ensure elevation exaggeration is off
+		if (useElevationDisplacement) {
+			toggleElevationExaggeration();
+		}
+	});
 	ui.projectRaisedGlobe.click(toggleElevationExaggeration);
+	ui.projectMercatorMap.click(toggleMercatorProjection);
 	
 	// Overlay buttons
 	ui.showSunlightButton = $("#showSunlightButton");
