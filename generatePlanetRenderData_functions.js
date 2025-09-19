@@ -14,10 +14,39 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 	}
 	
 	
-	// Pre-allocate typed arrays for BufferGeometry
+	// Pre-allocate typed arrays for BufferGeometry (will expand dynamically if needed)
 	var positions = new Float32Array(totalVertices * 3);
 	var colors = new Float32Array(totalVertices * 3);
 	var indices = new Uint32Array(totalFaces * 3);
+
+	// Dynamic buffer expansion functions
+	var expandBuffersIfNeeded = function(requiredVertices, requiredTriangles) {
+		var currentVertexCapacity = positions.length / 3;
+		var currentTriangleCapacity = indices.length / 3;
+
+		if (requiredVertices > currentVertexCapacity || requiredTriangles > currentTriangleCapacity) {
+			console.log("Expanding buffers - Vertices:", currentVertexCapacity, "->", requiredVertices, "Triangles:", currentTriangleCapacity, "->", requiredTriangles);
+
+			// Calculate new capacity (add 50% more for future growth)
+			var newVertexCapacity = Math.max(requiredVertices, currentVertexCapacity) * 1.5;
+			var newTriangleCapacity = Math.max(requiredTriangles, currentTriangleCapacity) * 1.5;
+
+			// Create new larger arrays
+			var newPositions = new Float32Array(newVertexCapacity * 3);
+			var newColors = new Float32Array(newVertexCapacity * 3);
+			var newIndices = new Uint32Array(newTriangleCapacity * 3);
+
+			// Copy existing data
+			newPositions.set(positions);
+			newColors.set(colors);
+			newIndices.set(indices);
+
+			// Replace arrays
+			positions = newPositions;
+			colors = newColors;
+			indices = newIndices;
+		}
+	};
 	
 	var vertexIndex = 0;
 	var triangleIndex = 0;
@@ -28,6 +57,8 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 	var minBody = Math.min.apply(0, tiles.map((data) => data.body.id));
 	var maxBody = Math.max.apply(0, tiles.map((data) => data.body.id));
 	let maxSediment = Math.max(...tiles.map(t => t.sediment? t.sediment:0));
+
+	// Note: Buffer expansion will be handled dynamically during triangle addition
 
 	var i = 0;
 	action.executeSubaction(function (action) {
@@ -204,8 +235,11 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 						// Instead of trying to correct, create two triangles: left and right
 						var mapWidth = Math.PI * 4.0; // Full map width in scaled coordinates
 
-						// Create helper function to add triangle to buffers
+						// Create helper function to add triangle to buffers with expansion
 						var addTriangle = function(v1, v2, v3, color) {
+							// Check if we need to expand buffers for 3 more vertices and 1 more triangle
+							expandBuffersIfNeeded(vertexIndex + 3, triangleIndex + 1);
+
 							// Add vertex 1
 							positions[vertexIndex * 3] = v1.x;
 							positions[vertexIndex * 3 + 1] = v1.y;
@@ -262,6 +296,9 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 					}
 				}
 
+			// Check if we need to expand buffers for 3 more vertices and 1 more triangle
+			expandBuffersIfNeeded(vertexIndex + 3, triangleIndex + 1);
+
 			// Add vertex 1 (center) - normal triangle rendering
 			positions[vertexIndex * 3] = vertex1.x;
 			positions[vertexIndex * 3 + 1] = vertex1.y;
@@ -310,10 +347,18 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 		
 		var planetGeometry = new THREE.BufferGeometry();
 		
+		// Create final buffer attributes with only the used portion
+		// (buffers may have been expanded and contain unused space at the end)
+		var finalPositions = positions.slice(0, vertexIndex * 3);
+		var finalColors = colors.slice(0, vertexIndex * 3);
+		var finalIndices = indices.slice(0, triangleIndex * 3);
+
+		console.log("Final buffer sizes - Vertices used:", vertexIndex, "Triangles used:", triangleIndex);
+
 		// Set buffer attributes directly
-		var positionAttribute = new THREE.BufferAttribute(positions, 3);
-		var colorAttribute = new THREE.BufferAttribute(colors, 3);
-		var indexAttribute = new THREE.BufferAttribute(indices, 1);
+		var positionAttribute = new THREE.BufferAttribute(finalPositions, 3);
+		var colorAttribute = new THREE.BufferAttribute(finalColors, 3);
+		var indexAttribute = new THREE.BufferAttribute(finalIndices, 1);
 		
 		planetGeometry.setAttribute('position', positionAttribute);
 		planetGeometry.setAttribute('color', colorAttribute);
