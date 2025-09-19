@@ -58,7 +58,7 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 	var maxBody = Math.max.apply(0, tiles.map((data) => data.body.id));
 	let maxSediment = Math.max(...tiles.map(t => t.sediment? t.sediment:0));
 
-	// Note: Buffer expansion will be handled dynamically during triangle addition
+	// Note: Preserving original tile order to maintain color overlay mapping
 
 	var i = 0;
 	action.executeSubaction(function (action) {
@@ -221,7 +221,7 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 				var vertex2 = versionCorners[j];
 				var vertex3 = versionCorners[nextJ];
 
-				// Check if this triangle spans the map boundary in Mercator mode
+				// Check if this triangle spans the map boundary in Mercator mode and fix coordinates in-place
 				if (projectionMode === "mercator") {
 					var triangleVertices = [vertex1, vertex2, vertex3];
 					var xCoords = triangleVertices.map(v => v.x);
@@ -230,69 +230,25 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 
 					// If triangle spans more than half the map width, it's wrapping
 					if (maxX - minX > Math.PI * 2.0) { // 2π * 2.0 scaling = map width
-						console.log("Triangle", i, j, "spans map boundary! MinX:", minX.toFixed(3), "MaxX:", maxX.toFixed(3), "- Creating split triangles");
+						console.log("Triangle", i, j, "spans map boundary! MinX:", minX.toFixed(3), "MaxX:", maxX.toFixed(3), "- Fixing coordinates in-place");
 
-						// Instead of trying to correct, create two triangles: left and right
+						// Fix coordinates in-place by moving outlying vertices to the correct side
 						var mapWidth = Math.PI * 4.0; // Full map width in scaled coordinates
+						var avgX = (vertex1.x + vertex2.x + vertex3.x) / 3;
 
-						// Create helper function to add triangle to buffers with expansion
-						var addTriangle = function(v1, v2, v3, color) {
-							// Check if we need to expand buffers for 3 more vertices and 1 more triangle
-							expandBuffersIfNeeded(vertexIndex + 3, triangleIndex + 1);
-
-							// Add vertex 1
-							positions[vertexIndex * 3] = v1.x;
-							positions[vertexIndex * 3 + 1] = v1.y;
-							positions[vertexIndex * 3 + 2] = v1.z;
-							colors[vertexIndex * 3] = color.r;
-							colors[vertexIndex * 3 + 1] = color.g;
-							colors[vertexIndex * 3 + 2] = color.b;
-							indices[triangleIndex * 3] = vertexIndex;
-							vertexIndex++;
-
-							// Add vertex 2
-							positions[vertexIndex * 3] = v2.x;
-							positions[vertexIndex * 3 + 1] = v2.y;
-							positions[vertexIndex * 3 + 2] = v2.z;
-							colors[vertexIndex * 3] = color.r;
-							colors[vertexIndex * 3 + 1] = color.g;
-							colors[vertexIndex * 3 + 2] = color.b;
-							indices[triangleIndex * 3 + 1] = vertexIndex;
-							vertexIndex++;
-
-							// Add vertex 3
-							positions[vertexIndex * 3] = v3.x;
-							positions[vertexIndex * 3 + 1] = v3.y;
-							positions[vertexIndex * 3 + 2] = v3.z;
-							colors[vertexIndex * 3] = color.r;
-							colors[vertexIndex * 3 + 1] = color.g;
-							colors[vertexIndex * 3 + 2] = color.b;
-							indices[triangleIndex * 3 + 2] = vertexIndex;
-							vertexIndex++;
-
-							triangleIndex++;
-						};
-
-						// Left triangle: shift all positive X coordinates left by full map width
-						var leftVertices = triangleVertices.map(function(v) {
-							var newV = v.clone();
-							if (newV.x > 0) newV.x -= mapWidth;
-							return newV;
-						});
-
-						// Right triangle: shift all negative X coordinates right by full map width
-						var rightVertices = triangleVertices.map(function(v) {
-							var newV = v.clone();
-							if (newV.x < 0) newV.x += mapWidth;
-							return newV;
-						});
-
-						// Add both triangles with debug colors
-						addTriangle(leftVertices[0], leftVertices[1], leftVertices[2], new THREE.Color(0x00FF00)); // Green for left
-						addTriangle(rightVertices[0], rightVertices[1], rightVertices[2], new THREE.Color(0x0000FF)); // Blue for right
-
-						// Skip the original triangle
-						continue;
+						// Correct each vertex that is far from the average
+						if (Math.abs(vertex1.x - avgX) > Math.PI * 2.0) {
+							vertex1.x += vertex1.x > avgX ? -mapWidth : mapWidth;
+							console.log("  Corrected vertex1 X coordinate");
+						}
+						if (Math.abs(vertex2.x - avgX) > Math.PI * 2.0) {
+							vertex2.x += vertex2.x > avgX ? -mapWidth : mapWidth;
+							console.log("  Corrected vertex2 X coordinate");
+						}
+						if (Math.abs(vertex3.x - avgX) > Math.PI * 2.0) {
+							vertex3.x += vertex3.x > avgX ? -mapWidth : mapWidth;
+							console.log("  Corrected vertex3 X coordinate");
+						}
 					}
 				}
 
@@ -1212,16 +1168,64 @@ function recalculateBufferGeometryColors(tiles, geometry, overlayId) {
 		var tile = tiles[i];
 		var tileColor = calculateColor(tile);
 
-		// Each tile creates tile.corners.length triangles
-		// Each triangle has 3 vertices: center -> corner[j] -> corner[j+1]
-		for (var j = 0; j < tile.corners.length; j++) {
-			// Set color for all 3 vertices of this triangle (center, corner j, corner j+1)
-			colorAttribute.setXYZ(vertexIndex, tileColor.r, tileColor.g, tileColor.b); // center vertex
-			vertexIndex++;
-			colorAttribute.setXYZ(vertexIndex, tileColor.r, tileColor.g, tileColor.b); // corner j vertex
-			vertexIndex++;
-			colorAttribute.setXYZ(vertexIndex, tileColor.r, tileColor.g, tileColor.b); // corner j+1 vertex
-			vertexIndex++;
+		// IMPORTANT: Must replicate the exact wraparound logic from buildSurfaceRenderObject
+		// to maintain vertex index synchronization
+
+		// Calculate corner positions for wraparound detection (Mercator mode only)
+		var tileVersions = [{ corners: tile.corners }]; // Default: single version
+
+		if (projectionMode === "mercator") {
+			var cornerMercatorCoords = [];
+			for (var j = 0; j < tile.corners.length; j++) {
+				var corner = tile.corners[j];
+				var mercatorCoords = cartesianToMercator(corner.position, mercatorCenterLat, mercatorCenterLon);
+				cornerMercatorCoords.push(mercatorCoords);
+			}
+
+			// Check if tile wraps around antimeridian
+			var minX = Math.min.apply(Math, cornerMercatorCoords.map(c => c.x));
+			var maxX = Math.max.apply(Math, cornerMercatorCoords.map(c => c.x));
+
+			if (maxX - minX > Math.PI) {
+				// Tile spans antimeridian - create two versions
+				var leftCorners = [];
+				var rightCorners = [];
+
+				for (var j = 0; j < cornerMercatorCoords.length; j++) {
+					var mercatorCoords = cornerMercatorCoords[j];
+
+					// Left version: shift positive longitudes to negative side
+					var leftX = mercatorCoords.x > 0 ? mercatorCoords.x - 2 * Math.PI : mercatorCoords.x;
+					leftCorners.push({ x: leftX * 2.0, y: mercatorCoords.y * 2.0 });
+
+					// Right version: shift negative longitudes to positive side
+					var rightX = mercatorCoords.x < 0 ? mercatorCoords.x + 2 * Math.PI : mercatorCoords.x;
+					rightCorners.push({ x: rightX * 2.0, y: mercatorCoords.y * 2.0 });
+				}
+
+				tileVersions = [
+					{ corners: leftCorners },
+					{ corners: rightCorners }
+				];
+			}
+		}
+
+		// Process each tile version (1 for normal tiles, 2 for wraparound tiles)
+		for (var versionIndex = 0; versionIndex < tileVersions.length; versionIndex++) {
+			var version = tileVersions[versionIndex];
+			var versionCorners = version.corners;
+
+			// Each tile version creates versionCorners.length triangles
+			// Each triangle has 3 vertices: center -> corner[j] -> corner[j+1]
+			for (var j = 0; j < versionCorners.length; j++) {
+				// Set color for all 3 vertices of this triangle (center, corner j, corner j+1)
+				colorAttribute.setXYZ(vertexIndex, tileColor.r, tileColor.g, tileColor.b); // center vertex
+				vertexIndex++;
+				colorAttribute.setXYZ(vertexIndex, tileColor.r, tileColor.g, tileColor.b); // corner j vertex
+				vertexIndex++;
+				colorAttribute.setXYZ(vertexIndex, tileColor.r, tileColor.g, tileColor.b); // corner j+1 vertex
+				vertexIndex++;
+			}
 		}
 	}
 
