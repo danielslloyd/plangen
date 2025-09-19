@@ -57,6 +57,7 @@ var renderAirCurrents = false;
 var renderRivers = true;
 var renderMoon = false;
 var renderLabels = true;
+var renderWireframe = false;
 var elevationMultiplier = 80; // Controls how exaggerated the 3D terrain elevation appears
 var projectionMode = "globe"; // "globe" or "mercator"
 var mercatorCenterLat = 0; // Center latitude for Mercator projection (-π/2 to π/2)
@@ -454,7 +455,7 @@ function generatePlanetRenderData(topology, random, action) {
 		.executeSubaction(function (action) {
 			var lambertMaterial = new THREE.MeshLambertMaterial({
 				vertexColors: true,
-				wireframe: false,
+				wireframe: renderWireframe,
 				side: THREE.DoubleSide,
 				flatShading: true
 			});
@@ -883,6 +884,16 @@ function showHideLabels(show) {
 		scene.add(planet.renderData.labels);
 	} else {
 		scene.remove(planet.renderData.labels);
+	}
+}
+
+function toggleWireframe() {
+	renderWireframe = !renderWireframe;
+	console.log("Wireframe mode:", renderWireframe ? "ON" : "OFF");
+
+	// Regenerate planet to apply wireframe change
+	if (planet) {
+		generatePlanetAsynchronous();
 	}
 }
 

@@ -49,10 +49,21 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 		var spherical = cartesianToSpherical(tile.averagePosition);
 		var pos = tile.averagePosition;
 
-		// Test 10: Create proper north-south meridian at prime meridian (theta = 0)
-		// Now with corrected coordinates: constant longitude, varying latitude
-		if (Math.abs(spherical.theta) < 0.2) { // Prime meridian ±11.5 degrees
-			tile.error = 'test';
+		// Test 11: Create 180° meridian with yellow-to-red gradient (north to south)
+		// Narrow range to only tiles that actually contain the 180° meridian line
+		var meridian180 = Math.abs(Math.abs(spherical.theta) - Math.PI); // Distance from ±180°
+		if (meridian180 < 0.05) { // 180° meridian ±2.9 degrees (much narrower)
+			// Create gradient from yellow (north pole, phi=π/2) to red (south pole, phi=-π/2)
+			// Normalize phi from [-π/2, π/2] to [0, 1] where 0=south, 1=north
+			var normalizedLat = (spherical.phi + Math.PI/2) / Math.PI; // 0 to 1, south to north
+
+			// Lerp from red (south) to yellow (north)
+			var red = new THREE.Color(0xFF0000);   // South pole color
+			var yellow = new THREE.Color(0xFFFF00); // North pole color
+			var gradientColor = red.clone().lerp(yellow, normalizedLat);
+
+			// Convert to hex string for tile.error
+			tile.error = '#' + gradientColor.getHexString();
 		}
 
 		// Debug logging for first few tiles to understand coordinate mapping
@@ -89,6 +100,7 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 		
 		// Calculate corner positions (with elevation and projection)
 		var cornerPositions = [];
+		var cornerMercatorCoords = []; // Track original mercator coords for wraparound detection
 		for (var j = 0; j < tile.corners.length; j++) {
 			var corner = tile.corners[j];
 			var cornerPos = corner.position.clone();
@@ -96,6 +108,8 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 			if (projectionMode === "mercator") {
 				// Project to Mercator coordinates
 				var mercatorCoords = cartesianToMercator(cornerPos, mercatorCenterLat, mercatorCenterLon);
+				cornerMercatorCoords.push(mercatorCoords);
+
 				// Scale coordinates for experimental zoom range (larger world)
 				// Use same Z-offset as tile center to keep triangle coplanar
 				var zOffset = i * 0.001;
@@ -124,17 +138,131 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 
 			cornerPositions.push(cornerPos);
 		}
-		
-		// Create independent triangles (no vertex sharing)
-		for (var j = 0; j < tile.corners.length; j++) {
-			var nextJ = (j + 1) % tile.corners.length;
-			
-			// Triangle vertices: center -> corner[j] -> corner[j+1]
-			var vertex1 = centerPos;
-			var vertex2 = cornerPositions[j];
-			var vertex3 = cornerPositions[nextJ];
-			
-			// Add vertex 1 (center)
+
+		// Check for antimeridian wrapping in Mercator mode
+		var tileVersions = [{ center: centerPos, corners: cornerPositions }]; // Default version
+		if (projectionMode === "mercator" && cornerMercatorCoords.length > 0) {
+			// Find min and max longitude coordinates
+			var lonCoords = cornerMercatorCoords.map(coord => coord.x);
+			var minLon = Math.min.apply(Math, lonCoords);
+			var maxLon = Math.max.apply(Math, lonCoords);
+
+			// If longitude span > π, tile crosses antimeridian
+			if (maxLon - minLon > Math.PI) {
+				console.log("Tile", i, "crosses antimeridian! MinLon:", minLon.toFixed(3), "MaxLon:", maxLon.toFixed(3), "Span:", (maxLon - minLon).toFixed(3));
+
+				// Create two versions: left side (subtract 2π from positive coords) and right side (add 2π to negative coords)
+				var leftCorners = [];
+				var rightCorners = [];
+				var zOffset = i * 0.001;
+
+				for (var k = 0; k < cornerMercatorCoords.length; k++) {
+					var coord = cornerMercatorCoords[k];
+
+					// Left side: shift positive longitudes left by 2π
+					var leftX = coord.x > 0 ? coord.x - 2 * Math.PI : coord.x;
+					leftCorners.push(new THREE.Vector3(leftX * 2.0, coord.y * 2.0, zOffset));
+
+					// Right side: shift negative longitudes right by 2π
+					var rightX = coord.x < 0 ? coord.x + 2 * Math.PI : coord.x;
+					rightCorners.push(new THREE.Vector3(rightX * 2.0, coord.y * 2.0, zOffset));
+				}
+
+				// Replace default version with both wrapped versions
+				tileVersions = [
+					{ center: centerPos, corners: leftCorners },
+					{ center: centerPos, corners: rightCorners }
+				];
+			}
+		}
+
+		// Create independent triangles for each tile version (handles wraparound)
+		for (var versionIndex = 0; versionIndex < tileVersions.length; versionIndex++) {
+			var version = tileVersions[versionIndex];
+			var versionCenter = version.center;
+			var versionCorners = version.corners;
+
+			for (var j = 0; j < versionCorners.length; j++) {
+				var nextJ = (j + 1) % versionCorners.length;
+
+				// Triangle vertices: center -> corner[j] -> corner[j+1]
+				var vertex1 = versionCenter;
+				var vertex2 = versionCorners[j];
+				var vertex3 = versionCorners[nextJ];
+
+				// Check if this triangle spans the map boundary in Mercator mode
+				if (projectionMode === "mercator") {
+					var triangleVertices = [vertex1, vertex2, vertex3];
+					var xCoords = triangleVertices.map(v => v.x);
+					var minX = Math.min.apply(Math, xCoords);
+					var maxX = Math.max.apply(Math, xCoords);
+
+					// If triangle spans more than half the map width, it's wrapping
+					if (maxX - minX > Math.PI * 2.0) { // 2π * 2.0 scaling = map width
+						console.log("Triangle", i, j, "spans map boundary! MinX:", minX.toFixed(3), "MaxX:", maxX.toFixed(3), "- Creating split triangles");
+
+						// Instead of trying to correct, create two triangles: left and right
+						var mapWidth = Math.PI * 4.0; // Full map width in scaled coordinates
+
+						// Create helper function to add triangle to buffers
+						var addTriangle = function(v1, v2, v3, color) {
+							// Add vertex 1
+							positions[vertexIndex * 3] = v1.x;
+							positions[vertexIndex * 3 + 1] = v1.y;
+							positions[vertexIndex * 3 + 2] = v1.z;
+							colors[vertexIndex * 3] = color.r;
+							colors[vertexIndex * 3 + 1] = color.g;
+							colors[vertexIndex * 3 + 2] = color.b;
+							indices[triangleIndex * 3] = vertexIndex;
+							vertexIndex++;
+
+							// Add vertex 2
+							positions[vertexIndex * 3] = v2.x;
+							positions[vertexIndex * 3 + 1] = v2.y;
+							positions[vertexIndex * 3 + 2] = v2.z;
+							colors[vertexIndex * 3] = color.r;
+							colors[vertexIndex * 3 + 1] = color.g;
+							colors[vertexIndex * 3 + 2] = color.b;
+							indices[triangleIndex * 3 + 1] = vertexIndex;
+							vertexIndex++;
+
+							// Add vertex 3
+							positions[vertexIndex * 3] = v3.x;
+							positions[vertexIndex * 3 + 1] = v3.y;
+							positions[vertexIndex * 3 + 2] = v3.z;
+							colors[vertexIndex * 3] = color.r;
+							colors[vertexIndex * 3 + 1] = color.g;
+							colors[vertexIndex * 3 + 2] = color.b;
+							indices[triangleIndex * 3 + 2] = vertexIndex;
+							vertexIndex++;
+
+							triangleIndex++;
+						};
+
+						// Left triangle: shift all positive X coordinates left by full map width
+						var leftVertices = triangleVertices.map(function(v) {
+							var newV = v.clone();
+							if (newV.x > 0) newV.x -= mapWidth;
+							return newV;
+						});
+
+						// Right triangle: shift all negative X coordinates right by full map width
+						var rightVertices = triangleVertices.map(function(v) {
+							var newV = v.clone();
+							if (newV.x < 0) newV.x += mapWidth;
+							return newV;
+						});
+
+						// Add both triangles with debug colors
+						addTriangle(leftVertices[0], leftVertices[1], leftVertices[2], new THREE.Color(0x00FF00)); // Green for left
+						addTriangle(rightVertices[0], rightVertices[1], rightVertices[2], new THREE.Color(0x0000FF)); // Blue for right
+
+						// Skip the original triangle
+						continue;
+					}
+				}
+
+			// Add vertex 1 (center) - normal triangle rendering
 			positions[vertexIndex * 3] = vertex1.x;
 			positions[vertexIndex * 3 + 1] = vertex1.y;
 			positions[vertexIndex * 3 + 2] = vertex1.z;
@@ -143,7 +271,7 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 			colors[vertexIndex * 3 + 2] = terrainColor.b;
 			indices[triangleIndex * 3] = vertexIndex;
 			vertexIndex++;
-			
+
 			// Add vertex 2 (corner j)
 			positions[vertexIndex * 3] = vertex2.x;
 			positions[vertexIndex * 3 + 1] = vertex2.y;
@@ -153,7 +281,7 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 			colors[vertexIndex * 3 + 2] = terrainColor.b;
 			indices[triangleIndex * 3 + 1] = vertexIndex;
 			vertexIndex++;
-			
+
 			// Add vertex 3 (corner j+1)
 			positions[vertexIndex * 3] = vertex3.x;
 			positions[vertexIndex * 3 + 1] = vertex3.y;
@@ -165,6 +293,7 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 			vertexIndex++;
 			
 			triangleIndex++;
+			}
 		}
 		
 		++i;
@@ -211,7 +340,7 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 		} else {
 			planetMaterial = new THREE.MeshBasicMaterial({
 				vertexColors: true,
-				wireframe: false,
+				wireframe: renderWireframe,
 				side: THREE.DoubleSide,
 				color: 0xFFFFFF
 			});
@@ -963,9 +1092,20 @@ function calculateTerrainColor(tile) {
 		}
 	}
 
-	// Error tiles for debugging
-	if (tile.error) { 
-		terrainColor = new THREE.Color(0xFF00FF) // Bright magenta
+	// Error tiles for debugging with custom color support
+	if (tile.error) {
+		// Try to parse tile.error as a Three.js color
+		try {
+			var customColor = new THREE.Color(tile.error);
+			// Check if the color was successfully parsed (not black/0 unless intentionally 0x000000)
+			if (customColor.getHex() !== 0 || tile.error === '0x000000' || tile.error === '#000000' || tile.error === 'black') {
+				terrainColor = customColor;
+			} else {
+				terrainColor = new THREE.Color(0xFF00FF); // Default magenta for invalid colors
+			}
+		} catch (e) {
+			terrainColor = new THREE.Color(0xFF00FF); // Default magenta for non-color values
+		}
 	}
 	
 	return terrainColor;
@@ -1077,7 +1217,7 @@ function buildTestTileObject(tiles, random, action) {
 	// Create Lambert material for testing
 	var testMaterial = new THREE.MeshLambertMaterial({
 		vertexColors: true,
-		wireframe: false,
+		wireframe: renderWireframe,
 		side: THREE.DoubleSide
 	});
 	
@@ -1135,7 +1275,7 @@ function buildSimpleTestObject(action) {
 	// Create bright red Lambert material to test normals
 	var testMaterial = new THREE.MeshLambertMaterial({
 		color: 0xFF0000,  // Bright red
-		wireframe: false
+		wireframe: renderWireframe
 	});
 	
 	// Create mesh
