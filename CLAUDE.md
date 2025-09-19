@@ -116,25 +116,36 @@ The codebase uses ES5 JavaScript with global variables and function declarations
 
 ## Coordinate System
 
-**CRITICAL**: The planet uses a rotated coordinate system that differs from traditional geographic orientation.
+**FIXED**: The coordinate system has been corrected to return proper geographic coordinates.
 
-**Verified Coordinate Mappings** (confirmed via magenta tile debugging):
-- **Front-facing point (0°,0°)**: `phi = 0` (what user sees when planet loads)
-- **North pole**: `theta = π/2, phi = π/2`
-- **South pole**: `theta = -π/2, phi = π/2` (or `theta = 3π/2, phi = π/2`)
-- **Backside (180° from front)**: `theta = 0 or ±π, phi = π`
+**Original Problem** (discovered via magenta tile debugging):
+- The raw planet used a rotated coordinate system where `phi = 0` was front-facing, not north pole
+- `theta` did not represent longitude in the traditional sense
+- North pole was at `theta = π/2, phi = π/2` instead of standard coordinates
 
-**Key Insights:**
-- The sphere is rotated 90° from traditional geographic orientation
-- `phi = 0` is the front-facing point, NOT the north pole
-- `phi = π/2` corresponds to the actual north/south poles
-- `theta` varies around the "equator" perpendicular to traditional orientation
+**Solution Implemented:**
+The `cartesianToSpherical()` function now applies axis rotation to return standard geographic coordinates:
+```javascript
+// Axis rotation to convert to standard geography:
+var geo_x = position.z;  // Front-facing becomes prime meridian
+var geo_y = position.x;  // Original X becomes 90°E direction
+var geo_z = position.y;  // North pole becomes Z-axis
 
-**Implications for Development:**
-- The `cartesianToMercator()` function in `utilities.js` needs correction based on this orientation
-- Meridian selection requires understanding that traditional lat/lon assumptions don't apply
-- The current Mercator projection math assumes wrong coordinate orientation, causing tile stretching
-- For debugging coordinates, use narrow ranges around specific theta/phi values rather than broad bands
+var phi = Math.asin(geo_z / r);      // Standard latitude (-π/2 to π/2)
+var theta = Math.atan2(geo_y, geo_x); // Standard longitude (-π to π)
+```
+
+**Current Coordinate Mappings** (after fix):
+- **Front-facing point (0°,0°)**: `theta = 0, phi = 0` (prime meridian, equator)
+- **North pole**: `theta = any, phi = π/2` (90° latitude)
+- **South pole**: `theta = any, phi = -π/2` (-90° latitude)
+- **90°E meridian**: `theta = π/2, phi = varies`
+
+**Benefits of Fix:**
+- Mercator projection works correctly without tile stretching
+- All geographic functions (stripes, meridians) work intuitively
+- `phi` now properly represents latitude, `theta` represents longitude
+- Future coordinate-based features will work as expected
 
 **Debugging Methodology:**
 Test specific coordinate ranges with magenta tiles in `generatePlanetRenderData_functions.js`:
