@@ -68,16 +68,46 @@ $(document).ready(function onDocumentReady() {
 	ui.projectMercatorMap = $("#projectMercatorMap");
 	
 	ui.projectGlobe.click(function() {
-		if (projectionMode === "mercator") {
-			toggleMercatorProjection(); // Switch back to globe mode
+		// Radio button behavior: only act if not already in flat globe mode
+		// Flat globe mode means: projectionMode === "globe" AND useElevationDisplacement === false
+		var currentlyInFlatGlobe = (projectionMode === "globe" && !useElevationDisplacement);
+
+		if (!currentlyInFlatGlobe) {
+			// Need to switch to flat globe mode
+			if (projectionMode === "mercator") {
+				toggleMercatorProjection(); // Switch from mercator to globe
+			}
+			if (useElevationDisplacement) {
+				toggleElevationExaggeration(); // Turn off elevation exaggeration
+			}
 		}
-		// If already in globe mode, ensure elevation exaggeration is off
-		if (useElevationDisplacement) {
-			toggleElevationExaggeration();
-		}
+		// If already in flat globe mode, do nothing (radio button behavior)
 	});
-	ui.projectRaisedGlobe.click(toggleElevationExaggeration);
-	ui.projectMercatorMap.click(toggleMercatorProjection);
+
+	ui.projectRaisedGlobe.click(function() {
+		// Radio button behavior: only act if not already in raised globe mode
+		// Raised globe mode means: projectionMode === "globe" AND useElevationDisplacement === true
+		var currentlyInRaisedGlobe = (projectionMode === "globe" && useElevationDisplacement);
+
+		if (!currentlyInRaisedGlobe) {
+			// Need to switch to raised globe mode
+			if (projectionMode === "mercator") {
+				toggleMercatorProjection(); // Switch from mercator to globe first
+			}
+			if (!useElevationDisplacement) {
+				toggleElevationExaggeration(); // Turn on elevation exaggeration
+			}
+		}
+		// If already in raised globe mode, do nothing (radio button behavior)
+	});
+
+	ui.projectMercatorMap.click(function() {
+		// Radio button behavior: only act if not already in this mode
+		if (projectionMode !== "mercator") {
+			toggleMercatorProjection(); // Switch to mercator mode
+		}
+		// If already in mercator mode, do nothing (radio button behavior)
+	});
 	
 	// Overlay buttons
 	ui.showSunlightButton = $("#showSunlightButton");
@@ -769,7 +799,12 @@ function toggleElevationExaggeration() {
 				showHidePlateMovements(renderPlateMovements);
 				showHideAirCurrents(renderAirCurrents);
 				showHideRivers(renderRivers);
-				
+
+				// Rebuild labels for the new elevation mode
+				if (planet && planet.topology && planet.topology.tiles && typeof rebuildAllLabelsForProjection !== 'undefined') {
+					rebuildAllLabelsForProjection(planet.topology.tiles);
+				}
+
 			})
 			.execute();
 	}

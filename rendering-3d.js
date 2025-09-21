@@ -32,7 +32,7 @@ function render() {
 			mercatorCenterLat += frameDuration * -cameraLatitudeDelta * panSpeed;
 			mercatorCenterLat = Math.max(-Math.PI * 0.45, Math.min(mercatorCenterLat, Math.PI * 0.45)); // Keep away from poles
 
-			// If center changed, regenerate render data immediately
+			// If center changed, regenerate map and update labels
 			if (Math.abs(mercatorCenterLat - oldLat) > 0.001) {
 				regenerateRenderDataForProjection();
 			}
@@ -54,7 +54,7 @@ function render() {
 			// Allow longitude to wrap around freely
 			mercatorCenterLon = mercatorCenterLon - Math.floor(mercatorCenterLon / (Math.PI * 2)) * Math.PI * 2;
 
-			// If center changed, regenerate render data immediately
+			// If center changed, regenerate map and update labels
 			if (Math.abs(mercatorCenterLon - oldLon) > 0.001) {
 				regenerateRenderDataForProjection();
 			}
@@ -677,6 +677,7 @@ function toggleMercatorProjection() {
 	updateProjectionButtonStates();
 
 	// Regenerate render data to reflect the new projection
+	// (Labels will be rebuilt automatically in the completion callback)
 	if (planet && planet.topology) {
 		regenerateRenderDataForProjection();
 	}
@@ -762,6 +763,11 @@ function regenerateRenderDataForProjection() {
 				showHideAirCurrents(renderAirCurrents);
 				showHideRivers(renderRivers);
 				showHideMoon(renderMoon);
+
+				// Rebuild labels AFTER render data is updated with correct mercator coordinates
+				if (planet && planet.topology && planet.topology.tiles && typeof rebuildAllLabelsForProjection !== 'undefined') {
+					rebuildAllLabelsForProjection(planet.topology.tiles);
+				}
 
 				console.log("Render data regenerated for", projectionMode, "projection");
 				console.log("Surface geometry vertices:", renderData.surface ? renderData.surface.geometry.attributes.position.count : "none");

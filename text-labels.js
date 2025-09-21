@@ -2,6 +2,7 @@
 // Creates canvas-based sprites with text that follow 3D positions
 
 var textSprites = []; // Global array to track all text sprites
+var textSpriteData = []; // Store original positions and text data for each sprite
 
 /**
  * Creates a canvas-based text sprite for 3D display (r125 compatible)
@@ -36,12 +37,12 @@ function createTextSprite(text, color, fontSize, fontFamily) {
     context.textAlign = 'center';
     context.textBaseline = 'middle';
     
-    // Optional: Add background
-    context.fillStyle = 'rgba(0, 0, 0, 0.3)';
+    // Add white background for better readability
+    context.fillStyle = 'rgba(255, 255, 255, 0.9)';
     context.fillRect(0, 0, canvas.width, canvas.height);
-    
-    // Draw text
-    context.fillStyle = color;
+
+    // Draw black text
+    context.fillStyle = 'black';
     context.fillText(text, canvas.width / 2, canvas.height / 2);
     
     // Create texture from canvas (r125 compatible)
@@ -76,21 +77,77 @@ function createTextSprite(text, color, fontSize, fontFamily) {
  */
 function addTextLabelAtPosition(position, text, color, fontSize, elevationOffset) {
     elevationOffset = elevationOffset || 50;
-    
+
     var sprite = createTextSprite(text, color, fontSize);
-    
-    // Position the sprite slightly above the target position
-    var labelPosition = position.clone();
-    labelPosition.normalize().multiplyScalar(labelPosition.length() + elevationOffset);
+
+    // Position the sprite based on current projection mode
+    var labelPosition = calculateLabelPosition(position, elevationOffset);
     sprite.position.copy(labelPosition);
-    
+
+    // Scale sprite based on projection mode
+    var scale = calculateLabelScale();
+    sprite.scale.set(scale, scale * (sprite.scale.y / sprite.scale.x), 1);
+
+    // Store original position data for updates
+    var spriteData = {
+        sprite: sprite,
+        originalPosition: position.clone(),
+        text: text,
+        color: color,
+        fontSize: fontSize,
+        elevationOffset: elevationOffset
+    };
+    textSpriteData.push(spriteData);
+
     // Add to scene
     if (typeof scene !== 'undefined' && scene) {
         scene.add(sprite);
         textSprites.push(sprite);
     }
-    
+
     return sprite;
+}
+
+/**
+ * Calculate appropriate label position based on current projection mode
+ * @param {THREE.Vector3} position - Original 3D position
+ * @param {number} elevationOffset - Height offset
+ * @returns {THREE.Vector3} - Adjusted position
+ */
+function calculateLabelPosition(position, elevationOffset) {
+    var labelPosition = position.clone();
+
+    if (typeof projectionMode !== 'undefined' && projectionMode === "mercator") {
+        // In Mercator mode, project to 2D coordinates
+        if (typeof cartesianToMercator !== 'undefined' && typeof mercatorCenterLat !== 'undefined') {
+            var mercatorCoords = cartesianToMercator(position, mercatorCenterLat, mercatorCenterLon);
+            // Scale coordinates to match the map scaling, flat Z positioning in layering system
+            labelPosition = new THREE.Vector3(
+                mercatorCoords.x * 2.0,
+                mercatorCoords.y * 2.0,
+                0.3 // Labels on top: Map(0) → Rivers(0.1) → Air Currents(0.2) → Labels(0.3)
+            );
+        }
+    } else {
+        // 3D globe mode - position slightly above the surface
+        labelPosition.normalize().multiplyScalar(labelPosition.length() + elevationOffset);
+    }
+
+    return labelPosition;
+}
+
+/**
+ * Calculate appropriate label scale based on current projection mode
+ * @returns {number} - Scale factor
+ */
+function calculateLabelScale() {
+    if (typeof projectionMode !== 'undefined' && projectionMode === "mercator") {
+        // Small scale for 2D map mode - readable but not covering the map
+        return 0.4;
+    } else {
+        // Standard scale for 3D globe mode
+        return 100;
+    }
 }
 
 /**
@@ -110,6 +167,7 @@ function clearAllTextLabels() {
         }
     }
     textSprites = [];
+    textSpriteData = [];
 }
 
 /**
@@ -131,7 +189,7 @@ function addMountEverestLabel(tiles) {
         addTextLabelAtPosition(
             highestTile.averagePosition,
             'Mount Everest',
-            'red',
+            'black',
             48,
             80 // Higher offset for mountain peaks
         );
@@ -157,12 +215,53 @@ function addCityLabels(tiles) {
             addTextLabelAtPosition(
                 tile.averagePosition,
                 cityName,
-                'yellow',
-                32,
-                60 // Offset for cities
+                'black',
+                48,
+                80 // Same offset as Mount Everest for consistent sizing
             );
         }
     }
 
     console.log(`Added ${cityCount} city labels`);
+}
+
+/**
+ * Updates positions of all existing labels for current projection/camera state
+ * Call this when mercator center changes (panning) or camera moves
+ */
+function updateAllLabelPositions() {
+    for (var i = 0; i < textSpriteData.length; i++) {
+        var spriteData = textSpriteData[i];
+        if (spriteData && spriteData.sprite) {
+            // Recalculate position based on current projection state
+            var newPosition = calculateLabelPosition(spriteData.originalPosition, spriteData.elevationOffset);
+            spriteData.sprite.position.copy(newPosition);
+
+            // Update scale in case projection mode changed
+            var scale = calculateLabelScale();
+            spriteData.sprite.scale.set(scale, scale * (spriteData.sprite.scale.y / spriteData.sprite.scale.x), 1);
+        }
+    }
+}
+
+/**
+ * Rebuilds all labels for the current projection mode
+ * Call this when switching between 3D globe and Mercator projection
+ * @param {Array} tiles - Array of planet tiles
+ */
+function rebuildAllLabelsForProjection(tiles) {
+    if (!tiles || tiles.length === 0) return;
+
+    console.log("Rebuilding labels for projection mode:", typeof projectionMode !== 'undefined' ? projectionMode : '3d');
+
+    // Clear existing labels and tracking data completely
+    clearAllTextLabels();
+
+    // Rebuild Mount Everest label
+    addMountEverestLabel(tiles);
+
+    // Rebuild city labels
+    addCityLabels(tiles);
+
+    console.log("Labels rebuilt - tracking", textSpriteData.length, "labels");
 }

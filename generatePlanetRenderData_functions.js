@@ -80,22 +80,6 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 		var spherical = cartesianToSpherical(tile.averagePosition);
 		var pos = tile.averagePosition;
 
-		// Test 11: Create 180° meridian with yellow-to-red gradient (north to south)
-		// Narrow range to only tiles that actually contain the 180° meridian line
-		var meridian180 = Math.abs(Math.abs(spherical.theta) - Math.PI); // Distance from ±180°
-		if (meridian180 < 0.05) { // 180° meridian ±2.9 degrees (much narrower)
-			// Create gradient from yellow (north pole, phi=π/2) to red (south pole, phi=-π/2)
-			// Normalize phi from [-π/2, π/2] to [0, 1] where 0=south, 1=north
-			var normalizedLat = (spherical.phi + Math.PI/2) / Math.PI; // 0 to 1, south to north
-
-			// Lerp from red (south) to yellow (north)
-			var red = new THREE.Color(0xFF0000);   // South pole color
-			var yellow = new THREE.Color(0xFFFF00); // North pole color
-			var gradientColor = red.clone().lerp(yellow, normalizedLat);
-
-			// Convert to hex string for tile.error
-			tile.error = '#' + gradientColor.getHexString();
-		}
 
 		// Debug logging for first few tiles to understand coordinate mapping
 		if (i < 5) {
@@ -113,7 +97,7 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 			var mercatorCoords = cartesianToMercator(centerPos, mercatorCenterLat, mercatorCenterLon);
 			// Scale coordinates for experimental zoom range (larger world)
 			// Add small Z-offset based on tile index to prevent Z-fighting
-			var zOffset = i * 0.001;
+			var zOffset = 0.001;
 			centerPos = new THREE.Vector3(mercatorCoords.x * 2.0, mercatorCoords.y * 2.0, zOffset);
 
 			// Debug logging for first few tiles
@@ -143,7 +127,7 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 
 				// Scale coordinates for experimental zoom range (larger world)
 				// Use same Z-offset as tile center to keep triangle coplanar
-				var zOffset = i * 0.001;
+				var zOffset = 0.001;
 				cornerPos = new THREE.Vector3(mercatorCoords.x * 2.0, mercatorCoords.y * 2.0, zOffset);
 
 				// Debug logging for first tile's corners
@@ -185,7 +169,7 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 				// Create two versions: left side (subtract 2π from positive coords) and right side (add 2π to negative coords)
 				var leftCorners = [];
 				var rightCorners = [];
-				var zOffset = i * 0.001;
+				var zOffset = 0.001;
 
 				for (var k = 0; k < cornerMercatorCoords.length; k++) {
 					var coord = cornerMercatorCoords[k];
@@ -534,68 +518,126 @@ function buildAirCurrentsRenderObject(corners, action) {
 		}
 	}
 	
-	// Process all corners synchronously
+	// Process all corners with air currents
 	for (var i = 0; i < corners.length; i++) {
 		var corner = corners[i];
-		
+
 		if (corner.airCurrent) cornersWithAirCurrent++;
 		if (corner.airCurrent && corner.airCurrent.length() >= 0.05) cornersAboveThreshold++;
-		
+
 		// Skip corners without significant air current
 		if (!corner.airCurrent || corner.airCurrent.length() < 0.05) {
 			continue;
 		}
 		
-		// Position air currents at atmospheric level (above terrain but not too high)
+		// Position air currents based on projection mode
 		var basePosition = corner.position.clone();
-		var airCurrentAltitude = 1050; // Just above terrain
-		basePosition.normalize().multiplyScalar(airCurrentAltitude);
+		if (projectionMode === "mercator") {
+			// In Mercator mode, project to 2D coordinates with air current layer Z
+			var mercatorCoords = cartesianToMercator(basePosition, mercatorCenterLat, mercatorCenterLon);
+			basePosition = new THREE.Vector3(
+				mercatorCoords.x * 2.0,
+				mercatorCoords.y * 2.0,
+				0.2 // Air currents layer: Map(0) → Rivers(0.1) → Air Currents(0.2) → Labels(0.3)
+			);
+		} else {
+			// 3D globe mode - position at atmospheric level
+			var airCurrentAltitude = 1050; // Just above terrain
+			basePosition.normalize().multiplyScalar(airCurrentAltitude);
+		}
 		
-		// Calculate arrow properties based on SBL
+		// Calculate arrow properties based on SBL and projection mode
 		var airDirection = corner.airCurrent.clone().normalize();
 		var airCurrentStrength = corner.airCurrent.length();
-		
-		// Normalize wind strength (0 to 1) and multiply by ABL
+
+		// Normalize wind strength (0 to 1) and calculate triangle length
 		var normalizedWindStrength = maxWindStrength > 0 ? airCurrentStrength / maxWindStrength : 0;
-		var triangleLength = normalizedWindStrength * ABL;
-		
-		// Base width = 1/8 ABL
-		var triangleWidth = ABL / 8;
-		
+		var triangleLength;
+		if (projectionMode === "mercator") {
+			// In Mercator mode, scale ABL to match equatorial projection scale
+			triangleLength = normalizedWindStrength * ABL * (2.0 / 1000);
+		} else {
+			// 3D globe mode - use original calculation
+			triangleLength = normalizedWindStrength * ABL;
+		}
+
+		// Base width calculation based on projection mode
+		var triangleWidth;
+		if (projectionMode === "mercator") {
+			// In Mercator mode, scale ABL to match equatorial projection scale
+			// Air currents use 1/8 ABL vs rivers' 1/4 ABL
+			triangleWidth = (ABL / 8) * (2.0 / 1000);
+		} else {
+			// 3D globe mode - use original calculation
+			triangleWidth = ABL / 8; // Base width = 1/8 ABL
+		}
+
 		// Create single triangle pointing in flow direction
 		var tipPosition = basePosition.clone().add(airDirection.clone().multiplyScalar(triangleLength));
 		
 		// Create perpendicular vectors for triangle base
-		var upVector = corner.position.clone().normalize(); // Surface normal
+		var upVector;
+		if (projectionMode === "mercator") {
+			// In Mercator mode, use Z-axis up for 2D plane
+			upVector = new THREE.Vector3(0, 0, 1);
+		} else {
+			// 3D globe mode - use surface normal
+			upVector = corner.position.clone().normalize();
+		}
 		var perpendicular = new THREE.Vector3();
 		perpendicular.crossVectors(airDirection, upVector).normalize();
 		
-		// Color based on air current strength (white to cyan gradient)
-		var intensity = Math.min(corner.airCurrent.length() * 5, 1);
+		// DEBUG: Use bright blue color for high visibility during debugging
 		var triangleColor = {
-			r: 0.8 + intensity * 0.2,
-			g: 0.9 + intensity * 0.1, 
-			b: 1
+			r: 0.0, // Bright blue for debugging
+			g: 0.5,
+			b: 1.0
 		};
 		
 		// Create single triangle: tip at flow direction, base perpendicular
 		var baseLeft = basePosition.clone().add(perpendicular.clone().multiplyScalar(-triangleWidth));
 		var baseRight = basePosition.clone().add(perpendicular.clone().multiplyScalar(triangleWidth));
-		
+
+		// Fix antimeridian wrapping for air current triangles in Mercator mode
+		if (projectionMode === "mercator") {
+			var triangleVertices = [tipPosition, baseLeft, baseRight];
+			var xCoords = triangleVertices.map(v => v.x);
+			var minX = Math.min.apply(Math, xCoords);
+			var maxX = Math.max.apply(Math, xCoords);
+
+			// If triangle spans more than half the map width, it's wrapping
+			if (maxX - minX > Math.PI * 2.0) { // 2π * 2.0 scaling = map width
+				// Fix coordinates in-place by moving outlying vertices to the correct side
+				var mapWidth = Math.PI * 4.0; // Full map width in scaled coordinates
+				var avgX = (tipPosition.x + baseLeft.x + baseRight.x) / 3;
+
+				// Correct each vertex that is far from the average
+				if (Math.abs(tipPosition.x - avgX) > Math.PI * 2.0) {
+					tipPosition.x += tipPosition.x > avgX ? -mapWidth : mapWidth;
+				}
+				if (Math.abs(baseLeft.x - avgX) > Math.PI * 2.0) {
+					baseLeft.x += baseLeft.x > avgX ? -mapWidth : mapWidth;
+				}
+				if (Math.abs(baseRight.x - avgX) > Math.PI * 2.0) {
+					baseRight.x += baseRight.x > avgX ? -mapWidth : mapWidth;
+				}
+			}
+		}
+
 		// Add triangle vertices
 		var tipIndex = airCurrentVertexIndex;
 		airCurrentPositions.push(tipPosition.x, tipPosition.y, tipPosition.z);
-		airCurrentColors.push(triangleColor.r, triangleColor.g, triangleColor.b);
+		airCurrentColors.push(0.9, 0.9, 0.9); // Light gray for air currents
 		airCurrentVertexIndex++;
-		
+
 		var baseLeftIndex = airCurrentVertexIndex;
 		airCurrentPositions.push(baseLeft.x, baseLeft.y, baseLeft.z);
-		airCurrentColors.push(triangleColor.r, triangleColor.g, triangleColor.b);
+		airCurrentColors.push(0.9, 0.9, 0.9); // Light gray for air currents
 		airCurrentVertexIndex++;
-		
+
 		var baseRightIndex = airCurrentVertexIndex;
 		airCurrentPositions.push(baseRight.x, baseRight.y, baseRight.z);
-		airCurrentColors.push(triangleColor.r, triangleColor.g, triangleColor.b);
+		airCurrentColors.push(0.9, 0.9, 0.9); // Light gray for air currents
 		airCurrentVertexIndex++;
 		
 		// Create single triangle
@@ -649,23 +691,42 @@ function buildRiversRenderObject(tiles, action) {
 	var totalInflowTriangles = 0;
 	var totalOutflowTriangles = 0;
 	
-	// Process all tiles synchronously
+	// Process all river tiles
 	for (var i = 0; i < tiles.length; i++) {
 		var tile = tiles[i];
 		if (tile.river) totalRiverTiles++;
-		
+
 		if (tile.river && tile.riverSources && tile.drain) {
-			// Calculate tile center position with elevation (respecting elevation toggle)
+			// Calculate tile center position based on projection mode
 			var tileCenterPos = tile.averagePosition.clone();
-			if (tile.elevation > 0) {
-				var tileDistance = tileCenterPos.length();
-				tileCenterPos.normalize().multiplyScalar(tileDistance + (useElevationDisplacement ? tile.elevationDisplacement : 0) + 3);
+			if (projectionMode === "mercator") {
+				// In Mercator mode, project to 2D coordinates with river layer Z
+				var mercatorCoords = cartesianToMercator(tileCenterPos, mercatorCenterLat, mercatorCenterLon);
+				tileCenterPos = new THREE.Vector3(
+					mercatorCoords.x * 2.0,
+					mercatorCoords.y * 2.0,
+					0.1 // Rivers layer: Map(0) → Rivers(0.1) → Air Currents(0.2) → Labels(0.3)
+				);
 			} else {
-				tileCenterPos.multiplyScalar(1.003);
+				// 3D globe mode - use elevation
+				if (tile.elevation > 0) {
+					var tileDistance = tileCenterPos.length();
+					tileCenterPos.normalize().multiplyScalar(tileDistance + (useElevationDisplacement ? tile.elevationDisplacement : 0) + 3);
+				} else {
+					tileCenterPos.multiplyScalar(1.003);
+				}
 			}
 			
 			// River triangle dimensions (same for both inflow and outflow)
-			var triangleWidth = ABL / 4; // River base width = 1/4 ABL
+			var triangleWidth;
+			if (projectionMode === "mercator") {
+				// In Mercator mode, scale ABL to match equatorial projection scale
+				// Sphere radius ~1000, equatorial scale factor 2.0, so ABL/4 * 2.0/1000
+				triangleWidth = (ABL / 4) * (2.0 / 1000);
+			} else {
+				// 3D globe mode - use original calculation
+				triangleWidth = ABL / 4; // River base width = 1/4 ABL
+			}
 			var waterfallThreshold = riverElevationDeltaThreshold || 0.1;
 			
 			// Create one OUTFLOW triangle: tile center → drain border
@@ -681,14 +742,25 @@ function buildRiversRenderObject(tiles, action) {
 					drainBorderPos = tile.averagePosition.clone().add(tile.drain.averagePosition).multiplyScalar(0.5);
 				}
 				
-				// Apply elevation to drain border
-				var drainBorderElevation = calculateBorderElevation(tile, tile.drain);
-				if (drainBorderElevation > 0) {
-					var drainBorderDistance = drainBorderPos.length();
-					var drainBorderDisplacement = drainBorder ? drainBorder.elevationDisplacement : drainBorderElevation * elevationMultiplier;
-					drainBorderPos.normalize().multiplyScalar(drainBorderDistance + (useElevationDisplacement ? drainBorderDisplacement : 0) + 3);
+				// Position drain border based on projection mode
+				if (projectionMode === "mercator") {
+					// In Mercator mode, project to 2D coordinates with river layer Z
+					var mercatorCoords = cartesianToMercator(drainBorderPos, mercatorCenterLat, mercatorCenterLon);
+					drainBorderPos = new THREE.Vector3(
+						mercatorCoords.x * 2.0,
+						mercatorCoords.y * 2.0,
+						0.1 // Rivers layer Z
+					);
 				} else {
-					drainBorderPos.multiplyScalar(1.003);
+					// 3D globe mode - apply elevation
+					var drainBorderElevation = calculateBorderElevation(tile, tile.drain);
+					if (drainBorderElevation > 0) {
+						var drainBorderDistance = drainBorderPos.length();
+						var drainBorderDisplacement = drainBorder ? drainBorder.elevationDisplacement : drainBorderElevation * elevationMultiplier;
+						drainBorderPos.normalize().multiplyScalar(drainBorderDistance + (useElevationDisplacement ? drainBorderDisplacement : 0) + 3);
+					} else {
+						drainBorderPos.multiplyScalar(1.003);
+					}
 				}
 				
 				// Calculate outflow triangle color (waterfall detection)
@@ -698,24 +770,57 @@ function buildRiversRenderObject(tiles, action) {
 				
 				// Create outflow triangle: tip at drain border, base perpendicular at tile center
 				var outflowDirection = drainBorderPos.clone().sub(tileCenterPos).normalize();
-				var upVector = tileCenterPos.clone().normalize();
+				var upVector;
+				if (projectionMode === "mercator") {
+					// In Mercator mode, use Z-axis up for 2D plane
+					upVector = new THREE.Vector3(0, 0, 1);
+				} else {
+					// 3D globe mode - use surface normal
+					upVector = tile.averagePosition.clone().normalize();
+				}
 				var perpendicular = new THREE.Vector3();
 				perpendicular.crossVectors(outflowDirection, upVector).normalize();
 				
 				var baseLeft = tileCenterPos.clone().add(perpendicular.clone().multiplyScalar(-triangleWidth));
 				var baseRight = tileCenterPos.clone().add(perpendicular.clone().multiplyScalar(triangleWidth));
-				
+
+				// Fix antimeridian wrapping for river triangles in Mercator mode
+				if (projectionMode === "mercator") {
+					var triangleVertices = [drainBorderPos, baseLeft, baseRight];
+					var xCoords = triangleVertices.map(v => v.x);
+					var minX = Math.min.apply(Math, xCoords);
+					var maxX = Math.max.apply(Math, xCoords);
+
+					// If triangle spans more than half the map width, it's wrapping
+					if (maxX - minX > Math.PI * 2.0) { // 2π * 2.0 scaling = map width
+						// Fix coordinates in-place by moving outlying vertices to the correct side
+						var mapWidth = Math.PI * 4.0; // Full map width in scaled coordinates
+						var avgX = (drainBorderPos.x + baseLeft.x + baseRight.x) / 3;
+
+						// Correct each vertex that is far from the average
+						if (Math.abs(drainBorderPos.x - avgX) > Math.PI * 2.0) {
+							drainBorderPos.x += drainBorderPos.x > avgX ? -mapWidth : mapWidth;
+						}
+						if (Math.abs(baseLeft.x - avgX) > Math.PI * 2.0) {
+							baseLeft.x += baseLeft.x > avgX ? -mapWidth : mapWidth;
+						}
+						if (Math.abs(baseRight.x - avgX) > Math.PI * 2.0) {
+							baseRight.x += baseRight.x > avgX ? -mapWidth : mapWidth;
+						}
+					}
+				}
+
 				// Add outflow triangle vertices
 				var tipIndex = riverVertexIndex;
 				riverPositions.push(drainBorderPos.x, drainBorderPos.y, drainBorderPos.z);
 				riverColors.push(outflowColor.r, outflowColor.g, outflowColor.b);
 				riverVertexIndex++;
-				
+
 				var baseLeftIndex = riverVertexIndex;
 				riverPositions.push(baseLeft.x, baseLeft.y, baseLeft.z);
 				riverColors.push(outflowColor.r, outflowColor.g, outflowColor.b);
 				riverVertexIndex++;
-				
+
 				var baseRightIndex = riverVertexIndex;
 				riverPositions.push(baseRight.x, baseRight.y, baseRight.z);
 				riverColors.push(outflowColor.r, outflowColor.g, outflowColor.b);
@@ -741,14 +846,25 @@ function buildRiversRenderObject(tiles, action) {
 					sourceBorderPos = source.averagePosition.clone().add(tile.averagePosition).multiplyScalar(0.5);
 				}
 				
-				// Apply elevation to source border
-				var sourceBorderElevation = calculateBorderElevation(source, tile);
-				if (sourceBorderElevation > 0) {
-					var sourceBorderDistance = sourceBorderPos.length();
-					var sourceBorderDisplacement = sourceBorder ? sourceBorder.elevationDisplacement : sourceBorderElevation * elevationMultiplier;
-					sourceBorderPos.normalize().multiplyScalar(sourceBorderDistance + (useElevationDisplacement ? sourceBorderDisplacement : 0) + 3);
+				// Position source border based on projection mode
+				if (projectionMode === "mercator") {
+					// In Mercator mode, project to 2D coordinates with river layer Z
+					var mercatorCoords = cartesianToMercator(sourceBorderPos, mercatorCenterLat, mercatorCenterLon);
+					sourceBorderPos = new THREE.Vector3(
+						mercatorCoords.x * 2.0,
+						mercatorCoords.y * 2.0,
+						0.1 // Rivers layer Z
+					);
 				} else {
-					sourceBorderPos.multiplyScalar(1.003);
+					// 3D globe mode - apply elevation
+					var sourceBorderElevation = calculateBorderElevation(source, tile);
+					if (sourceBorderElevation > 0) {
+						var sourceBorderDistance = sourceBorderPos.length();
+						var sourceBorderDisplacement = sourceBorder ? sourceBorder.elevationDisplacement : sourceBorderElevation * elevationMultiplier;
+						sourceBorderPos.normalize().multiplyScalar(sourceBorderDistance + (useElevationDisplacement ? sourceBorderDisplacement : 0) + 3);
+					} else {
+						sourceBorderPos.multiplyScalar(1.003);
+					}
 				}
 				
 				// Calculate inflow triangle color (waterfall detection)
@@ -758,24 +874,57 @@ function buildRiversRenderObject(tiles, action) {
 				
 				// Create inflow triangle: tip at tile center, base perpendicular at source border
 				var inflowDirection = tileCenterPos.clone().sub(sourceBorderPos).normalize();
-				var upVector2 = sourceBorderPos.clone().normalize();
+				var upVector2;
+				if (projectionMode === "mercator") {
+					// In Mercator mode, use Z-axis up for 2D plane
+					upVector2 = new THREE.Vector3(0, 0, 1);
+				} else {
+					// 3D globe mode - use surface normal from original 3D position
+					upVector2 = source.averagePosition.clone().normalize();
+				}
 				var perpendicular2 = new THREE.Vector3();
 				perpendicular2.crossVectors(inflowDirection, upVector2).normalize();
 				
 				var baseLeft2 = sourceBorderPos.clone().add(perpendicular2.clone().multiplyScalar(-triangleWidth));
 				var baseRight2 = sourceBorderPos.clone().add(perpendicular2.clone().multiplyScalar(triangleWidth));
-				
+
+				// Fix antimeridian wrapping for inflow triangles in Mercator mode
+				if (projectionMode === "mercator") {
+					var triangleVertices2 = [tileCenterPos, baseLeft2, baseRight2];
+					var xCoords2 = triangleVertices2.map(v => v.x);
+					var minX2 = Math.min.apply(Math, xCoords2);
+					var maxX2 = Math.max.apply(Math, xCoords2);
+
+					// If triangle spans more than half the map width, it's wrapping
+					if (maxX2 - minX2 > Math.PI * 2.0) { // 2π * 2.0 scaling = map width
+						// Fix coordinates in-place by moving outlying vertices to the correct side
+						var mapWidth = Math.PI * 4.0; // Full map width in scaled coordinates
+						var avgX2 = (tileCenterPos.x + baseLeft2.x + baseRight2.x) / 3;
+
+						// Correct each vertex that is far from the average
+						if (Math.abs(tileCenterPos.x - avgX2) > Math.PI * 2.0) {
+							tileCenterPos.x += tileCenterPos.x > avgX2 ? -mapWidth : mapWidth;
+						}
+						if (Math.abs(baseLeft2.x - avgX2) > Math.PI * 2.0) {
+							baseLeft2.x += baseLeft2.x > avgX2 ? -mapWidth : mapWidth;
+						}
+						if (Math.abs(baseRight2.x - avgX2) > Math.PI * 2.0) {
+							baseRight2.x += baseRight2.x > avgX2 ? -mapWidth : mapWidth;
+						}
+					}
+				}
+
 				// Add inflow triangle vertices
 				var tipIndex2 = riverVertexIndex;
 				riverPositions.push(tileCenterPos.x, tileCenterPos.y, tileCenterPos.z);
 				riverColors.push(inflowColor.r, inflowColor.g, inflowColor.b);
 				riverVertexIndex++;
-				
+
 				var baseLeftIndex2 = riverVertexIndex;
 				riverPositions.push(baseLeft2.x, baseLeft2.y, baseLeft2.z);
 				riverColors.push(inflowColor.r, inflowColor.g, inflowColor.b);
 				riverVertexIndex++;
-				
+
 				var baseRightIndex2 = riverVertexIndex;
 				riverPositions.push(baseRight2.x, baseRight2.y, baseRight2.z);
 				riverColors.push(inflowColor.r, inflowColor.g, inflowColor.b);
@@ -785,6 +934,7 @@ function buildRiversRenderObject(tiles, action) {
 				riverIndices.push(tipIndex2, baseLeftIndex2, baseRightIndex2);
 				totalInflowTriangles++;
 			}
+
 		}
 	}
 
@@ -926,14 +1076,25 @@ function buildSegmentedArrow(geometry, fromTile, toTile, direction, baseWidth, c
 	
 	// Build arrow segments: fromPos -> midPos (always), midPos -> toPos (only if not ocean)
 	var firstSegment = midPos.clone().sub(fromPos);
-	
+
+	// Determine proper normal vector based on projection mode
+	var normalVector;
+	if (projectionMode === "mercator") {
+		// In Mercator mode, use Z-axis up for 2D plane
+		normalVector = new THREE.Vector3(0, 0, 1);
+	} else {
+		// 3D globe mode - use surface normal
+		normalVector = fromTile.averagePosition.clone().normalize();
+	}
+
 	// Always create first segment (from source to border)
-	buildArrow(geometry, fromPos, firstSegment, fromTile.averagePosition.clone().normalize(), baseWidth, color);
-	
+	buildArrow(geometry, fromPos, firstSegment, normalVector, baseWidth, color);
+
 	// Only create second segment if downstream tile is not ocean
 	if (toTile.elevation > 0) {
 		var secondSegment = toPos.clone().sub(midPos);
-		buildArrow(geometry, midPos, secondSegment, toTile.averagePosition.clone().normalize(), baseWidth, color);
+		// Use same normal vector for consistency
+		buildArrow(geometry, midPos, secondSegment, normalVector, baseWidth, color);
 	}
 }
 
@@ -998,14 +1159,25 @@ function buildSegmentedArrowWithWaterfalls(geometry, fromTile, toTile, direction
 	
 	// Build arrow segments with individual colors
 	var firstSegment = midPos.clone().sub(fromPos);
-	
+
+	// Determine proper normal vector based on projection mode
+	var normalVector;
+	if (projectionMode === "mercator") {
+		// In Mercator mode, use Z-axis up for 2D plane
+		normalVector = new THREE.Vector3(0, 0, 1);
+	} else {
+		// 3D globe mode - use surface normal
+		normalVector = fromTile.averagePosition.clone().normalize();
+	}
+
 	// Always create first segment (from source to border)
-	buildArrow(geometry, fromPos, firstSegment, fromTile.averagePosition.clone().normalize(), baseWidth, firstSegmentColor);
-	
+	buildArrow(geometry, fromPos, firstSegment, normalVector, baseWidth, firstSegmentColor);
+
 	// Only create second segment if downstream tile is not ocean
 	if (toTile.elevation > 0) {
 		var secondSegment = toPos.clone().sub(midPos);
-		buildArrow(geometry, midPos, secondSegment, toTile.averagePosition.clone().normalize(), baseWidth, secondSegmentColor);
+		// Use same normal vector for consistency
+		buildArrow(geometry, midPos, secondSegment, normalVector, baseWidth, secondSegmentColor);
 	}
 }
 
