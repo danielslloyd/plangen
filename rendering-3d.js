@@ -202,74 +202,126 @@ function buildArrow(positions, colors, indices, vertexIndex, position, direction
 function createTileSelectRenderObject(tile, color) {
     var outerColor = {r: 0, g: 0, b: 0};
     var innerColor = color ? {r: color.r, g: color.g, b: color.b} : {r: 1, g: 1, b: 1};
-    
+
+    // Arrays for r125 BufferGeometry triangle rendering
     var positions = [];
     var colors = [];
     var indices = [];
-    
-    // Calculate tile center position with elevation
+    var vertexIndex = 0;
+
+    // Calculate tile center position based on projection mode
     var centerPos = tile.averagePosition.clone();
-    if (tile.elevation > 0) {
-        var centerDistance = centerPos.length();
-        centerPos.normalize().multiplyScalar(centerDistance + tile.elevationDisplacement + 5); // +5 for selection highlight offset
+
+    if (projectionMode === "mercator") {
+        // For Mercator mode, project to 2D coordinates with selection layer Z
+        var mercatorCoords = cartesianToMercator(centerPos, mercatorCenterLat, mercatorCenterLon);
+        centerPos = new THREE.Vector3(
+            mercatorCoords.x * 2.0,
+            mercatorCoords.y * 2.0,
+            0.05 // Selection layer: slightly above surface (0) but below rivers (0.1)
+        );
     } else {
-        centerPos.multiplyScalar(1.0005); // slight offset for water tiles
+        // For Globe mode, use 3D positioning with proper elevation handling
+        if (tile.elevation > 0) {
+            var centerDistance = centerPos.length();
+            var displacement = useElevationDisplacement && tile.elevationDisplacement ? tile.elevationDisplacement : 0;
+            centerPos.normalize().multiplyScalar(centerDistance + displacement + 5); // +5 for selection highlight offset
+        } else {
+            centerPos.multiplyScalar(1.0005); // slight offset for water tiles
+        }
     }
-    
+
     // Add center vertex (index 0)
     positions.push(centerPos.x, centerPos.y, centerPos.z);
     colors.push(innerColor.r, innerColor.g, innerColor.b);
-    
+    var centerIndex = vertexIndex;
+    vertexIndex++;
+
     // Add corner vertices and build triangles
     for (var i = 0; i < tile.corners.length; ++i) {
         var corner = tile.corners[i];
         var cornerPosition = corner.position.clone();
-        
-        // Check if any adjacent tile is ocean (elevation <= 0)
-        var hasOceanTile = false;
-        for (var k = 0; k < corner.tiles.length; ++k) {
-            if (corner.tiles[k].elevation <= 0) {
-                hasOceanTile = true;
-                break;
+
+        if (projectionMode === "mercator") {
+            // For Mercator mode, project corner to 2D coordinates
+            var cornerMercatorCoords = cartesianToMercator(cornerPosition, mercatorCenterLat, mercatorCenterLon);
+            cornerPosition = new THREE.Vector3(
+                cornerMercatorCoords.x * 2.0,
+                cornerMercatorCoords.y * 2.0,
+                0.05 // Same selection layer Z as center
+            );
+        } else {
+            // For Globe mode, apply elevation displacement
+            // Check if any adjacent tile is ocean (elevation <= 0)
+            var hasOceanTile = false;
+            for (var k = 0; k < corner.tiles.length; ++k) {
+                if (corner.tiles[k].elevation <= 0) {
+                    hasOceanTile = true;
+                    break;
+                }
+            }
+
+            // Apply elevation displacement only if no adjacent tiles are ocean and median elevation is positive
+            if (!hasOceanTile && corner.elevationMedian > 0) {
+                var cornerDistance = cornerPosition.length();
+                var cornerDisplacement = useElevationDisplacement && corner.elevationDisplacement ? corner.elevationDisplacement : 0;
+                cornerPosition.normalize().multiplyScalar(cornerDistance + cornerDisplacement + 5); // +5 for selection highlight offset
+            } else {
+                cornerPosition.multiplyScalar(1.0005); // slight offset for water/coastal corners
             }
         }
-        
-        // Apply elevation displacement only if no adjacent tiles are ocean and median elevation is positive
-        if (!hasOceanTile && corner.elevationMedian > 0) {
-            var cornerDistance = cornerPosition.length();
-            cornerPosition.normalize().multiplyScalar(cornerDistance + corner.elevationDisplacement + 5); // +5 for selection highlight offset
-        } else {
-            cornerPosition.multiplyScalar(1.0005); // slight offset for water/coastal corners
-        }
-        
+
         // Add corner vertex
         positions.push(cornerPosition.x, cornerPosition.y, cornerPosition.z);
         colors.push(outerColor.r, outerColor.g, outerColor.b);
-        
-        // Create triangle: current corner -> next corner -> center
-        // This matches Face3(i + 1, (i + 1) % tile.corners.length + 1, 0)
-        var currentCornerIndex = i + 1;
-        var nextCornerIndex = (i + 1) % tile.corners.length + 1;
-        var centerIndex = 0;
-        
-        indices.push(currentCornerIndex, nextCornerIndex, centerIndex);
+        var currentCornerIndex = vertexIndex;
+        vertexIndex++;
+
+        // Create triangle: center -> current corner -> next corner
+        // We need to defer triangle creation until we have all vertices
     }
-    
-    // Create BufferGeometry directly
+
+    // Now create triangles connecting center to adjacent corners
+    for (var i = 0; i < tile.corners.length; ++i) {
+        var currentCornerIndex = i + 1; // +1 because center is at index 0
+        var nextCornerIndex = ((i + 1) % tile.corners.length) + 1; // +1 because center is at index 0
+
+        indices.push(centerIndex, currentCornerIndex, nextCornerIndex);
+    }
+
+    // Create BufferGeometry using r125 pattern
     var geometry = new THREE.BufferGeometry();
+
     if (positions.length > 0) {
+        // Create buffer attributes using Float32BufferAttribute
         geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
         geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
         geometry.setIndex(indices);
+
+        // Compute normals and bounding sphere
+        geometry.computeVertexNormals();
+        geometry.computeBoundingSphere();
     }
-    
-    geometry.boundingSphere = tile.boundingSphere.clone();
-    var material = new THREE.MeshLambertMaterial({ vertexColors: true });
-    material.transparent = true;
-    material.opacity = 0.5;
-    material.polygonOffset = true;
-    material.polygonOffsetFactor = -2;
-    material.polygonOffsetUnits = -2;
+
+    // Create material using r125 pattern (similar to rivers)
+    var material = new THREE.MeshBasicMaterial({
+        vertexColors: true,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.8
+    });
+
+    // For Mercator mode, ensure visibility over flat surface
+    if (projectionMode === "mercator") {
+        material.depthTest = false;
+        material.renderOrder = 1; // Ensure it renders after the surface
+    } else {
+        // For Globe mode, use polygon offset to prevent z-fighting
+        material.polygonOffset = true;
+        material.polygonOffsetFactor = -2;
+        material.polygonOffsetUnits = -2;
+    }
+
     return new THREE.Mesh(geometry, material);
 }
 

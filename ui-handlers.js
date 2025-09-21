@@ -18,16 +18,57 @@ function clickHandler(event) {
 		var mouse = new THREE.Vector2();
 		mouse.x = (event.pageX / renderer.domElement.clientWidth) * 2 - 1;
 		mouse.y = -(event.pageY / renderer.domElement.clientHeight) * 2 + 1;
-		
-		var raycaster = new THREE.Raycaster();
-		raycaster.setFromCamera(mouse, camera);
-		
-		var intersection = planet.partition.intersectRay(raycaster.ray);
-		if (intersection !== false) {
-			//console.log(intersection);
-			selectTile(intersection); }
-		else
-			deselectTile();
+
+		if (projectionMode === "mercator") {
+			// For Mercator mode, convert mouse coordinates to world coordinates on the 2D plane
+			// Get the camera's orthographic bounds
+			var left = camera.left;
+			var right = camera.right;
+			var top = camera.top;
+			var bottom = camera.bottom;
+
+			// Convert normalized device coordinates to world coordinates
+			var worldX = (mouse.x * (right - left)) / 2;
+			var worldY = (mouse.y * (top - bottom)) / 2;
+
+			// Convert world coordinates back to Mercator coordinates (reverse the 2.0 scaling)
+			var mercatorX = worldX / 2.0;
+			var mercatorY = worldY / 2.0;
+
+			// Convert Mercator coordinates back to Cartesian coordinates
+			var clickPosition = mercatorToCartesian(mercatorX, mercatorY, mercatorCenterLat, mercatorCenterLon);
+
+			// Find the closest tile to this position
+			var closestTile = null;
+			var closestDistance = Infinity;
+
+			for (var i = 0; i < planet.topology.tiles.length; i++) {
+				var tile = planet.topology.tiles[i];
+				var distance = tile.averagePosition.distanceTo(clickPosition);
+				if (distance < closestDistance) {
+					closestDistance = distance;
+					closestTile = tile;
+				}
+			}
+
+			if (closestTile) {
+				selectTile(closestTile);
+			} else {
+				deselectTile();
+			}
+		} else {
+			// For 3D globe mode, use the original raycasting approach
+			var raycaster = new THREE.Raycaster();
+			raycaster.setFromCamera(mouse, camera);
+
+			var intersection = planet.partition.intersectRay(raycaster.ray);
+			if (intersection !== false) {
+				//console.log(intersection);
+				selectTile(intersection);
+			} else {
+				deselectTile();
+			}
+		}
 	}
 }
 
