@@ -27,9 +27,9 @@ function clickHandler(event) {
 			var top = camera.top;
 			var bottom = camera.bottom;
 
-			// Convert normalized device coordinates to world coordinates
-			var worldX = (mouse.x * (right - left)) / 2;
-			var worldY = (mouse.y * (top - bottom)) / 2;
+			// Convert normalized device coordinates to world coordinates relative to camera
+			var worldX = mercatorCameraX + (mouse.x * (right - left)) / 2;
+			var worldY = mercatorCameraY + (mouse.y * (top - bottom)) / 2;
 
 			// Convert world coordinates back to Mercator coordinates (reverse the 2.0 scaling)
 			var mercatorX = worldX / 2.0;

@@ -331,12 +331,30 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 			});
 		}
 		
-		var planetRenderObject = new THREE.Mesh(planetGeometry, planetMaterial);
-		
+		var planetRenderObject;
+
+		if (projectionMode === "mercator") {
+			// For Mercator mode, create a Group with 2 copies for seamless wrapping
+			planetRenderObject = new THREE.Group();
+
+			// Map width in scaled coordinates = 4π * 2.0 ≈ 25.13
+			var mapWidth = Math.PI * 4.0 * 2.0;
+
+			// Create 2 copies: center (0) and right (+1) for seamless wrapping
+			for (var offset = 0; offset <= 1; offset++) {
+				var meshCopy = new THREE.Mesh(planetGeometry, planetMaterial);
+				meshCopy.position.x = offset * mapWidth;
+				planetRenderObject.add(meshCopy);
+			}
+		} else {
+			// For Globe mode, use single mesh as before
+			planetRenderObject = new THREE.Mesh(planetGeometry, planetMaterial);
+		}
+
 		// Force geometry update notification
 		planetGeometry.attributes.position.needsUpdate = true;
 		planetGeometry.attributes.color.needsUpdate = true;
-		
+
 		finalResult = {
 			geometry: planetGeometry,
 			material: planetMaterial,
@@ -422,12 +440,31 @@ function buildPlateBoundariesRenderObject(borders, action) {
 		geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
 		geometry.setIndex(indices);
 	}
-	
+
 	geometry.boundingSphere = new THREE.Sphere(new Vector3(0, 0, 0), 1000 + elevationMultiplier + 60);
 	var material = new THREE.MeshBasicMaterial({
 		vertexColors: true,
 	});
-	var renderObject = new THREE.Mesh(geometry, material);
+
+	var renderObject;
+
+	if (projectionMode === "mercator") {
+		// For Mercator mode, create a Group with 2 copies for seamless wrapping
+		renderObject = new THREE.Group();
+
+		// Map width in scaled coordinates = 4π * 2.0 ≈ 25.13
+		var mapWidth = Math.PI * 4.0 * 2.0;
+
+		// Create 2 copies: center (0) and right (+1) for seamless wrapping
+		for (var offset = 0; offset <= 1; offset++) {
+			var meshCopy = new THREE.Mesh(geometry, material);
+			meshCopy.position.x = offset * mapWidth;
+			renderObject.add(meshCopy);
+		}
+	} else {
+		// For Globe mode, use single mesh as before
+		renderObject = new THREE.Mesh(geometry, material);
+	}
 
 	action.provideResult({
 		geometry: geometry,
@@ -486,7 +523,26 @@ function buildPlateMovementsRenderObject(tiles, action) {
 	var material = new THREE.MeshBasicMaterial({
 		vertexColors: true,
 	});
-	var renderObject = new THREE.Mesh(geometry, material);
+
+	var renderObject;
+
+	if (projectionMode === "mercator") {
+		// For Mercator mode, create a Group with 2 copies for seamless wrapping
+		renderObject = new THREE.Group();
+
+		// Map width in scaled coordinates = 4π * 2.0 ≈ 25.13
+		var mapWidth = Math.PI * 4.0 * 2.0;
+
+		// Create 2 copies: center (0) and right (+1) for seamless wrapping
+		for (var offset = 0; offset <= 1; offset++) {
+			var meshCopy = new THREE.Mesh(geometry, material);
+			meshCopy.position.x = offset * mapWidth;
+			renderObject.add(meshCopy);
+		}
+	} else {
+		// For Globe mode, use single mesh as before
+		renderObject = new THREE.Mesh(geometry, material);
+	}
 
 	action.provideResult({
 		geometry: geometry,
@@ -667,7 +723,25 @@ function buildAirCurrentsRenderObject(corners, action) {
 		opacity: 0.7
 	});
 
-	var renderObject = new THREE.Mesh(geometry, material);
+	var renderObject;
+
+	if (projectionMode === "mercator") {
+		// For Mercator mode, create a Group with 2 copies for seamless wrapping
+		renderObject = new THREE.Group();
+
+		// Map width in scaled coordinates = 4π * 2.0 ≈ 25.13
+		var mapWidth = Math.PI * 4.0 * 2.0;
+
+		// Create 2 copies: center (0) and right (+1) for seamless wrapping
+		for (var offset = 0; offset <= 1; offset++) {
+			var meshCopy = new THREE.Mesh(geometry, material);
+			meshCopy.position.x = offset * mapWidth;
+			renderObject.add(meshCopy);
+		}
+	} else {
+		// For Globe mode, use single mesh as before
+		renderObject = new THREE.Mesh(geometry, material);
+	}
 
 	action.provideResult({
 		geometry: geometry,
@@ -961,7 +1035,25 @@ function buildRiversRenderObject(tiles, action) {
 		opacity: 0.8
 	});
 
-	var renderObject = new THREE.Mesh(geometry, material);
+	var renderObject;
+
+	if (projectionMode === "mercator") {
+		// For Mercator mode, create a Group with 2 copies for seamless wrapping
+		renderObject = new THREE.Group();
+
+		// Map width in scaled coordinates = 4π * 2.0 ≈ 25.13
+		var mapWidth = Math.PI * 4.0 * 2.0;
+
+		// Create 2 copies: center (0) and right (+1) for seamless wrapping
+		for (var offset = 0; offset <= 1; offset++) {
+			var meshCopy = new THREE.Mesh(geometry, material);
+			meshCopy.position.x = offset * mapWidth;
+			renderObject.add(meshCopy);
+		}
+	} else {
+		// For Globe mode, use single mesh as before
+		renderObject = new THREE.Mesh(geometry, material);
+	}
 
 	action.provideResult({
 		geometry: geometry,

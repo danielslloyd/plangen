@@ -26,16 +26,11 @@ function render() {
 	var cameraLatitudeDelta = getLatitudeDelta();
 	if (frameDuration > 0 && cameraLatitudeDelta !== 0) {
 		if (projectionMode === "mercator") {
-			// In Mercator mode, move the center of the map instead of the camera
-			var panSpeed = 0.5; // Adjust this for comfortable panning speed
-			var oldLat = mercatorCenterLat;
-			mercatorCenterLat += frameDuration * -cameraLatitudeDelta * panSpeed;
-			mercatorCenterLat = Math.max(-Math.PI * 0.45, Math.min(mercatorCenterLat, Math.PI * 0.45)); // Keep away from poles
-
-			// If center changed, regenerate map and update labels
-			if (Math.abs(mercatorCenterLat - oldLat) > 0.001) {
-				regenerateRenderDataForProjection();
-			}
+			// In Mercator mode, move the camera position instead of regenerating geometry
+			var panSpeed = 2.0; // Increased speed since we're not regenerating geometry
+			mercatorCameraY += frameDuration * -cameraLatitudeDelta * panSpeed;
+			// Limit vertical panning to reasonable bounds (about ±80° latitude equivalent)
+			mercatorCameraY = Math.max(-2.5, Math.min(mercatorCameraY, 2.5));
 		} else {
 			// Original 3D globe camera movement
 			cameraLatitude += frameDuration * -cameraLatitudeDelta * Math.PI * (zoom * 0.5 + (1 - zoom) * 1 / 20);
@@ -47,17 +42,10 @@ function render() {
 	var cameraLongitudeDelta = getLongitudeDelta();
 	if (frameDuration > 0 && cameraLongitudeDelta !== 0) {
 		if (projectionMode === "mercator") {
-			// In Mercator mode, move the center of the map instead of the camera
-			var panSpeed = 0.5; // Adjust this for comfortable panning speed
-			var oldLon = mercatorCenterLon;
-			mercatorCenterLon += frameDuration * cameraLongitudeDelta * panSpeed;
-			// Allow longitude to wrap around freely
-			mercatorCenterLon = mercatorCenterLon - Math.floor(mercatorCenterLon / (Math.PI * 2)) * Math.PI * 2;
-
-			// If center changed, regenerate map and update labels
-			if (Math.abs(mercatorCenterLon - oldLon) > 0.001) {
-				regenerateRenderDataForProjection();
-			}
+			// In Mercator mode, move the camera position with infinite horizontal wrapping
+			var panSpeed = 2.0; // Increased speed since we're not regenerating geometry
+			mercatorCameraX += frameDuration * cameraLongitudeDelta * panSpeed;
+			// Allow infinite horizontal panning - no bounds needed, wrapping handled in camera update
 		} else {
 			// Original 3D globe camera movement
 			cameraLongitude += frameDuration * cameraLongitudeDelta * Math.PI * (zoom * Math.PI / 8 + (1 - zoom) / (20 * Math.max(Math.cos(cameraLatitude), 0.1)));
@@ -134,21 +122,25 @@ function updateCamera() {
 			);
 		}
 
-		// Position camera for 2D top-down view (use same scale factor as coordinates)
-		camera.position.set(0, 0, 1000); // Fixed camera position
-		camera.lookAt(0, 0, 0); // Look at center of projected coordinates
+		// Position camera based on mercatorCameraX/Y for smooth panning
+		camera.position.set(mercatorCameraX, mercatorCameraY, 1000);
+		camera.lookAt(mercatorCameraX, mercatorCameraY, 0); // Look at camera position but at z=0
 		camera.up.set(0, 1, 0);
 
-		// Update orthographic camera zoom
+		// Update orthographic camera zoom and bounds relative to camera position
 		var aspect = window.innerWidth / window.innerHeight;
 		var viewSize = 7;
 		var zoomFactor = Math.pow(2, zoom); // Exponential zoom mapping that works for negative values
 		var actualViewSize = viewSize / zoomFactor;
 
-		camera.left = -actualViewSize * aspect;
-		camera.right = actualViewSize * aspect;
-		camera.top = actualViewSize;
-		camera.bottom = -actualViewSize;
+		// Offset camera bounds by camera position for smooth panning
+		camera.left = mercatorCameraX - actualViewSize * aspect;
+		camera.right = mercatorCameraX + actualViewSize * aspect;
+		camera.top = mercatorCameraY + actualViewSize;
+		camera.bottom = mercatorCameraY - actualViewSize;
+
+		// Update wrapped geometry positions for infinite horizontal scrolling
+		updateMercatorWrapping();
 
 	} else {
 		// Globe 3D mode - use perspective camera
@@ -169,6 +161,25 @@ function updateCamera() {
 	}
 
 	camera.updateProjectionMatrix();
+}
+
+function updateMercatorWrapping() {
+	if (!planet || !planet.renderData || projectionMode !== "mercator") {
+		return;
+	}
+
+	// Map width in scaled coordinates = 4π * 2.0 ≈ 25.13
+	var mapWidth = Math.PI * 4.0 * 2.0;
+
+	// Wrap camera position when it goes too far
+	while (mercatorCameraX > mapWidth / 2) {
+		mercatorCameraX -= mapWidth;
+		console.log("Wrapped camera right to left, new cameraX:", mercatorCameraX);
+	}
+	while (mercatorCameraX < -mapWidth / 2) {
+		mercatorCameraX += mapWidth;
+		console.log("Wrapped camera left to right, new cameraX:", mercatorCameraX);
+	}
 }
 
 function buildArrow(positions, colors, indices, vertexIndex, position, direction, normal, baseWidth, color) {

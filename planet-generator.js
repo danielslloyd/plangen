@@ -60,8 +60,12 @@ var renderLabels = true;
 var renderWireframe = false;
 var elevationMultiplier = 80; // Controls how exaggerated the 3D terrain elevation appears
 var projectionMode = "globe"; // "globe" or "mercator"
-var mercatorCenterLat = 0; // Center latitude for Mercator projection (-π/2 to π/2)
-var mercatorCenterLon = 0; // Center longitude for Mercator projection (-π to π)
+var mercatorCenterLat = 0; // Center latitude for Mercator projection (-π/2 to π/2) - now fixed at 0
+var mercatorCenterLon = 0; // Center longitude for Mercator projection (-π to π) - now fixed at 0
+
+// Camera position for Mercator panning (separate from projection center)
+var mercatorCameraX = 0; // Camera X position in Mercator coordinates (infinite wrapping)
+var mercatorCameraY = 0; // Camera Y position in Mercator coordinates
 var useElevationDisplacement = false; // Binary parameter: use stored displacement values (true) or sphere positions (false)
 var riverElevationDeltaThreshold = 0.1; // Minimum elevation difference for white waterfall rivers
 var enableElevationDistributionReshaping = true; // Apply realistic elevation distribution
