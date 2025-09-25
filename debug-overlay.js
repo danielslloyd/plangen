@@ -204,6 +204,27 @@ var debugOverlay = {
             var shoreColor = tile.shore === 1 ? '#ffff00' : '#888';
             info.push('<div><span style="color: #888;">Shore Tile:</span> <span style="color: ' + shoreColor + '; font-weight: bold;">' + (tile.shore === 1 ? 'YES' : 'NO') + '</span> <span style="color: #888;">(value: ' + tile.shore + ')</span></div>');
         }
+
+        // Show shore movement sensitivity scores if available
+        if (typeof tile.positiveChangeScore !== 'undefined' && typeof tile.negativeChangeScore !== 'undefined') {
+            var positiveColor = tile.positiveChangeScore > 0.5 ? '#00aa00' : '#888';
+            var negativeColor = tile.negativeChangeScore > 0.5 ? '#cc0000' : '#888';
+            info.push('<div><span style="color: #888;">Shore Sensitivity:</span></div>');
+            info.push('<div style="margin-left: 10px;"><span style="color: #888;">Positive (out):</span> <span style="color: ' + positiveColor + '; font-weight: bold;">' + tile.positiveChangeScore.toFixed(3) + '</span></div>');
+            info.push('<div style="margin-left: 10px;"><span style="color: #888;">Negative (in):</span> <span style="color: ' + negativeColor + '; font-weight: bold;">' + tile.negativeChangeScore.toFixed(3) + '</span></div>');
+        }
+
+        // Show shoreN array if available
+        if (tile.shoreN && Array.isArray(tile.shoreN) && tile.shoreN.length > 0) {
+            info.push('<div><span style="color: #888;">Shore N Values:</span></div>');
+            for (var i = 0; i < tile.shoreN.length; i++) {
+                var N = tile.shoreN[i][0];
+                var shoreValue = tile.shoreN[i][1];
+                var change = Math.abs(shoreValue - (tile.shore || 0));
+                var changeColor = change > 5 ? '#ff0000' : change > 2 ? '#ffaa00' : '#888';
+                info.push('<div style="margin-left: 10px;"><span style="color: #888;">N=' + N + ':</span> <span style="color: ' + changeColor + '; font-weight: bold;">' + shoreValue + '</span> <span style="color: #666;">(Δ=' + change + ')</span></div>');
+            }
+        }
         
         this.tileInfoOverlay.innerHTML = info.join('');
         this.tileInfoOverlay.style.display = 'block';

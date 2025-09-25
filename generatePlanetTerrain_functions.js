@@ -386,6 +386,9 @@ function erodeElevation(planet, action) {
 	ctime("Shore Distances");
 	calculateShoreDistances(planet.topology.tiles);
 	calculateReverseShoreDistances(planet.topology.tiles);
+	calculateNeighborShoreComparison(planet.topology.tiles);
+	populateShoreNArrays(planet.topology.tiles);
+	calculateShoreMovementSensitivity(planet.topology.tiles);
 	ctimeEnd("Shore Distances");
 
 	ctime("randomLocalMax");

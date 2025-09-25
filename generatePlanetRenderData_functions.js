@@ -1908,6 +1908,277 @@ registerColorOverlay("shoreRatio", "Net Shore", "Net shore distance (reverseShor
 	}
 }, "basic");
 
+// Neighbor Shore Comparison color overlay - shows % of neighbors' neighbors (NN) with higher/lower shore values
+registerColorOverlay("neighborShore", "Neighbor Shore Comparison", "For each land/ocean tile, shows % of neighbors' neighbors (NN) with higher/lower shore values using shore distance colors", function(tile) {
+	if (!tile.hasOwnProperty('neighborShoreComparison')) {
+		return new THREE.Color(0x888888); // Gray fallback if neighbor comparison not calculated
+	}
+
+	// Add small offset to shift range so 0% gets a color too
+	var adjustedValue = tile.neighborShoreComparison;
+	if (tile.elevation > 0) {
+		// Land tiles: add 1 so 0% becomes 1%, 1% becomes 2%, etc.
+		adjustedValue = tile.neighborShoreComparison + 1;
+	} else {
+		// Ocean tiles: subtract 1 so 0% becomes -1%, -1% becomes -2%, etc.
+		adjustedValue = tile.neighborShoreComparison - 1;
+	}
+
+	if (adjustedValue < 0) {
+		// Ocean tiles: negative values (percentages)
+		// Light blue (low %) to dark blue (high %)
+		// Range is roughly -1% to -101% (shifted from 0% to 100%)
+		var normalizedValue = Math.abs(adjustedValue) / 101.0; // Normalize to 0-1
+
+		// Lerp from light blue to dark blue (same as shore distance)
+		var lightBlue = new THREE.Color(0x87CEEB); // Light blue
+		var darkBlue = new THREE.Color(0x000080);  // Dark blue
+		return lightBlue.clone().lerp(darkBlue, normalizedValue);
+	} else {
+		// Land tiles: positive values (percentages)
+		// Bright yellow (low %) to dark green (high %)
+		// Range is roughly 1% to 101% (shifted from 0% to 100%)
+		var normalizedValue = adjustedValue / 101.0; // Normalize to 0-1
+
+		// Lerp from bright yellow to dark green (same as shore distance)
+		var brightYellow = new THREE.Color(0xFFFF00); // Bright yellow
+		var darkGreen = new THREE.Color(0x006400);    // Dark green
+		return brightYellow.clone().lerp(darkGreen, normalizedValue);
+	}
+}, "basic");
+
+// Shore Movement Sensitivity color overlay - shows tiles most affected by hypothetical shore movements
+registerColorOverlay("shoreSensitivity", "Shore Movement Sensitivity", "Highlights tiles most sensitive to shore position changes with distinct land/ocean color schemes", function(tile) {
+	if (!tile.hasOwnProperty('positiveChangeScore') || !tile.hasOwnProperty('negativeChangeScore')) {
+		return new THREE.Color(0x888888); // Gray fallback if sensitivity not calculated
+	}
+
+	var positiveScore = tile.positiveChangeScore;
+	var negativeScore = tile.negativeChangeScore;
+
+	// Determine if tile has high sensitivity in either or both directions
+	var sensitivityThreshold = 0.3; // Tiles with scores above this are considered "high"
+	var highPositive = positiveScore > sensitivityThreshold;
+	var highNegative = negativeScore > sensitivityThreshold;
+	var bothHigh = highPositive && highNegative;
+
+	if (tile.elevation > 0) {
+		// LAND TILES: Light gray baseline with green/red/yellow highlights
+		var lightGray = new THREE.Color(0xC0C0C0); // Light gray
+		var green = new THREE.Color(0x00AA00);     // Green for positive changes
+		var red = new THREE.Color(0xCC0000);       // Red for negative changes
+		var yellow = new THREE.Color(0xFFFF00);    // Yellow for both high
+
+/* 		if (bothHigh) {
+			// High in both directions - lerp toward yellow
+			var intensity = Math.min((positiveScore + negativeScore) / 2, 1);
+			return lightGray.clone().lerp(yellow, intensity * 0.8);
+		} else if (highPositive) {
+			// High positive changes - lerp toward green
+			return lightGray.clone().lerp(green, positiveScore * 0.8);
+		} else if (highNegative) {
+			// High negative changes - lerp toward red
+			return lightGray.clone().lerp(red, negativeScore * 0.8);
+		} else {
+			// Low sensitivity - return light gray baseline
+			return lightGray;
+		} */
+		return new THREE.Color(0xC0C0C0).lerp(green,positiveScore).lerp(red,negativeScore)
+	} else {
+		// OCEAN TILES: Dark gray baseline with cyan/darkblue/magenta highlights
+		var darkGray = new THREE.Color(0x404040);  // Dark gray
+		var cyan = new THREE.Color(0x00CCCC);      // Cyan for positive changes
+		var darkBlue = new THREE.Color(0x000080);  // Dark blue for negative changes
+		var magenta = new THREE.Color(0xFF00FF);   // Magenta for both high
+
+/* 		if (bothHigh) {
+			// High in both directions - lerp toward magenta
+			var intensity = Math.min((positiveScore + negativeScore) / 2, 1);
+			return darkGray.clone().lerp(magenta, intensity * 0.8);
+		} else if (highPositive) {
+			// High positive changes - lerp toward cyan
+			return darkGray.clone().lerp(cyan, positiveScore * 0.8);
+		} else if (highNegative) {
+			// High negative changes - lerp toward dark blue
+			return darkGray.clone().lerp(darkBlue, negativeScore * 0.8);
+		} else {
+			// Low sensitivity - return dark gray baseline
+			return darkGray;
+		} */
+		return new THREE.Color(0x404040).lerp(cyan,positiveScore).lerp(magenta,negativeScore)
+	}
+}, "basic");
+
+// Generate dynamic shore overlays based on shoreN arrays
+function generateDynamicShoreOverlays(tiles) {
+	console.log("Generating dynamic shore overlays...");
+
+	// Collect all unique N values from shoreN arrays
+	var uniqueNValues = new Set();
+	for (var i = 0; i < tiles.length; i++) {
+		var tile = tiles[i];
+		if (tile.shoreN && Array.isArray(tile.shoreN)) {
+			for (var j = 0; j < tile.shoreN.length; j++) {
+				uniqueNValues.add(tile.shoreN[j][0]);
+			}
+		}
+	}
+
+	// Convert set to sorted array
+	var nValues = Array.from(uniqueNValues).sort(function(a, b) { return a - b; });
+	console.log("Found N values:", nValues);
+
+	// Register a color overlay for each N value
+	for (var i = 0; i < nValues.length; i++) {
+		var N = nValues[i];
+		var overlayId = N >= 0 ? "shoreN" + N : "shoreNMinus" + Math.abs(N);
+		var overlayName = "Shore N=" + N + " (Dynamic)";
+		var overlayDescription = "Shows recalculated shore values when shore moves " + (N > 0 ? "OUT" : "IN") + " by " + Math.abs(N) + " tiles";
+
+		// Create closure to capture N value and pre-calculate min/max for performance
+		(function(capturedN) {
+			// Pre-calculate min and max values for this N to avoid recalculating on every tile render
+			var valuesForN = [];
+			for (var t = 0; t < tiles.length; t++) {
+				var tile = tiles[t];
+				if (tile.shoreN && Array.isArray(tile.shoreN)) {
+					for (var j = 0; j < tile.shoreN.length; j++) {
+						if (tile.shoreN[j][0] === capturedN) {
+							valuesForN.push(tile.shoreN[j][1]);
+							break;
+						}
+					}
+				}
+			}
+
+			var maxNegative = Math.min(...valuesForN.filter(v => v < 0));
+			var maxPositive = Math.max(...valuesForN.filter(v => v > 0));
+
+			registerColorOverlay(overlayId, overlayName, overlayDescription, function(tile) {
+				// Find the shore value for this N (fast lookup)
+				var shoreValue = null;
+				if (tile.shoreN && Array.isArray(tile.shoreN)) {
+					for (var j = 0; j < tile.shoreN.length; j++) {
+						if (tile.shoreN[j][0] === capturedN) {
+							shoreValue = tile.shoreN[j][1];
+							break;
+						}
+					}
+				}
+
+				if (shoreValue === null) {
+					return new THREE.Color(0x888888); // Gray fallback if value not found
+				}
+
+				if (shoreValue === 0) {
+					return new THREE.Color(0x888888); // Gray for uncategorized tiles
+				}
+
+				if (shoreValue < 0) {
+					// Ocean tiles: negative values
+					// Light blue (-1) to dark blue (very negative)
+					var normalizedValue = Math.abs(shoreValue) / Math.abs(maxNegative);
+
+					// Lerp from light blue to dark blue
+					var lightBlue = new THREE.Color(0x87CEEB); // Light blue
+					var darkBlue = new THREE.Color(0x000080);  // Dark blue
+					return lightBlue.clone().lerp(darkBlue, normalizedValue);
+				} else {
+					// Land tiles: positive values
+					// Bright yellow (1) to dark green (very positive)
+					var normalizedValue = shoreValue / maxPositive;
+
+					// Lerp from bright yellow to dark green
+					var brightYellow = new THREE.Color(0xFFFF00); // Bright yellow
+					var darkGreen = new THREE.Color(0x006400);    // Dark green
+					return brightYellow.clone().lerp(darkGreen, normalizedValue);
+				}
+			}, "basic");
+		})(N);
+	}
+
+	console.log("Generated " + nValues.length + " dynamic shore overlays");
+
+	// Pre-calculate percentile values for shore N ratio overlay
+	console.log("Pre-calculating shore N ratio values...");
+
+	// First pass: collect all min/max differences
+	var landDiffs = [];
+	var oceanDiffs = [];
+
+	for (var i = 0; i < tiles.length; i++) {
+		var t = tiles[i];
+		if (t.shoreN && Array.isArray(t.shoreN) && t.shoreN.length >= 2) {
+			var tShoreNValues = t.shoreN.map(function(entry) { return entry[1]; });
+			var tOriginalShore = t.shore || 0;
+			var tMinDiff = Math.min(...tShoreNValues) - tOriginalShore;
+			var tMaxDiff = Math.max(...tShoreNValues) - tOriginalShore;
+
+			if (t.elevation > 0) {
+				landDiffs.push({tile: t, minDiff: tMinDiff, maxDiff: tMaxDiff});
+			} else {
+				oceanDiffs.push({tile: t, minDiff: tMinDiff, maxDiff: tMaxDiff});
+			}
+		}
+	}
+
+	// Sort arrays for percentile calculation
+	var landMinDiffs = landDiffs.map(d => d.minDiff).sort((a, b) => a - b);
+	var landMaxDiffs = landDiffs.map(d => d.maxDiff).sort((a, b) => a - b);
+	var oceanMinDiffs = oceanDiffs.map(d => d.minDiff).sort((a, b) => a - b);
+	var oceanMaxDiffs = oceanDiffs.map(d => d.maxDiff).sort((a, b) => a - b);
+
+	// Second pass: calculate and store percentiles for each tile
+	landDiffs.forEach(function(entry) {
+		var minPercentile = landMinDiffs.findIndex(v => v >= entry.minDiff) / landMinDiffs.length;
+		var maxPercentile = landMaxDiffs.findIndex(v => v >= entry.maxDiff) / landMaxDiffs.length;
+		if (minPercentile < 0) minPercentile = 1;
+		if (maxPercentile < 0) maxPercentile = 1;
+
+		// Use higher percentile and boost by 0.05 (max 1)
+		var boostedPercentile = Math.min(1, Math.max(minPercentile, maxPercentile) + 0.05);
+		entry.tile.shoreNRatioValue = boostedPercentile;
+	});
+
+	oceanDiffs.forEach(function(entry) {
+		var minPercentile = oceanMinDiffs.findIndex(v => v >= entry.minDiff) / oceanMinDiffs.length;
+		var maxPercentile = oceanMaxDiffs.findIndex(v => v >= entry.maxDiff) / oceanMaxDiffs.length;
+		if (minPercentile < 0) minPercentile = 1;
+		if (maxPercentile < 0) maxPercentile = 1;
+
+		// Use higher percentile and boost by 0.05 (max 1)
+		var boostedPercentile = Math.min(1, Math.max(minPercentile, maxPercentile) + 0.05);
+		entry.tile.shoreNRatioValue = boostedPercentile;
+	});
+
+	// Add shore N ratio overlay with pre-calculated values
+	registerColorOverlay("shoreNRatio", "Shore N Range Ratio", "Shows percentile-based changes in shoreN values using single-direction lerp with boosted percentiles", function(tile) {
+		if (typeof tile.shoreNRatioValue === 'undefined') {
+			return new THREE.Color(0x888888); // Gray for tiles without calculated values
+		}
+
+		var lerpAmount = tile.shoreNRatioValue;
+
+		if (tile.elevation > 0) {
+			// LAND TILES: Green to red lerp
+			var green = new THREE.Color(0x00AA00);
+			var red = new THREE.Color(0xFF0000);
+			return green.clone().lerp(red, lerpAmount);
+		} else {
+			// OCEAN TILES: Blue to cyan lerp
+			var blue = new THREE.Color(0x0000AA);
+			var cyan = new THREE.Color(0x00FFFF);
+			return blue.clone().lerp(cyan, lerpAmount);
+		}
+	}, "basic");
+
+	// Refresh the UI dropdown to include the new overlays
+	if (typeof populateColorOverlayDropdown === 'function') {
+		populateColorOverlayDropdown();
+		console.log("Color overlay dropdown refreshed with dynamic overlays");
+	}
+}
+
 // Land Regions color overlay - shows K-means clustered land regions
 registerColorOverlay("landRegions", "Land Regions", "Shows clustered land regions in different colors", function(tile) {
 	// Ocean tiles get flat blue-gray

@@ -4,7 +4,8 @@
       "Bash(find:*)",
       "Bash(node:*)",
       "Bash(start PlanGen.html)",
-      "Read(//c/Users/U064928/Downloads/**)"
+      "Read(//c/Users/U064928/Downloads/**)",
+      "Bash(rg:*)"
     ],
     "deny": [],
     "ask": []

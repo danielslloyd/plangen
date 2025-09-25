@@ -1154,6 +1154,429 @@ function calculateReverseShoreDistances(tiles) {
 	}
 }
 
+// Calculate neighbor shore comparison values for each tile
+// For each land/ocean tile, calculate % of neighbors' neighbors (NN) with higher/lower shore values
+function calculateNeighborShoreComparison(tiles) {
+	// Initialize neighbor comparison values to 0
+	for (var i = 0; i < tiles.length; i++) {
+		tiles[i].neighborShoreComparison = 0;
+	}
+
+	// For each tile, collect all neighbors' neighbors (NN) and calculate percentage
+	for (var i = 0; i < tiles.length; i++) {
+		var tile = tiles[i];
+		if (!tile.hasOwnProperty('shore') || tile.shore === 0) {
+			continue; // Skip tiles without shore values
+		}
+
+		// Collect all neighbors' neighbors (NN)
+		var neighborsNeighbors = new Set();
+		for (var j = 0; j < tile.tiles.length; j++) {
+			var neighbor = tile.tiles[j];
+			// Add all of this neighbor's neighbors to the set
+			for (var k = 0; k < neighbor.tiles.length; k++) {
+				var nn = neighbor.tiles[k];
+				if (nn !== tile && nn.hasOwnProperty('shore')) { // Exclude the original tile
+					neighborsNeighbors.add(nn);
+				}
+			}
+		}
+
+		// Convert set to array for easier processing
+		var nnArray = Array.from(neighborsNeighbors);
+		if (nnArray.length === 0) {
+			continue; // No valid neighbors' neighbors
+		}
+
+		// Count NN tiles that meet the criteria
+		var qualifyingCount = 0;
+		for (var j = 0; j < nnArray.length; j++) {
+			var nn = nnArray[j];
+
+			// For land tiles (positive shore), count NN with greater shore values
+			// For ocean tiles (negative shore), count NN with smaller (more negative) shore values
+			if (tile.elevation > 0) {
+				// Land tile: count NN with shore value greater than this tile's
+				if (nn.shore > tile.shore) {
+					qualifyingCount++;
+				}
+			} else {
+				// Ocean tile: count NN with shore value less than this tile's (more negative)
+				if (nn.shore < tile.shore) {
+					qualifyingCount++;
+				}
+			}
+		}
+
+		// Calculate percentage (0-100)
+		var percentage = (qualifyingCount / nnArray.length) * 100;
+
+		// Store the percentage (will use same color scheme as shore distance)
+		// For land tiles, positive values
+		// For ocean tiles, negative values to match shore color scheme
+		if (tile.elevation > 0) {
+			tile.neighborShoreComparison = percentage;
+		} else {
+			tile.neighborShoreComparison = -percentage;
+		}
+	}
+}
+
+// Populate shoreN arrays by running shore movement simulations
+function populateShoreNArrays(tiles) {
+	console.log("Populating shoreN arrays...");
+
+	// Calculate planet size factor for N range
+	var planetSizeFactor = Math.sqrt(tiles.length);
+	var maxN = Math.max(3, Math.round(planetSizeFactor / 30)); // Ensure at least N=3, scale with planet size
+
+	console.log("Planet size factor:", planetSizeFactor, "Max N:", maxN);
+
+	// Test shore movements for exactly 4 values: maxN, -maxN, 0.5maxN, -0.5maxN
+	var testValues = [maxN, -maxN, Math.round(0.5 * maxN), -Math.round(0.5 * maxN)];
+
+	for (var t = 0; t < testValues.length; t++) {
+		var N = testValues[t];
+		if (N === 0) continue; // Skip if 0.5maxN rounds to 0
+
+		console.log("Simulating shore movement N =", N);
+
+		// Store original shore values
+		var originalShores = {};
+		for (var i = 0; i < tiles.length; i++) {
+			originalShores[i] = tiles[i].shore;
+		}
+
+		// Simulate shore movement (this populates the shoreN arrays)
+		simulateShoreMovement(tiles, N);
+
+		// Restore original shore values for next simulation
+		for (var i = 0; i < tiles.length; i++) {
+			tiles[i].shore = originalShores[i];
+		}
+	}
+
+	console.log("Shore N arrays populated");
+}
+
+// Calculate shore movement sensitivity for each tile
+// Reads pre-calculated values from shoreN arrays and tracks biggest change/N ratio for each direction
+function calculateShoreMovementSensitivity(tiles) {
+	console.log("Calculating shore movement sensitivity from shoreN arrays...");
+
+	// Initialize sensitivity values
+	for (var i = 0; i < tiles.length; i++) {
+		tiles[i].positiveChangeScore = 0;
+		tiles[i].negativeChangeScore = 0;
+		tiles[i].maxPositiveRatio = 0;
+		tiles[i].maxNegativeRatio = 0;
+	}
+
+	// Calculate change/N ratios for each tile using pre-calculated shoreN data
+	for (var i = 0; i < tiles.length; i++) {
+		var tile = tiles[i];
+		var originalShore = tile.shore;
+
+		// Read from shoreN array
+		if (tile.shoreN && Array.isArray(tile.shoreN)) {
+			for (var j = 0; j < tile.shoreN.length; j++) {
+				var N = tile.shoreN[j][0];
+				var calculatedShore = tile.shoreN[j][1];
+
+				var change = Math.abs(calculatedShore - originalShore);
+				var changeRatio = change / Math.abs(N); // change per unit N
+
+				// Track biggest ratios by direction
+				if (N > 0) {
+					// Shore moving out (positive N)
+					tile.maxPositiveRatio = Math.max(tile.maxPositiveRatio, changeRatio);
+				} else {
+					// Shore moving in (negative N)
+					tile.maxNegativeRatio = Math.max(tile.maxNegativeRatio, changeRatio);
+				}
+			}
+		}
+	}
+
+	// Separate normalization for each of the 4 categories
+	var landTiles = tiles.filter(t => t.elevation > 0);
+	var oceanTiles = tiles.filter(t => t.elevation <= 0);
+
+	var maxLandPositiveRatio = landTiles.length > 0 ? Math.max(...landTiles.map(t => t.maxPositiveRatio)) : 0;
+	var maxLandNegativeRatio = landTiles.length > 0 ? Math.max(...landTiles.map(t => t.maxNegativeRatio)) : 0;
+	var maxOceanPositiveRatio = oceanTiles.length > 0 ? Math.max(...oceanTiles.map(t => t.maxPositiveRatio)) : 0;
+	var maxOceanNegativeRatio = oceanTiles.length > 0 ? Math.max(...oceanTiles.map(t => t.maxNegativeRatio)) : 0;
+
+	console.log("Max ratios - Land Positive:", maxLandPositiveRatio, "Land Negative:", maxLandNegativeRatio);
+	console.log("Max ratios - Ocean Positive:", maxOceanPositiveRatio, "Ocean Negative:", maxOceanNegativeRatio);
+
+	// Normalize each tile based on its category (land/ocean) and direction (positive/negative)
+	for (var i = 0; i < tiles.length; i++) {
+		var tile = tiles[i];
+
+		if (tile.elevation > 0) {
+			// Land tile normalization
+			tile.positiveChangeScore = maxLandPositiveRatio > 0 ? tile.maxPositiveRatio / maxLandPositiveRatio : 0;
+			tile.negativeChangeScore = maxLandNegativeRatio > 0 ? tile.maxNegativeRatio / maxLandNegativeRatio : 0;
+		} else {
+			// Ocean tile normalization
+			tile.positiveChangeScore = maxOceanPositiveRatio > 0 ? tile.maxPositiveRatio / maxOceanPositiveRatio : 0;
+			tile.negativeChangeScore = maxOceanNegativeRatio > 0 ? tile.maxNegativeRatio / maxOceanNegativeRatio : 0;
+		}
+	}
+
+	console.log("Shore movement sensitivity calculation complete");
+}
+
+
+// Simulate shore movement by N tiles in or out
+function simulateShoreMovement(tiles, N) {
+	// Create clone C = shore - N
+	for (var i = 0; i < tiles.length; i++) {
+		tiles[i].C = tiles[i].shore + N;
+		if (!tiles[i].shoreN) { tiles[i].shoreN = [];}
+	}
+
+	if (N > 0) {
+		// For N > 0: set C=0 for all tiles where C >= 0
+		for (var i = 0; i < tiles.length; i++) {
+			if (tiles[i].C >= 0) {
+				tiles[i].C = 0;
+			}
+		}
+
+		// Propagate from C=-1 outward
+		var currentDistance = -1;
+
+		while (tiles.filter(t => t.C === 0).length>0) {
+			currentRing = tiles.filter(t => t.C === currentDistance);
+			for (var i = 0; i < currentRing.length; i++) {
+				var tile = currentRing[i];
+				// For all neighbors where C=0, set appropriate value
+				for (var j = 0; j < tile.tiles.length; j++) {
+					var neighbor = tile.tiles[j];
+					if (neighbor.C === 0) {
+						neighbor.C = Math.max(1, currentDistance + 1);
+					}
+				}
+			}
+			if (currentDistance === -1) {currentDistance++}
+			currentDistance++;
+		}
+
+	} else {
+		// For N < 0: set C=0 for all tiles where C <= 0
+		for (var i = 0; i < tiles.length; i++) {
+			if (tiles[i].C <= 0) {
+				tiles[i].C = 0;
+			}
+		}
+
+		// Propagate from C=1 outward
+		var currentDistance = 1;
+
+		while (tiles.filter(t => t.C === 0).length>0) {
+			currentRing = tiles.filter(t => t.C === currentDistance);
+			for (var i = 0; i < currentRing.length; i++) {
+				var tile = currentRing[i];
+				// For all neighbors where C=0, set appropriate value
+				for (var j = 0; j < tile.tiles.length; j++) {
+					var neighbor = tile.tiles[j];
+					if (neighbor.C === 0) {
+						neighbor.C = Math.min(-1, currentDistance - 1);
+					}
+				}
+			}
+			if (currentDistance === 1) {currentDistance--}
+			currentDistance--;
+		}
+	}
+
+	// Copy C to shoreN array and clean up
+	for (var i = 0; i < tiles.length; i++) {
+		tiles[i].shoreN.push([N, tiles[i].C]);
+		delete tiles[i].C; // Clean up temporary variable
+	}
+}
+
+// Recalculate all shore distances from scratch after shore movement
+function recalculateAllShoreDistances(tiles) {
+	// First, identify the new shore boundaries by looking at the elevation-shore mismatch
+	// Reset all tiles to 0 first
+	for (var i = 0; i < tiles.length; i++) {
+		tiles[i].shore = 0;
+	}
+
+	// Find immediate shore tiles based on current elevation vs neighbor relationships
+	for (var i = 0; i < tiles.length; i++) {
+		var tile = tiles[i];
+		if (tile.shore === 0) {
+			if (tile.elevation > 0) {
+				// Land tile: check if any neighbors are ocean
+				var hasOceanNeighbor = false;
+				for (var j = 0; j < tile.tiles.length; j++) {
+					if (tile.tiles[j].elevation <= 0) {
+						hasOceanNeighbor = true;
+						break;
+					}
+				}
+				if (hasOceanNeighbor) {
+					tile.shore = 1;
+				}
+			} else if (tile.elevation <= 0) {
+				// Ocean tile: check if any neighbors are land
+				var hasLandNeighbor = false;
+				for (var j = 0; j < tile.tiles.length; j++) {
+					if (tile.tiles[j].elevation > 0) {
+						hasLandNeighbor = true;
+						break;
+					}
+				}
+				if (hasLandNeighbor) {
+					tile.shore = -1;
+				}
+			}
+		}
+	}
+
+	// Iterative expansion: propagate shore values outward
+	var currentDistance = 1;
+	var hasChanges = true;
+
+	while (hasChanges && currentDistance < tiles.length) {
+		hasChanges = false;
+
+		for (var i = 0; i < tiles.length; i++) {
+			var tile = tiles[i];
+
+			if (Math.abs(tile.shore) === currentDistance) {
+				for (var j = 0; j < tile.tiles.length; j++) {
+					var neighbor = tile.tiles[j];
+					if (neighbor.shore === 0) {
+						if (neighbor.elevation > 0) {
+							// Land neighbor gets positive value
+							neighbor.shore = tile.shore + 1;
+							hasChanges = true;
+						} else {
+							// Ocean neighbor gets negative value
+							neighbor.shore = tile.shore - 1;
+							hasChanges = true;
+						}
+					}
+				}
+			}
+		}
+		currentDistance++;
+	}
+}
+
+// Recalculate shore distances for tiles that became land (shore > 0)
+function recalculateShoreDistancesForNewLand(tiles) {
+	// Find new shore boundary (shore = 1)
+	var shoreTiles = tiles.filter(t => t.shore === 1);
+
+	// Reset all land tiles to 0 first
+	for (var i = 0; i < tiles.length; i++) {
+		if (tiles[i].elevation > 0) {
+			tiles[i].shore = 0;
+		}
+	}
+
+	// Set shore tiles to 1
+	for (var i = 0; i < shoreTiles.length; i++) {
+		shoreTiles[i].shore = 1;
+	}
+
+	// Propagate outward from shore tiles
+	var currentDistance = 1;
+	var hasChanges = true;
+
+	while (hasChanges && currentDistance < tiles.length) {
+		hasChanges = false;
+
+		for (var i = 0; i < tiles.length; i++) {
+			var tile = tiles[i];
+			if (Math.abs(tile.shore) === currentDistance) {
+				for (var j = 0; j < tile.tiles.length; j++) {
+					var neighbor = tile.tiles[j];
+					if (neighbor.shore === 0) {
+						if (neighbor.elevation > 0) {
+							// Land neighbor gets positive value
+							neighbor.shore = tile.shore + 1;
+							hasChanges = true;
+						} else {
+							// Ocean neighbor gets negative value
+							neighbor.shore = tile.shore - 1;
+							hasChanges = true;
+						}
+					}
+				}
+			}
+		}
+		currentDistance++;
+	}
+}
+
+// Recalculate shore distances for tiles that became ocean (shore <= 0)
+function recalculateShoreDistancesForNewOcean(tiles) {
+	// Find new shore boundary (shore = 1, i.e., remaining land tiles adjacent to new ocean)
+	var newShoreTiles = [];
+
+	for (var i = 0; i < tiles.length; i++) {
+		var tile = tiles[i];
+		if (tile.shore > 0) {
+			// Check if this land tile has any neighbors that became ocean (shore <= 0)
+			var hasOceanNeighbor = false;
+			for (var j = 0; j < tile.tiles.length; j++) {
+				if (tile.tiles[j].shore <= 0) {
+					hasOceanNeighbor = true;
+					break;
+				}
+			}
+			if (hasOceanNeighbor) {
+				tile.shore = 1;
+				newShoreTiles.push(tile);
+			}
+		}
+	}
+
+	// Reset all ocean tiles (shore <= 0) to 0 first
+	for (var i = 0; i < tiles.length; i++) {
+		if (tiles[i].shore <= 0) {
+			tiles[i].shore = 0;
+		}
+	}
+
+	// Propagate outward from new shore tiles
+	var currentDistance = 1;
+	var hasChanges = true;
+
+	while (hasChanges && currentDistance < tiles.length) {
+		hasChanges = false;
+
+		for (var i = 0; i < tiles.length; i++) {
+			var tile = tiles[i];
+			if (Math.abs(tile.shore) === currentDistance) {
+				for (var j = 0; j < tile.tiles.length; j++) {
+					var neighbor = tile.tiles[j];
+					if (neighbor.shore === 0) {
+						if (neighbor.elevation > 0) {
+							// Land neighbor gets positive value
+							neighbor.shore = tile.shore + 1;
+							hasChanges = true;
+						} else {
+							// Ocean neighbor gets negative value
+							neighbor.shore = tile.shore - 1;
+							hasChanges = true;
+						}
+					}
+				}
+			}
+		}
+		currentDistance++;
+	}
+}
+
 // ============================================================================
 // MAIN POST-GENERATION FUNCTION
 // ============================================================================

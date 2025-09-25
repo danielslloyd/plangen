@@ -397,7 +397,10 @@ function generatePlanetTerrain(planet, plateCount, oceanicRate, heatLevel, moist
 		}, 0)
 		.executeSubaction(function (action) {
 			ctimeEnd('4h. Post-Generation Analysis');
-			ctime('4i. Render Data Generation');
+			ctime('4i. Dynamic Overlays');
+			generateDynamicShoreOverlays(planet.topology.tiles);
+			ctimeEnd('4i. Dynamic Overlays');
+			ctime('4j. Render Data Generation');
 			generatePlanetRenderData(planet.topology, random, action);
 		}, 1, "Building Visuals")
 		.getResult(function (result) {
