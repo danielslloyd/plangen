@@ -27,16 +27,28 @@ function clickHandler(event) {
 			var top = camera.top;
 			var bottom = camera.bottom;
 
-			// Convert normalized device coordinates to world coordinates relative to camera
-			var worldX = mercatorCameraX + (mouse.x * (right - left)) / 2;
-			var worldY = mercatorCameraY + (mouse.y * (top - bottom)) / 2;
+			console.log("=== MERCATOR CLICK DEBUG ===");
+			console.log("Raw mouse coords:", "x=" + mouse.x.toFixed(3), "y=" + mouse.y.toFixed(3));
+			console.log("Camera bounds:", "left=" + left.toFixed(3), "right=" + right.toFixed(3), "top=" + top.toFixed(3), "bottom=" + bottom.toFixed(3));
+			console.log("Camera position:", "mercatorCameraX=" + mercatorCameraX.toFixed(3), "mercatorCameraY=" + mercatorCameraY.toFixed(3));
+
+			// Convert normalized device coordinates to world coordinates
+			// Option B: Subtract camera position to compensate for offset
+			var worldX = 2*mercatorCameraX + (mouse.x * (right - left)) / 2;
+			var worldY = 2*mercatorCameraY + (mouse.y * (top - bottom)) / 2;
+
+			console.log("World coords:", "worldX=" + worldX.toFixed(3), "worldY=" + worldY.toFixed(3));
 
 			// Convert world coordinates back to Mercator coordinates (reverse the 2.0 scaling)
 			var mercatorX = worldX / 2.0;
 			var mercatorY = worldY / 2.0;
 
+			console.log("Mercator coords:", "mercatorX=" + mercatorX.toFixed(3), "mercatorY=" + mercatorY.toFixed(3));
+
 			// Convert Mercator coordinates back to Cartesian coordinates
 			var clickPosition = mercatorToCartesian(mercatorX, mercatorY, mercatorCenterLat, mercatorCenterLon);
+
+			console.log("Final cartesian position:", "x=" + clickPosition.x.toFixed(3), "y=" + clickPosition.y.toFixed(3), "z=" + clickPosition.z.toFixed(3));
 
 			// Find the closest tile to this position
 			var closestTile = null;
