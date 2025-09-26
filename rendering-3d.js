@@ -490,62 +490,89 @@ function renderPath(path) {
     if (!fromVertex || !toVertex || !path) {
         return;
     }
-    for (let i = 0; i < path.length - 1; i++) {
-        const fromTile = path[i];
-        const toTile = path[i + 1];
-        
-        // Calculate border elevation for better terrain following
-        var borderElevation = calculateBorderElevation(fromTile, toTile);
-        
-        // Calculate positions with elevation
-        var fromPos = fromTile.position.clone();
-        var toPos = toTile.position.clone();
-        var midPos = fromPos.clone().add(toPos).multiplyScalar(0.5);
-        
-        // Apply elevation exaggeration
-        if (fromTile.elevation > 0) {
+
+    if (projectionMode === "mercator") {
+        // Mercator mode: render path as 2D lines at fixed Z height
+        for (let i = 0; i < path.length - 1; i++) {
+            const fromTile = path[i];
+            const toTile = path[i + 1];
+
+            // Convert tile positions to Mercator coordinates
+            var fromMercator = cartesianToMercator(fromTile.position, mercatorCenterLat, mercatorCenterLon);
+            var toMercator = cartesianToMercator(toTile.position, mercatorCenterLat, mercatorCenterLon);
+
+            // Scale up by 2.0 to match the Mercator rendering scale
+            var fromPos = new THREE.Vector3(fromMercator.x * 2.0, fromMercator.y * 2.0, 50);
+            var toPos = new THREE.Vector3(toMercator.x * 2.0, toMercator.y * 2.0, 50);
+            var midPos = fromPos.clone().add(toPos).multiplyScalar(0.5);
+
+            // Create two arrow segments: fromPos -> midPos and midPos -> toPos
+            const firstDirection = midPos.clone().sub(fromPos);
+            const firstArrow = new THREE.ArrowHelper(
+                firstDirection.clone().normalize(),
+                fromPos,
+                firstDirection.length(),
+                0xff0000
+            );
+
+            const secondDirection = toPos.clone().sub(midPos);
+            const secondArrow = new THREE.ArrowHelper(
+                secondDirection.clone().normalize(),
+                midPos,
+                secondDirection.length(),
+                0xff0000
+            );
+
+            scene.add(firstArrow);
+            scene.add(secondArrow);
+            planet.pathRenderObject.push(firstArrow);
+            planet.pathRenderObject.push(secondArrow);
+        }
+    } else {
+        // Globe mode: original 3D rendering with consistent elevation
+        for (let i = 0; i < path.length - 1; i++) {
+            const fromTile = path[i];
+            const toTile = path[i + 1];
+
+            // Calculate positions with consistent height above terrain
+            var fromPos = fromTile.position.clone();
+            var toPos = toTile.position.clone();
+            var midPos = fromPos.clone().add(toPos).multiplyScalar(0.5);
+
+            // Apply consistent elevation offset for all path segments
+            const pathHeight = 20; // Fixed height above terrain
             var fromDistance = fromPos.length();
-            fromPos.normalize().multiplyScalar(fromDistance + elevationMultiplier * fromTile.elevation + 10);
-        } else {
-            fromPos.multiplyScalar(1.0006);
-        }
-        
-        if (toTile.elevation > 0) {
+            fromPos.normalize().multiplyScalar(fromDistance + elevationMultiplier * Math.max(0, fromTile.elevation) + pathHeight);
+
             var toDistance = toPos.length();
-            toPos.normalize().multiplyScalar(toDistance + elevationMultiplier * toTile.elevation + 10);
-        } else {
-            toPos.multiplyScalar(1.0006);
-        }
-        
-        // Apply border elevation to midpoint
-        if (borderElevation > 0) {
+            toPos.normalize().multiplyScalar(toDistance + elevationMultiplier * Math.max(0, toTile.elevation) + pathHeight);
+
             var midDistance = midPos.length();
-            midPos.normalize().multiplyScalar(midDistance + elevationMultiplier * borderElevation + 10);
-        } else {
-            midPos.multiplyScalar(1.0006);
+            var midElevation = (fromTile.elevation + toTile.elevation) / 2;
+            midPos.normalize().multiplyScalar(midDistance + elevationMultiplier * Math.max(0, midElevation) + pathHeight);
+
+            // Create two arrow segments: fromPos -> midPos and midPos -> toPos
+            const firstDirection = midPos.clone().sub(fromPos);
+            const firstArrow = new THREE.ArrowHelper(
+                firstDirection.clone().normalize(),
+                fromPos,
+                firstDirection.length(),
+                0xff0000
+            );
+
+            const secondDirection = toPos.clone().sub(midPos);
+            const secondArrow = new THREE.ArrowHelper(
+                secondDirection.clone().normalize(),
+                midPos,
+                secondDirection.length(),
+                0xff0000
+            );
+
+            scene.add(firstArrow);
+            scene.add(secondArrow);
+            planet.pathRenderObject.push(firstArrow);
+            planet.pathRenderObject.push(secondArrow);
         }
-        
-        // Create two arrow segments: fromPos -> midPos and midPos -> toPos
-        const firstDirection = midPos.clone().sub(fromPos);
-        const firstArrow = new THREE.ArrowHelper(
-            firstDirection.clone().normalize(),
-            fromPos,
-            firstDirection.length(),
-            0xff0000
-        );
-        
-        const secondDirection = toPos.clone().sub(midPos);
-        const secondArrow = new THREE.ArrowHelper(
-            secondDirection.clone().normalize(),
-            midPos,
-            secondDirection.length(),
-            0xff0000
-        );
-        
-        scene.add(firstArrow);
-        scene.add(secondArrow);
-        planet.pathRenderObject.push(firstArrow);
-        planet.pathRenderObject.push(secondArrow);
     }
 }
 

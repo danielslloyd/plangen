@@ -3,16 +3,57 @@ function setFromVertex(event) {
         var mouse = new THREE.Vector2();
         mouse.x = mouseX;
         mouse.y = mouseY;
-        
-        var raycaster = new THREE.Raycaster();
-        raycaster.setFromCamera(mouse, camera);
-        
-        var intersection = planet.partition.intersectRay(raycaster.ray);
-        if (intersection !== false) {
-            fromVertex = intersection;
+
+        if (projectionMode === "mercator") {
+            // Use same Mercator coordinate transformation as click handler
+            var left = camera.left;
+            var right = camera.right;
+            var top = camera.top;
+            var bottom = camera.bottom;
+
+            var worldX = 2*mercatorCameraX + (mouse.x * (right - left)) / 2;
+            var worldY = 2*mercatorCameraY + (mouse.y * (top - bottom)) / 2;
+
+            var mercatorX = worldX / 2.0;
+            var mercatorY = worldY / 2.0;
+
+            var clickPosition = mercatorToCartesian(mercatorX, mercatorY, mercatorCenterLat, mercatorCenterLon);
+
+            // Find the closest tile to this position
+            var closestTile = null;
+            var closestDistance = Infinity;
+
+            for (var i = 0; i < planet.topology.tiles.length; i++) {
+                var tile = planet.topology.tiles[i];
+                var distance = tile.averagePosition.distanceTo(clickPosition);
+                if (distance < closestDistance) {
+                    closestDistance = distance;
+                    closestTile = tile;
+                }
+            }
+
+            // Ignore glacier and sea ice tiles
+            if (closestTile && closestTile.biome !== "glacier" && closestTile.biome !== "seaIce") {
+                fromVertex = closestTile;
+            }
         } else {
-            fromVertex = null;
+            // Use original 3D raycasting for globe mode
+            var raycaster = new THREE.Raycaster();
+            raycaster.setFromCamera(mouse, camera);
+
+            var intersection = planet.partition.intersectRay(raycaster.ray);
+            if (intersection !== false) {
+                // Ignore glacier and sea ice tiles
+                if (intersection.biome !== "glacier" && intersection.biome !== "seaIce") {
+                    fromVertex = intersection;
+                } else {
+                    fromVertex = null;
+                }
+            } else {
+                fromVertex = null;
+            }
         }
+
         if (fromVertex && toVertex) {
             path = aStarPathfinding(fromVertex, toVertex, planet);
             if (path) {
@@ -30,18 +71,58 @@ function setToVertex(event) {
         var mouse = new THREE.Vector2();
         mouse.x = mouseX;
         mouse.y = mouseY;
-        
-        var raycaster = new THREE.Raycaster();
-        raycaster.setFromCamera(mouse, camera);
-        
-        var intersection = planet.partition.intersectRay(raycaster.ray);
-        if (intersection !== false) {
-            toVertex = intersection;
+
+        if (projectionMode === "mercator") {
+            // Use same Mercator coordinate transformation as click handler
+            var left = camera.left;
+            var right = camera.right;
+            var top = camera.top;
+            var bottom = camera.bottom;
+
+            var worldX = 2*mercatorCameraX + (mouse.x * (right - left)) / 2;
+            var worldY = 2*mercatorCameraY + (mouse.y * (top - bottom)) / 2;
+
+            var mercatorX = worldX / 2.0;
+            var mercatorY = worldY / 2.0;
+
+            var clickPosition = mercatorToCartesian(mercatorX, mercatorY, mercatorCenterLat, mercatorCenterLon);
+
+            // Find the closest tile to this position
+            var closestTile = null;
+            var closestDistance = Infinity;
+
+            for (var i = 0; i < planet.topology.tiles.length; i++) {
+                var tile = planet.topology.tiles[i];
+                var distance = tile.averagePosition.distanceTo(clickPosition);
+                if (distance < closestDistance) {
+                    closestDistance = distance;
+                    closestTile = tile;
+                }
+            }
+
+            // Ignore glacier and sea ice tiles
+            if (closestTile && closestTile.biome !== "glacier" && closestTile.biome !== "seaIce") {
+                toVertex = closestTile;
+            }
         } else {
-            toVertex = null;
+            // Use original 3D raycasting for globe mode
+            var raycaster = new THREE.Raycaster();
+            raycaster.setFromCamera(mouse, camera);
+
+            var intersection = planet.partition.intersectRay(raycaster.ray);
+            if (intersection !== false) {
+                // Ignore glacier and sea ice tiles
+                if (intersection.biome !== "glacier" && intersection.biome !== "seaIce") {
+                    toVertex = intersection;
+                } else {
+                    toVertex = null;
+                }
+            } else {
+                toVertex = null;
+            }
         }
+
         if (fromVertex && toVertex) {
-			
             path = aStarPathfinding(fromVertex, toVertex, planet);
             if (path) {
                 renderPath(path);
@@ -87,7 +168,11 @@ function aStarPathfinding(startTile, goalTile, planet) {
 function setDistances(planet, action) {
     planet.aStarVertices = [];
     for (let i = 0; i < planet.topology.tiles.length; i++) {
-        planet.aStarVertices.push(planet.topology.tiles[i]);
+        const tile = planet.topology.tiles[i];
+        // Exclude glacier and sea ice tiles from pathfinding graph
+        if (tile.biome !== "glacier" && tile.biome !== "seaIce") {
+            planet.aStarVertices.push(tile);
+        }
     }
     var maxWind = Math.max(...planet.topology.corners.map(c => c.airCurrent.length()));
     planet.aStarEdges = [];
@@ -95,6 +180,12 @@ function setDistances(planet, action) {
         const edge = planet.topology.borders[i];
         const fromTile = edge.tiles[0];
         const toTile = edge.tiles[1];
+
+        // Skip edges that connect to/from glacier or sea ice tiles
+        if (fromTile.biome === "glacier" || fromTile.biome === "seaIce" ||
+            toTile.biome === "glacier" || toTile.biome === "seaIce") {
+            continue;
+        }
         const deltaElevation = toTile.elevation - fromTile.elevation;
         const wind = edge.tiles.reduce((acc, tile) => {
             let tileAirCurrent = tile.corners.reduce((cornerAcc, corner) => {

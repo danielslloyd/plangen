@@ -610,11 +610,11 @@ function buildAirCurrentsRenderObject(corners, action) {
 		var normalizedWindStrength = maxWindStrength > 0 ? airCurrentStrength / maxWindStrength : 0;
 		var triangleLength;
 		if (projectionMode === "mercator") {
-			// In Mercator mode, scale ABL to match equatorial projection scale
-			triangleLength = normalizedWindStrength * ABL * (2.0 / 1000);
+			// In Mercator mode, scale ABL to match equatorial projection scale (increased by 50%)
+			triangleLength = normalizedWindStrength * ABL * (2.0 / 1000) * 1.5;
 		} else {
-			// 3D globe mode - use original calculation
-			triangleLength = normalizedWindStrength * ABL;
+			// 3D globe mode - use original calculation (increased by 50%)
+			triangleLength = normalizedWindStrength * ABL * 1.5;
 		}
 
 		// Base width calculation based on projection mode
@@ -720,7 +720,7 @@ function buildAirCurrentsRenderObject(corners, action) {
 		vertexColors: true,
 		side: THREE.DoubleSide,
 		transparent: true,
-		opacity: 0.7
+		opacity: 0.4
 	});
 
 	var renderObject;
