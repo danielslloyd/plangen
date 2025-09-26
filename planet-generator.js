@@ -72,6 +72,7 @@ var enableElevationDistributionReshaping = true; // Apply realistic elevation di
 var elevationExponent = 4; // Exponential curve steepness for elevation distribution (higher = more contrast)
 var renderEdgeCosts = false;
 var enablePathDensityCalculation = false; // Enable/disable expensive path density computation and overlay
+var sailingCostConstant = 10.0; // Configurable constant for sailing cost calculation (cost = k / speed)
 var sunTimeOffset = 0;
 var pressedKeys = {};
 var disableKeys = false;
@@ -195,7 +196,7 @@ function generatePlanetAsynchronous() {
 			ui.backgroundProgressPanel.show();
 		}, 0)
         .executeSubaction(function (action) {
-            setDistances(planet, action); // Build the graph here
+            setDistances(planet, action, sailingCostConstant); // Build the graph here
         }, 0, "Building pathfinding graph")
 		.executeSubaction(function (action) {
 			// Pre-calculate heavy overlays in background
@@ -382,7 +383,7 @@ function generatePlanetTerrain(planet, plateCount, oceanicRate, heatLevel, moist
 		.executeSubaction(function (action) {
 			ctimeEnd('4f. Final Elevation Processing');
 			ctime('4g. Distance Calculations');
-			setDistances(planet, action);
+			setDistances(planet, action, sailingCostConstant);
 		}, 8, "Creating Distances")
 
 		//erode

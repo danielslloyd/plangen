@@ -165,7 +165,7 @@ function aStarPathfinding(startTile, goalTile, planet) {
     return path;
 }
 
-function setDistances(planet, action) {
+function setDistances(planet, action, sailingCostConstant) {
     planet.aStarVertices = [];
     for (let i = 0; i < planet.topology.tiles.length; i++) {
         const tile = planet.topology.tiles[i];
@@ -187,6 +187,15 @@ function setDistances(planet, action) {
             continue;
         }
         const deltaElevation = toTile.elevation - fromTile.elevation;
+
+        // Calculate wind from the shared border corners (for ocean sailing)
+        let borderWind = new THREE.Vector3(0, 0, 0);
+        if (edge.corners && edge.corners.length === 2) {
+            // Average the air currents at the two corners of the shared border
+            borderWind = edge.corners[0].airCurrent.clone().add(edge.corners[1].airCurrent).divideScalar(2);
+        }
+
+        // Keep old wind calculation for backward compatibility with other movement types
         const wind = edge.tiles.reduce((acc, tile) => {
             let tileAirCurrent = tile.corners.reduce((cornerAcc, corner) => {
                 return cornerAcc.add(corner.airCurrent);
@@ -252,13 +261,30 @@ function setDistances(planet, action) {
                 reverseCost = 5 + 1000 * Math.pow(deltaElevation, 2);
             }
         } else if (fromIsOcean && toIsOcean) {
-            const vector = toTile.position.clone().sub(fromTile.position);
-            const normalizedWind = Math.pow(Math.min(1, Math.max(0, wind.length() / maxWind)), 1);
-            const pos = sailSpeedFactor(pointofSailInDegrees(vector, wind.clone().negate()));
-            cost = Math.min(5, Math.max(.5, 10 / (20 * normalizedWind * Math.max(.2,pos))));
-            const vectorRev = fromTile.position.clone().sub(toTile.position);
-            const posRev = sailSpeedFactor(pointofSailInDegrees(vector.clone().negate(), wind.clone().negate()));
-            reverseCost = Math.min(5, Math.max(.5, 10 / (20 * normalizedWind * Math.max(.2,posRev))));
+            // New sailing cost calculation using border wind and piecewise speed function
+            const sailingDirection = toTile.position.clone().sub(fromTile.position);
+            const windMagnitude = borderWind.length();
+
+            // Calculate angle between sailing direction and wind (0° = into wind)
+            let angleRad = sailingDirection.angleTo(borderWind);
+            let angleDeg = angleRad * (180 / Math.PI);
+
+            // Ensure we measure the acute angle (0-180°) since direction doesn't matter
+            if (angleDeg > 180) angleDeg = 360 - angleDeg;
+
+            // Calculate speed using new piecewise function
+            const speed = newSailSpeedFactor(angleDeg, windMagnitude);
+            cost = speed > 0 ? Math.min(5, Math.max(0.5, sailingCostConstant / speed)) : 100;
+
+            // Reverse direction (same wind, opposite sailing direction)
+            const reverseSailingDirection = fromTile.position.clone().sub(toTile.position);
+            let reverseAngleRad = reverseSailingDirection.angleTo(borderWind);
+            let reverseAngleDeg = reverseAngleRad * (180 / Math.PI);
+
+            if (reverseAngleDeg > 180) reverseAngleDeg = 360 - reverseAngleDeg;
+
+            const reverseSpeed = newSailSpeedFactor(reverseAngleDeg, windMagnitude);
+            reverseCost = reverseSpeed > 0 ? Math.min(5, Math.max(0.5, sailingCostConstant / reverseSpeed)) : 100;
         } else {
             cost = reverseCost = 100;
         }
@@ -268,29 +294,13 @@ function setDistances(planet, action) {
 
 }
 
-function pointofSailInDegrees(v1, v2) {
-
-    // Calculate the dot product of the vectors
-    const dotProduct = v1.dot(v2);
-
-    // Calculate the magnitudes of the vectors
-    const magV1 = v1.length();
-    const magV2 = v2.length();
-
-    // Calculate the cosine of the angle
-    const cosTheta = dotProduct / (magV1 * magV2);
-
-    // Calculate the angle in radians
-    const angleInRadians = Math.acos(cosTheta);
-
-    // Convert the angle to degrees
-    const angleInDegrees = angleInRadians * (180 / Math.PI);
-
-    return angleInDegrees;
-}
-
-function sailSpeedFactor(t) {
-	return Math.min(1,Math.max(0,-0.000000000226*Math.pow(t,5)+0.000000123805*Math.pow(t,4)-0.000024472499*Math.pow(t,3)+0.001992907194*Math.pow(t,2)-0.044968355344*t-0.151735480749));
-
+function newSailSpeedFactor(beta, windMagnitude) {
+    if (beta < 35) {
+        return (-0.0000888354 * beta * beta + 0.0101160932 * beta + 0.2459200009) * windMagnitude;
+    } else if (beta < 135) {
+        return (-0.0001128856 * beta * beta + 0.0230066678 * beta - 0.1757887169) * windMagnitude;
+    } else { // 135 <= beta <= 180
+        return (-0.0000329694 * beta * beta + 0.0110822216 * beta - 0.0224612460) * windMagnitude;
+    }
 }
 
