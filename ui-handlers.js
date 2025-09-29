@@ -1,13 +1,30 @@
 function zoomHandler(event) {
+	var zoomDelta;
+	var minZoom, maxZoom;
+
+	// Set different zoom bounds for different modes
+	if (projectionMode === "mercator") {
+		// For Mercator: allow more zoom in and set appropriate bounds
+		minZoom = 1;  // Prevent zooming out too far from default
+		maxZoom = 5;  // Allow much more zoom in
+		zoomDelta = event.deltaY * 0.05;
+	} else {
+		// For globe mode: use original bounds
+		minZoom = 0;
+		maxZoom = 1;
+		zoomDelta = -event.deltaY * 0.01;
+	}
+
+
 	if (zoomAnimationStartTime === null) {
 		zoomAnimationStartTime = Date.now();
 		zoomAnimationStartValue = zoom;
-		zoomAnimationEndValue = Math.max(-2, Math.min(zoomAnimationStartValue - event.deltaY * 0.01, 2));
+		zoomAnimationEndValue = Math.max(minZoom, Math.min(zoomAnimationStartValue + zoomDelta, maxZoom));
 		zoomAnimationDuration = Math.abs(zoomAnimationStartValue - zoomAnimationEndValue) * 1000;
 	} else {
 		zoomAnimationStartTime = Date.now();
 		zoomAnimationStartValue = zoom;
-		zoomAnimationEndValue = Math.max(-2, Math.min(zoomAnimationEndValue - event.deltaY * 0.01, 2));
+		zoomAnimationEndValue = Math.max(minZoom, Math.min(zoomAnimationEndValue + zoomDelta, maxZoom));
 		zoomAnimationDuration = Math.abs(zoomAnimationStartValue - zoomAnimationEndValue) * 1000;
 	}
 }
