@@ -26,6 +26,7 @@
 		<script src="path-finding.js"></script>
 		<script src="debug-overlay.js"></script>
 		<script src="text-labels.js"></script>
+		<script src="planet-save-load.js"></script>
 		<!--<script src="lodash.js"></script>-->
 		<link rel="stylesheet" type="text/css" href="planet-generator.css" />
 		<link rel="stylesheet" type="text/css" href="debug-overlay.css" />
@@ -175,6 +176,17 @@
 						</div>
 					</div>
 					<button id="advancedSettingsButton" style="height: 3.5em; padding: 0.5em 0.8em; margin: 0; font-size: 85%;" title="Configure advanced settings for planet generation.">Advanced</button>
+				</div>
+			</div>
+
+			<!-- Save/Load Planet -->
+			<div style="margin-top: 1em;">
+				<h2 style="margin: 0 0 0.5em 0; font-size: 110%; border-bottom: 1px solid #89B; padding-bottom: 0.25em;">Save/Load Planet</h2>
+				<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5em;">
+					<button id="savePlanetMinimalButton" title="Save planet seed and settings only (~200 bytes). Requires regeneration when loaded." style="font-size: 75%; padding: 0.5em;">Save Minimal</button>
+					<button id="savePlanetFullButton" title="Save complete planet data (1-5 MB). Loads instantly without regeneration." style="font-size: 75%; padding: 0.5em;">Save Full</button>
+					<button id="savePlanetGeoJSONButton" title="Export to D3.js-compatible GeoJSON format for use in mapping libraries." style="font-size: 75%; padding: 0.5em;">Export GeoJSON</button>
+					<button id="loadPlanetButton" title="Load a previously saved planet file." style="font-size: 75%; padding: 0.5em;">Load Planet</button>
 				</div>
 			</div>
 		</div>
