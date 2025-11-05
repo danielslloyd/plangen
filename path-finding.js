@@ -137,10 +137,59 @@ function setToVertex(event) {
 function aStarPathfinding(startTile, goalTile, planet) {
     ctime("aStarPathfinding");
 
+    // Create a fast lookup map for tiles by ID
+    const tileById = {};
+    for (let i = 0; i < planet.topology.tiles.length; i++) {
+        const tile = planet.topology.tiles[i];
+        tileById[tile.id] = tile;
+    }
+
+    // Calculate average tile distance (used for heuristic estimation)
+    let avgTileDistance = 0.08; // Default estimate for subdivision 60
+    if (planet.topology.borders && planet.topology.borders.length > 0) {
+        let totalDist = 0;
+        let count = 0;
+        for (let i = 0; i < Math.min(100, planet.topology.borders.length); i++) {
+            const border = planet.topology.borders[i];
+            if (border.tiles && border.tiles.length === 2) {
+                totalDist += border.tiles[0].position.distanceTo(border.tiles[1].position);
+                count++;
+            }
+        }
+        if (count > 0) {
+            avgTileDistance = totalDist / count;
+        }
+    }
+
     const pathFinder = ngraphPath.aStar(planet.graph, {
         oriented: true,
         distance(fromNode, toNode, link) {
             return link.data.weight;
+        },
+        heuristic(fromNode, toNode) {
+            // Custom heuristic that accounts for potential river travel
+            const fromTile = tileById[fromNode.id];
+            const toTile = tileById[toNode.id];
+
+            if (!fromTile || !toTile) {
+                return 0;
+            }
+
+            // Calculate straight-line distance
+            const straightLineDistance = fromTile.position.distanceTo(toTile.position);
+
+            // Estimate number of tiles to traverse
+            const estimatedTileCount = straightLineDistance / avgTileDistance;
+
+            // Use optimistic cost assumption:
+            // Assume best-case scenario of river downstream travel (cost = 1)
+            // This is admissible (never overestimates) because:
+            // 1. River downstream is the cheapest possible travel (cost 1)
+            // 2. Any actual path will have cost >= this estimate
+            // 3. This encourages exploring paths that might reach rivers
+            const optimisticCost = estimatedTileCount * 1.0;
+
+            return optimisticCost;
         }
     });
 
@@ -148,18 +197,30 @@ function aStarPathfinding(startTile, goalTile, planet) {
     const path = foundPath.map(node => planet.topology.tiles.find(tile => tile.id === node.id));
 
     let totalCost = 0;
+    let riverTiles = 0;
+    let oceanTiles = 0;
+    let landTiles = 0;
+
     for (let i = 0; i < foundPath.length - 1; i++) {
         const fromId = foundPath[i].id;
         const toId = foundPath[i + 1].id;
         const links = [...planet.graph.getLinks(fromId)];
         const link = links.find(l => l.toId === toId);
         if (link) {
-			//console.log(link.data.weight);
             totalCost += link.data.weight;
         }
     }
 
-    //console.log("Actual Path Cost (graph weights):", totalCost);
+    // Count terrain types in path
+    for (let i = 0; i < path.length; i++) {
+        const tile = path[i];
+        if (tile.river) riverTiles++;
+        else if (tile.elevation < 0) oceanTiles++;
+        else landTiles++;
+    }
+
+    console.log("Path found: " + path.length + " tiles, cost: " + totalCost.toFixed(1) +
+                " (River: " + riverTiles + ", Ocean: " + oceanTiles + ", Land: " + landTiles + ")");
     ctimeEnd("aStarPathfinding");
 
     return path;
