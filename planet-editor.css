@@ -1,0 +1,144 @@
+/* Planet Editor Styles */
+
+body {
+	margin: 0;
+	padding: 0;
+	overflow: hidden;
+	font-family: Arial, sans-serif;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+/* Smooth scrollbars for panels */
+::-webkit-scrollbar {
+	width: 8px;
+	height: 8px;
+}
+
+::-webkit-scrollbar-track {
+	background: rgba(0, 0, 0, 0.2);
+	border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+	background: rgba(136, 153, 187, 0.5);
+	border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+	background: rgba(136, 153, 187, 0.7);
+}
+
+/* Disable text selection on UI elements */
+.editor-button,
+.section-title,
+.property-label,
+.mode-indicator {
+	user-select: none;
+	-webkit-user-select: none;
+	-moz-user-select: none;
+	-ms-user-select: none;
+}
+
+/* Canvas cursor styles */
+#editorViewport canvas {
+	cursor: default;
+}
+
+#editorViewport.painting canvas {
+	cursor: crosshair;
+}
+
+/* Input focus styles */
+.editor-input:focus,
+.vector-input input:focus {
+	outline: none;
+	border-color: #89B;
+	box-shadow: 0 0 4px rgba(136, 153, 187, 0.5);
+}
+
+/* Button active state animation */
+.editor-button.active {
+	animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+	0%, 100% {
+		box-shadow: 0 0 8px rgba(96, 144, 192, 0.6);
+	}
+	50% {
+		box-shadow: 0 0 16px rgba(96, 144, 192, 0.8);
+	}
+}
+
+/* Slider styling for better visual feedback */
+input[type="range"] {
+	-webkit-appearance: none;
+	appearance: none;
+	background: rgba(0, 0, 0, 0.3);
+	border-radius: 4px;
+	height: 8px;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+	-webkit-appearance: none;
+	appearance: none;
+	width: 16px;
+	height: 16px;
+	background: #89B;
+	cursor: pointer;
+	border-radius: 50%;
+	border: 2px solid #FFF;
+}
+
+input[type="range"]::-moz-range-thumb {
+	width: 16px;
+	height: 16px;
+	background: #89B;
+	cursor: pointer;
+	border-radius: 50%;
+	border: 2px solid #FFF;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+	background: #9AC;
+}
+
+input[type="range"]::-moz-range-thumb:hover {
+	background: #9AC;
+}
+
+/* Loading indicator */
+.loading-indicator {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	color: #FFF;
+	font-size: 24px;
+	text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8);
+	display: none;
+}
+
+.loading-indicator.active {
+	display: block;
+}
+
+/* Tooltips */
+[title]:hover::after {
+	content: attr(title);
+	position: absolute;
+	bottom: 100%;
+	left: 50%;
+	transform: translateX(-50%);
+	background: rgba(0, 0, 0, 0.9);
+	color: #FFF;
+	padding: 0.5em;
+	border-radius: 0.25em;
+	font-size: 12px;
+	white-space: nowrap;
+	pointer-events: none;
+	z-index: 1000;
+}

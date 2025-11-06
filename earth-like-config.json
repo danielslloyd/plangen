@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "type": "minimal",
+  "name": "Earth-like Planet",
+  "description": "A planet configuration that approximates Earth's characteristics",
+  "seed": 1699894800000,
+  "originalSeed": "earth-like",
+  "settings": {
+    "subdivisions": 60,
+    "distortionLevel": 0.6,
+    "plateCount": 15,
+    "oceanicRate": 0.71,
+    "heatLevel": 1.0,
+    "moistureLevel": 1.0
+  },
+  "notes": {
+    "waterCoverage": "71% (matching Earth)",
+    "plateCount": "15 major tectonic plates (Earth has ~15 major plates)",
+    "subdivisions": "60 for good detail",
+    "distortionLevel": "0.6 for moderate terrain variation"
+  }
+}
