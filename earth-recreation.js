@@ -484,18 +484,20 @@ function getEarthMoisture(lat, lon, elevation) {
 
 /**
  * Generate Earth planet by applying real geographic data to each tile
+ * BRUTE FORCE VERSION: Uses detail=100, distortion=100 for maximum tile variation
  */
 function generateEarthPlanet() {
-	console.log('Starting Earth planet generation...');
+	console.log('Starting Earth planet brute-force generation...');
+	console.log('Using detail=100, distortion=100 for maximum geographic detail');
 
-	// Use high subdivision for detail (80 or 100 for best Earth recreation)
-	generationSettings.subdivisions = 80;
-	generationSettings.distortionLevel = 0; // No distortion - we want perfect sphere
+	// Use MAXIMUM detail and distortion as requested
+	generationSettings.subdivisions = 100;
+	generationSettings.distortionLevel = 100; // Maximum distortion for varied tile shapes
 	generationSettings.plateCount = 15; // Match Earth's plates (won't be used for elevation)
 	generationSettings.oceanicRate = 0.71; // 71% ocean
 	generationSettings.heatLevel = 1.0;
 	generationSettings.moistureLevel = 1.0;
-	generationSettings.seed = 'earth-recreation-v1';
+	generationSettings.seed = 'earth-brute-force-v1';
 
 	// Generate base planet
 	activeAction = new SteppedAction(updateProgressUI)
@@ -505,19 +507,19 @@ function generateEarthPlanet() {
 		.executeSubaction(function (action) {
 			generatePlanet(
 				generationSettings.subdivisions,
-				0, // No distortion
+				generationSettings.distortionLevel, // Use requested distortion level
 				generationSettings.plateCount,
 				generationSettings.oceanicRate,
 				generationSettings.heatLevel,
 				generationSettings.moistureLevel,
-				new XorShift128(hashString('earth-recreation-v1')),
+				new XorShift128(hashString('earth-brute-force-v1')),
 				action
 			);
-		}, 1, "Generating Base Geometry")
+		}, 1, "Generating Base Geometry (100 subdivisions, 100 distortion)")
 		.getResult(function (result) {
 			planet = result;
-			planet.seed = 'earth-recreation-v1';
-			planet.originalSeed = 'earth-recreation-v1';
+			planet.seed = 'earth-brute-force-v1';
+			planet.originalSeed = 'earth-brute-force-v1';
 		})
 		.executeSubaction(function(action) {
 			console.log('Applying Earth geographic data to tiles...');
@@ -539,7 +541,7 @@ function generateEarthPlanet() {
 		.executeSubaction(function (action) {
 			// Regenerate render data with Earth colors
 			console.log('Generating Earth visuals...');
-			var random = new XorShift128(hashString('earth-recreation-v1'));
+			var random = new XorShift128(hashString('earth-brute-force-v1'));
 			generatePlanetRenderData(planet.topology, random, action);
 		}, 1, "Building Earth Visuals")
 		.getResult(function (result) {
@@ -549,15 +551,106 @@ function generateEarthPlanet() {
 		})
 		.finalize(function (action) {
 			activeAction = null;
-			console.log('Earth planet generation complete!');
-			console.log('Tiles:', planet.topology.tiles.length);
+			console.log('='.repeat(60));
+			console.log('EARTH BRUTE-FORCE GENERATION COMPLETE!');
+			console.log('='.repeat(60));
+			console.log('Configuration:');
+			console.log('  - Subdivisions: 100 (maximum detail)');
+			console.log('  - Distortion: 100 (maximum variation)');
+			console.log('  - Total Tiles:', planet.topology.tiles.length);
+			console.log('  - Total Corners:', planet.topology.corners.length);
+			console.log('  - Total Borders:', planet.topology.borders.length);
+			console.log('');
+			console.log('Auto-saving planet file...');
 
 			// Auto-save as full format
 			var data = savePlanetFull(planet);
-			downloadPlanetFile(data, 'earth-recreation-full.json');
-			console.log('Saved as earth-recreation-full.json');
+			var filename = 'earth-brute-force-detail100-distortion100.json';
+			downloadPlanetFile(data, filename);
+
+			console.log('File saved: ' + filename);
+			console.log('File size: ' + (data.length / 1024 / 1024).toFixed(2) + ' MB');
+			console.log('='.repeat(60));
 		}, 0)
 		.execute();
+}
+
+/**
+ * Get Earth biome for given lat/lon and environmental parameters
+ */
+function getEarthBiome(lat, lon, elevation, temperature, moisture) {
+	var latAbs = Math.abs(lat);
+	var lon360 = lon < 0 ? lon + 360 : lon;
+
+	// Ocean
+	if (elevation < 0) {
+		return 'ocean';
+	}
+
+	// Ice/Snow (polar and high altitude)
+	if (latAbs > 66 || elevation > 0.45) { // Arctic/Antarctic circles or very high elevation
+		return 'snow';
+	}
+
+	// Tundra
+	if (latAbs > 60 || (elevation > 0.35 && latAbs > 40)) {
+		return 'tundra';
+	}
+
+	// Taiga (boreal forest)
+	if (latAbs > 50 && latAbs < 65 && moisture > 0.3) {
+		return 'taiga';
+	}
+
+	// Desert (hot and cold)
+	if (moisture < 0.25) {
+		if (temperature > 0.6) {
+			return 'desert'; // Hot desert
+		} else {
+			return 'tundra'; // Cold desert
+		}
+	}
+
+	// Tropical rainforest
+	if (latAbs < 10 && moisture > 0.7) {
+		return 'tropicalRainforest';
+	}
+
+	// Tropical seasonal forest / savanna
+	if (latAbs < 25 && temperature > 0.6) {
+		if (moisture > 0.5) {
+			return 'tropicalSeasonalForest';
+		} else if (moisture > 0.3) {
+			return 'grassland'; // Savanna
+		}
+	}
+
+	// Temperate rainforest
+	if (latAbs > 40 && latAbs < 55 && moisture > 0.7) {
+		return 'temperateRainforest';
+	}
+
+	// Temperate deciduous forest
+	if (latAbs > 30 && latAbs < 55 && moisture > 0.4 && temperature > 0.4) {
+		return 'temperateDeciduousForest';
+	}
+
+	// Grassland
+	if (moisture > 0.25 && moisture < 0.5) {
+		if (temperature > 0.5) {
+			return 'grassland';
+		} else {
+			return 'shrubland';
+		}
+	}
+
+	// Shrubland (Mediterranean, chaparral)
+	if (moisture > 0.2 && moisture < 0.5 && temperature > 0.5) {
+		return 'shrubland';
+	}
+
+	// Default to temperate forest
+	return 'temperateDeciduousForest';
 }
 
 /**
@@ -596,7 +689,10 @@ function applyEarthDataToTiles(planet, action) {
 				tile.temperature = temperature;
 				tile.moisture = moisture;
 
-				// Store lat/lon for reference
+				// Assign biome based on Earth data
+				tile.biome = getEarthBiome(latLon.lat, latLon.lon, tile.elevation, temperature, moisture);
+
+				// Store lat/lon for reference (useful for debugging)
 				tile.latitude = latLon.lat;
 				tile.longitude = latLon.lon;
 
@@ -632,16 +728,16 @@ function applyEarthDataToTiles(planet, action) {
 $(document).ready(function() {
 	// Add Earth generation button to control panel if it exists
 	if ($('#controlPanel').length > 0) {
-		var earthButton = $('<button id="generateEarthBtn" class="editor-button" style="margin-top: 0.5em; width: 100%; padding: 0.75em; background-color: rgba(64, 128, 64, 0.8);">Generate Earth Recreation</button>');
+		var earthButton = $('<button id="generateEarthBtn" class="editor-button" style="margin-top: 0.5em; width: 100%; padding: 0.75em; background-color: rgba(64, 128, 64, 0.8);">Generate Earth (Brute Force)</button>');
 
 		earthButton.click(function() {
-			if (confirm('Generate a high-resolution planet recreating Earth\'s geography?\n\nThis will take 1-3 minutes and auto-save when complete.\n\nSubdivisions: 80 (25,000+ tiles)')) {
+			if (confirm('Generate Earth with MAXIMUM detail?\n\nConfiguration:\n- Detail: 100 subdivisions (~60,000+ tiles)\n- Distortion: 100 (maximum variation)\n\nThis will take 3-5 minutes and auto-save when complete.\n\nWarning: This creates a very large file (10-20 MB).\n\nContinue?')) {
 				generateEarthPlanet();
 			}
 		});
 
 		// Add to control panel
-		$('#controlPanel .panel-section:last').before('<div class="panel-section"><div class="section-title">Earth Recreation</div></div>');
+		$('#controlPanel .panel-section:last').before('<div class="panel-section"><div class="section-title">Earth Recreation (Brute Force)</div></div>');
 		$('#controlPanel .panel-section:last').prev().append(earthButton);
 	}
 });
