@@ -125,6 +125,28 @@ $(document).ready(function onDocumentReady() {
 	ui.advancedSettingsButton = $("#advancedSettingsButton");
 	ui.advancedSettingsButton.click(showAdvancedSettings);
 
+	// Save/Load Planet buttons
+	ui.savePlanetMinimalButton = $("#savePlanetMinimalButton");
+	ui.savePlanetFullButton = $("#savePlanetFullButton");
+	ui.savePlanetGeoJSONButton = $("#savePlanetGeoJSONButton");
+	ui.loadPlanetButton = $("#loadPlanetButton");
+
+	ui.savePlanetMinimalButton.click(function() {
+		savePlanetToFile('minimal');
+	});
+
+	ui.savePlanetFullButton.click(function() {
+		savePlanetToFile('full');
+	});
+
+	ui.savePlanetGeoJSONButton.click(function() {
+		savePlanetToFile('geojson');
+	});
+
+	ui.loadPlanetButton.click(function() {
+		loadPlanetFromFile();
+	});
+
 	// Removed ui.dataPanel - statistics panel no longer exists
 
 	ui.progressPanel = $("#progressPanel");

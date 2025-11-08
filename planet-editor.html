@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html style="width: 100%; height: 100%; margin: 0; padding: 0;">
+	<head>
+		<meta charset="utf-8">
+		<title>PlanGen Planet Editor</title>
+		<script src="http://code.jquery.com/jquery-2.1.0.min.js"></script>
+		<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r125/three.min.js"></script>
+		<script src="https://unpkg.com/ngraph.graph@20.0.1/dist/ngraph.graph.min.js"></script>
+		<script src='https://unpkg.com/ngraph.path@1.3.1/dist/ngraph.path.min.js'></script>
+		<script src="jquery.mousewheel.js"></script>
+		<script src="SteppedAction.js"></script>
+		<script src="geometry.js"></script>
+		<script src="utilities.js"></script>
+		<script src="elevation-generation.js"></script>
+		<script src="generatePlanetTerrain_functions.js"></script>
+		<script src="post-generation.js"></script>
+		<script src="generatePlanetRenderData_functions.js"></script>
+		<script src="rendering-3d.js"></script>
+		<script src="weather-generation.js"></script>
+		<script src="planet-generator.js"></script>
+		<script src="planet-save-load.js"></script>
+		<script src="planet-editor.js"></script>
+		<link rel="stylesheet" type="text/css" href="planet-generator.css" />
+		<link rel="stylesheet" type="text/css" href="planet-editor.css" />
+		<style>
+			#editorViewport {
+				position: absolute;
+				width: 100%;
+				height: 100%;
+				background-color: #000033;
+			}
+
+			#editorControls {
+				position: absolute;
+				top: 1em;
+				left: 1em;
+				background-color: rgba(32, 64, 128, 0.95);
+				color: #FFFFFF;
+				padding: 1em;
+				border-radius: 0.5em;
+				min-width: 20em;
+				max-width: 25em;
+				font-family: Arial, sans-serif;
+				font-size: 14px;
+				box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+			}
+
+			#tileInfoPanel {
+				position: absolute;
+				top: 1em;
+				right: 1em;
+				background-color: rgba(32, 64, 128, 0.95);
+				color: #FFFFFF;
+				padding: 1em;
+				border-radius: 0.5em;
+				min-width: 18em;
+				font-family: Arial, sans-serif;
+				font-size: 13px;
+				box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+				display: none;
+			}
+
+			#editModePanel {
+				position: absolute;
+				bottom: 1em;
+				left: 1em;
+				background-color: rgba(32, 64, 128, 0.95);
+				color: #FFFFFF;
+				padding: 1em;
+				border-radius: 0.5em;
+				width: 22em;
+				font-family: Arial, sans-serif;
+				font-size: 13px;
+				box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+			}
+
+			.panel-section {
+				margin-bottom: 1em;
+				padding-bottom: 0.75em;
+				border-bottom: 1px solid rgba(136, 153, 187, 0.3);
+			}
+
+			.panel-section:last-child {
+				margin-bottom: 0;
+				padding-bottom: 0;
+				border-bottom: none;
+			}
+
+			.section-title {
+				font-weight: bold;
+				margin-bottom: 0.5em;
+				font-size: 110%;
+				color: #89B;
+			}
+
+			.button-row {
+				display: grid;
+				grid-template-columns: 1fr 1fr;
+				gap: 0.5em;
+				margin-top: 0.5em;
+			}
+
+			.editor-button {
+				padding: 0.5em;
+				background-color: rgba(16, 32, 64, 0.8);
+				color: #FFFFFF;
+				border: 1px solid rgba(136, 153, 187, 0.5);
+				border-radius: 0.25em;
+				cursor: pointer;
+				font-size: 100%;
+				transition: background-color 0.2s;
+			}
+
+			.editor-button:hover {
+				background-color: rgba(64, 96, 160, 0.9);
+			}
+
+			.editor-button.active {
+				background-color: rgba(96, 144, 192, 1);
+				border-color: #89B;
+			}
+
+			.editor-button:disabled {
+				opacity: 0.5;
+				cursor: not-allowed;
+			}
+
+			.property-row {
+				display: flex;
+				justify-content: space-between;
+				align-items: center;
+				margin-bottom: 0.5em;
+			}
+
+			.property-label {
+				font-size: 90%;
+				color: #AAC;
+			}
+
+			.property-value {
+				font-weight: bold;
+				color: #FFF;
+			}
+
+			.editor-input {
+				width: 100%;
+				padding: 0.4em;
+				background-color: rgba(0, 0, 0, 0.3);
+				color: #FFFFFF;
+				border: 1px solid rgba(136, 153, 187, 0.5);
+				border-radius: 0.25em;
+				font-size: 95%;
+				margin-top: 0.3em;
+			}
+
+			.editor-slider {
+				width: 100%;
+				margin-top: 0.3em;
+			}
+
+			.mode-indicator {
+				display: inline-block;
+				padding: 0.3em 0.6em;
+				background-color: rgba(96, 144, 192, 1);
+				border-radius: 0.25em;
+				font-weight: bold;
+				font-size: 90%;
+			}
+
+			.help-text {
+				font-size: 85%;
+				color: #AAC;
+				font-style: italic;
+				margin-top: 0.5em;
+			}
+
+			.brush-preview {
+				display: inline-block;
+				width: 40px;
+				height: 40px;
+				border: 2px solid #89B;
+				border-radius: 50%;
+				background: radial-gradient(circle, rgba(255,255,255,0.3) 0%, rgba(255,255,255,0) 100%);
+				vertical-align: middle;
+				margin-left: 0.5em;
+			}
+
+			.vector-input {
+				display: grid;
+				grid-template-columns: repeat(3, 1fr);
+				gap: 0.3em;
+				margin-top: 0.3em;
+			}
+
+			.vector-input input {
+				padding: 0.3em;
+				background-color: rgba(0, 0, 0, 0.3);
+				color: #FFFFFF;
+				border: 1px solid rgba(136, 153, 187, 0.5);
+				border-radius: 0.25em;
+				font-size: 90%;
+				text-align: center;
+			}
+		</style>
+	</head>
+	<body>
+		<div id="editorViewport"></div>
+
+		<!-- Main Editor Controls -->
+		<div id="editorControls">
+			<div class="panel-section">
+				<div class="section-title">Planet Editor</div>
+				<div class="button-row">
+					<button id="loadPlanetBtn" class="editor-button">Load Planet</button>
+					<button id="savePlanetBtn" class="editor-button" disabled>Save Planet</button>
+				</div>
+				<div id="loadedPlanetInfo" style="margin-top: 0.5em; font-size: 85%; color: #AAC; display: none;">
+					<div>Seed: <span id="planetSeedDisplay"></span></div>
+					<div>Tiles: <span id="planetTileCount"></span></div>
+				</div>
+			</div>
+
+			<div class="panel-section">
+				<div class="section-title">Edit Mode</div>
+				<div class="button-row">
+					<button id="elevationEditBtn" class="editor-button">Elevation</button>
+					<button id="windEditBtn" class="editor-button">Wind/Air</button>
+				</div>
+				<div class="button-row" style="margin-top: 0.5em;">
+					<button id="temperatureEditBtn" class="editor-button">Temperature</button>
+					<button id="moistureEditBtn" class="editor-button">Moisture</button>
+				</div>
+			</div>
+
+			<div class="panel-section">
+				<div class="section-title">View Options</div>
+				<div class="button-row">
+					<button id="showWireframeBtn" class="editor-button">Wireframe</button>
+					<button id="showLabelsBtn" class="editor-button">Labels</button>
+				</div>
+			</div>
+		</div>
+
+		<!-- Tile Info Panel -->
+		<div id="tileInfoPanel">
+			<div class="section-title">Selected Tile #<span id="selectedTileId">-</span></div>
+
+			<div class="property-row">
+				<span class="property-label">Elevation:</span>
+				<span class="property-value" id="tileElevation">-</span>
+			</div>
+			<div class="property-row">
+				<span class="property-label">Temperature:</span>
+				<span class="property-value" id="tileTemperature">-</span>
+			</div>
+			<div class="property-row">
+				<span class="property-label">Moisture:</span>
+				<span class="property-value" id="tileMoisture">-</span>
+			</div>
+			<div class="property-row">
+				<span class="property-label">Biome:</span>
+				<span class="property-value" id="tileBiome">-</span>
+			</div>
+			<div class="property-row">
+				<span class="property-label">Air Current:</span>
+				<span class="property-value" id="tileAirCurrent">-</span>
+			</div>
+		</div>
+
+		<!-- Edit Mode Panel -->
+		<div id="editModePanel">
+			<div class="section-title">
+				Mode: <span class="mode-indicator" id="currentModeDisplay">None</span>
+			</div>
+
+			<!-- Elevation Edit Panel -->
+			<div id="elevationEditPanel" style="display: none;">
+				<div style="margin-top: 0.75em;">
+					<label class="property-label">New Elevation:</label>
+					<input type="range" id="elevationSlider" class="editor-slider"
+						min="-1" max="1" step="0.01" value="0">
+					<input type="number" id="elevationInput" class="editor-input"
+						min="-1" max="1" step="0.01" value="0" placeholder="Enter elevation">
+				</div>
+				<div class="button-row" style="margin-top: 0.75em;">
+					<button id="applyElevationBtn" class="editor-button">Apply</button>
+					<button id="cancelElevationBtn" class="editor-button">Cancel</button>
+				</div>
+				<div class="help-text">
+					Click a tile to select it, then adjust elevation and click Apply.
+				</div>
+			</div>
+
+			<!-- Wind Edit Panel -->
+			<div id="windEditPanel" style="display: none;">
+				<div style="margin-top: 0.75em;">
+					<label class="property-label">Brush Size: <span id="brushSizeDisplay">3</span> tiles</label>
+					<input type="range" id="brushSizeSlider" class="editor-slider"
+						min="1" max="10" step="1" value="3">
+					<span class="brush-preview" id="brushPreview"></span>
+				</div>
+				<div style="margin-top: 0.75em;">
+					<label class="property-label">Wind Direction:</label>
+					<div class="vector-input">
+						<input type="number" id="windX" step="0.1" value="0" placeholder="X">
+						<input type="number" id="windY" step="0.1" value="0" placeholder="Y">
+						<input type="number" id="windZ" step="0.1" value="0" placeholder="Z">
+					</div>
+				</div>
+				<div style="margin-top: 0.75em;">
+					<label class="property-label">Blend Strength:</label>
+					<input type="range" id="blendStrengthSlider" class="editor-slider"
+						min="0.1" max="1" step="0.1" value="0.5">
+					<span class="property-value" id="blendStrengthDisplay">50%</span>
+				</div>
+				<div class="button-row" style="margin-top: 0.75em;">
+					<button id="paintWindBtn" class="editor-button active">Paint Mode</button>
+					<button id="clearWindBtn" class="editor-button">Clear Selection</button>
+				</div>
+				<div class="help-text">
+					Click and drag to paint wind direction across tiles. Wind is blended smoothly based on brush size.
+				</div>
+			</div>
+
+			<!-- Temperature Edit Panel -->
+			<div id="temperatureEditPanel" style="display: none;">
+				<div style="margin-top: 0.75em;">
+					<label class="property-label">New Temperature:</label>
+					<input type="range" id="temperatureSlider" class="editor-slider"
+						min="0" max="1" step="0.01" value="0.5">
+					<input type="number" id="temperatureInput" class="editor-input"
+						min="0" max="1" step="0.01" value="0.5" placeholder="Enter temperature">
+				</div>
+				<div class="button-row" style="margin-top: 0.75em;">
+					<button id="applyTemperatureBtn" class="editor-button">Apply</button>
+					<button id="cancelTemperatureBtn" class="editor-button">Cancel</button>
+				</div>
+				<div class="help-text">
+					Click a tile to select it, then adjust temperature and click Apply.
+				</div>
+			</div>
+
+			<!-- Moisture Edit Panel -->
+			<div id="moistureEditPanel" style="display: none;">
+				<div style="margin-top: 0.75em;">
+					<label class="property-label">New Moisture:</label>
+					<input type="range" id="moistureSlider" class="editor-slider"
+						min="0" max="1" step="0.01" value="0.5">
+					<input type="number" id="moistureInput" class="editor-input"
+						min="0" max="1" step="0.01" value="0.5" placeholder="Enter moisture">
+				</div>
+				<div class="button-row" style="margin-top: 0.75em;">
+					<button id="applyMoistureBtn" class="editor-button">Apply</button>
+					<button id="cancelMoistureBtn" class="editor-button">Cancel</button>
+				</div>
+				<div class="help-text">
+					Click a tile to select it, then adjust moisture and click Apply.
+				</div>
+			</div>
+		</div>
+	</body>
+</html>
