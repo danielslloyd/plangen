@@ -130,6 +130,8 @@ $(document).ready(function onDocumentReady() {
 	ui.savePlanetFullButton = $("#savePlanetFullButton");
 	ui.savePlanetGeoJSONButton = $("#savePlanetGeoJSONButton");
 	ui.loadPlanetButton = $("#loadPlanetButton");
+	ui.exportRegionsGeoJSONButton = $("#exportRegionsGeoJSONButton");
+	ui.importGeoJSONButton = $("#importGeoJSONButton");
 
 	ui.savePlanetMinimalButton.click(function() {
 		savePlanetToFile('minimal');
@@ -145,6 +147,14 @@ $(document).ready(function onDocumentReady() {
 
 	ui.loadPlanetButton.click(function() {
 		loadPlanetFromFile();
+	});
+
+	ui.exportRegionsGeoJSONButton.click(function() {
+		savePlanetToFile('geojson-regions');
+	});
+
+	ui.importGeoJSONButton.click(function() {
+		loadGeoJSONAsPlanet();
 	});
 
 	// Removed ui.dataPanel - statistics panel no longer exists
