@@ -581,6 +581,9 @@ function savePlanetToFile(format) {
 	} else if (format === 'geojson') {
 		data = exportToGeoJSON(planet);
 		filename = 'planet-' + planet.seed + '.geojson';
+	} else if (format === 'geojson-regions') {
+		data = exportWatershedRegionsToGeoJSON(planet);
+		filename = 'planet-' + planet.seed + '-regions.geojson';
 	} else {
 		alert('Unknown format: ' + format);
 		return;
@@ -615,8 +618,9 @@ function loadPlanetFromFile() {
 					loadPlanetFull(data);
 					console.log('Loaded full planet file');
 				} else if (data.type === 'FeatureCollection') {
-					// This is a GeoJSON file - not supported for import yet
-					alert('GeoJSON import is not yet implemented. Use minimal or full format.');
+					// This is a GeoJSON file - import it as a planet
+					importGeoJSONAsPlanet(data);
+					console.log('Importing GeoJSON file as planet...');
 				} else {
 					alert('Unknown planet file format');
 				}
@@ -716,4 +720,450 @@ function cartesianToSpherical(position) {
 	var theta = Math.atan2(geo_y, geo_x); // Standard longitude (-π to π)
 
 	return { theta: theta, phi: phi };
+}
+
+/**
+ * Export planet as GeoJSON with watershed regions as "countries"
+ * Each watershed region becomes a MultiPolygon feature
+ */
+function exportWatershedRegionsToGeoJSON(planet) {
+	if (!window.watershedFinalRegions || window.watershedFinalRegions.length === 0) {
+		// Fall back to regular tile export if no watershed regions
+		console.warn('No watershed regions found, exporting individual tiles instead');
+		return exportToGeoJSON(planet);
+	}
+
+	var features = [];
+
+	for (var i = 0; i < window.watershedFinalRegions.length; i++) {
+		var region = window.watershedFinalRegions[i];
+
+		// Create MultiPolygon from all tiles in this region
+		var polygons = [];
+
+		for (var j = 0; j < region.tiles.length; j++) {
+			var tile = region.tiles[j];
+
+			// Convert tile corners to GeoJSON coordinates [longitude, latitude]
+			var coordinates = [];
+			for (var k = 0; k < tile.corners.length; k++) {
+				var corner = tile.corners[k];
+				var spherical = cartesianToSpherical(corner.position);
+				// GeoJSON uses [longitude, latitude] in degrees
+				var lon = spherical.theta * 180 / Math.PI;
+				var lat = spherical.phi * 180 / Math.PI;
+				coordinates.push([lon, lat]);
+			}
+			// Close the polygon
+			coordinates.push(coordinates[0]);
+
+			polygons.push([coordinates]);
+		}
+
+		// Calculate region statistics
+		var avgElevation = 0;
+		var avgTemperature = 0;
+		var avgMoisture = 0;
+		var hasRiver = false;
+		var hasLake = false;
+		var biomes = {};
+
+		for (var j = 0; j < region.tiles.length; j++) {
+			var tile = region.tiles[j];
+			avgElevation += tile.elevation || 0;
+			avgTemperature += tile.temperature || 0;
+			avgMoisture += tile.moisture || 0;
+			if (tile.river) hasRiver = true;
+			if (tile.lake) hasLake = true;
+
+			var biome = tile.biome || 'unknown';
+			biomes[biome] = (biomes[biome] || 0) + 1;
+		}
+
+		avgElevation /= region.tiles.length;
+		avgTemperature /= region.tiles.length;
+		avgMoisture /= region.tiles.length;
+
+		// Find dominant biome
+		var dominantBiome = 'unknown';
+		var maxBiomeCount = 0;
+		for (var biome in biomes) {
+			if (biomes[biome] > maxBiomeCount) {
+				maxBiomeCount = biomes[biome];
+				dominantBiome = biome;
+			}
+		}
+
+		// Create feature for this region
+		var feature = {
+			type: 'Feature',
+			id: region.id,
+			geometry: {
+				type: 'MultiPolygon',
+				coordinates: polygons
+			},
+			properties: {
+				regionId: region.id,
+				name: region.watershedRegionLabel || ('Region ' + region.id),
+				tileCount: region.tiles.length,
+				neighborCount: region.neighbors ? region.neighbors.size : 0,
+				color: region.color ? '#' + region.color.toString(16).padStart(6, '0') : null,
+				elevation: roundValue(avgElevation, 4),
+				temperature: roundValue(avgTemperature, 3),
+				moisture: roundValue(avgMoisture, 3),
+				biome: dominantBiome,
+				hasRiver: hasRiver,
+				hasLake: hasLake
+			}
+		};
+
+		features.push(feature);
+	}
+
+	// Also add ocean tiles as a single feature
+	var oceanTiles = planet.topology.tiles.filter(function(tile) {
+		return tile.elevation <= 0;
+	});
+
+	if (oceanTiles.length > 0) {
+		var oceanPolygons = [];
+		for (var i = 0; i < oceanTiles.length; i++) {
+			var tile = oceanTiles[i];
+			var coordinates = [];
+			for (var k = 0; k < tile.corners.length; k++) {
+				var corner = tile.corners[k];
+				var spherical = cartesianToSpherical(corner.position);
+				var lon = spherical.theta * 180 / Math.PI;
+				var lat = spherical.phi * 180 / Math.PI;
+				coordinates.push([lon, lat]);
+			}
+			coordinates.push(coordinates[0]);
+			oceanPolygons.push([coordinates]);
+		}
+
+		features.push({
+			type: 'Feature',
+			id: 0,
+			geometry: {
+				type: 'MultiPolygon',
+				coordinates: oceanPolygons
+			},
+			properties: {
+				regionId: 0,
+				name: 'Ocean',
+				tileCount: oceanTiles.length,
+				biome: 'ocean',
+				isOcean: true
+			}
+		});
+	}
+
+	var geojson = {
+		type: 'FeatureCollection',
+		features: features,
+		properties: {
+			seed: planet.seed,
+			generator: 'PlanGen',
+			exportType: 'watershedRegions',
+			created: new Date().toISOString(),
+			regionCount: window.watershedFinalRegions.length
+		}
+	};
+
+	return JSON.stringify(geojson);
+}
+
+/**
+ * Import a GeoJSON file and project it onto a new planet mesh
+ * Creates a new planet with high subdivision and assigns properties based on GeoJSON features
+ */
+function importGeoJSONAsPlanet(geojsonData, callback) {
+	var geojson;
+
+	try {
+		geojson = typeof geojsonData === 'string' ? JSON.parse(geojsonData) : geojsonData;
+	} catch (e) {
+		alert('Invalid GeoJSON file: ' + e.message);
+		return;
+	}
+
+	if (geojson.type !== 'FeatureCollection' || !geojson.features) {
+		alert('Invalid GeoJSON: must be a FeatureCollection');
+		return;
+	}
+
+	console.log('Importing GeoJSON with ' + geojson.features.length + ' features');
+
+	// Set generation settings for a high-detail planet
+	generationSettings.subdivisions = 60;
+	generationSettings.distortionLevel = 1.0;
+	generationSettings.plateCount = 36;
+	generationSettings.oceanicRate = 0.7;
+	generationSettings.heatLevel = 1.0;
+	generationSettings.moistureLevel = 1.0;
+	generationSettings.seed = 'geojson-import-' + Date.now();
+
+	// Generate the base planet geometry
+	var action = new SteppedAction(updateProgressUI);
+
+	action
+		.executeSubaction(function(a) {
+			// Generate mesh and topology only (no terrain)
+			return generatePlanetMesh(generationSettings.subdivisions, generationSettings.distortionLevel, a);
+		}, 1, "Generating Mesh")
+		.getResult(function(mesh) {
+			planet = new Planet();
+			planet.seed = generationSettings.seed;
+			planet.mesh = mesh;
+		})
+		.executeSubaction(function(a) {
+			return generatePlanetTopology(planet.mesh, a);
+		}, 1, "Building Topology")
+		.getResult(function(topology) {
+			planet.topology = topology;
+		})
+		.executeSubaction(function(a) {
+			// Project GeoJSON onto planet tiles
+			projectGeoJSONOntoTiles(planet.topology.tiles, geojson, a);
+		}, 1, "Projecting GeoJSON")
+		.executeSubaction(function(a) {
+			// Generate render data
+			planet.random = new XorShift128(planet.seed);
+			return generatePlanetRenderData(planet.topology, planet.random, a);
+		}, 1, "Building Visuals")
+		.getResult(function(renderData) {
+			planet.renderData = renderData;
+		})
+		.finalize(function() {
+			displayPlanet(planet);
+			console.log('GeoJSON import complete');
+			if (callback) callback();
+		})
+		.execute();
+}
+
+/**
+ * Project GeoJSON features onto planet tiles
+ * Assigns properties from GeoJSON features to tiles based on their geographic location
+ */
+function projectGeoJSONOntoTiles(tiles, geojson, action) {
+	// Build a spatial index of features for faster lookup
+	var features = geojson.features;
+
+	// Pre-process features to extract polygons and bounding boxes
+	var processedFeatures = [];
+	for (var i = 0; i < features.length; i++) {
+		var feature = features[i];
+		var polygons = [];
+		var bbox = { minLon: 180, maxLon: -180, minLat: 90, maxLat: -90 };
+
+		if (feature.geometry.type === 'Polygon') {
+			polygons.push(feature.geometry.coordinates[0]);
+		} else if (feature.geometry.type === 'MultiPolygon') {
+			for (var j = 0; j < feature.geometry.coordinates.length; j++) {
+				polygons.push(feature.geometry.coordinates[j][0]);
+			}
+		}
+
+		// Calculate bounding box
+		for (var j = 0; j < polygons.length; j++) {
+			var ring = polygons[j];
+			for (var k = 0; k < ring.length; k++) {
+				var lon = ring[k][0];
+				var lat = ring[k][1];
+				if (lon < bbox.minLon) bbox.minLon = lon;
+				if (lon > bbox.maxLon) bbox.maxLon = lon;
+				if (lat < bbox.minLat) bbox.minLat = lat;
+				if (lat > bbox.maxLat) bbox.maxLat = lat;
+			}
+		}
+
+		processedFeatures.push({
+			feature: feature,
+			polygons: polygons,
+			bbox: bbox
+		});
+	}
+
+	// Process each tile
+	for (var i = 0; i < tiles.length; i++) {
+		var tile = tiles[i];
+
+		// Get tile center in geographic coordinates
+		var spherical = cartesianToSpherical(tile.averagePosition || tile.position);
+		var tileLon = spherical.theta * 180 / Math.PI;
+		var tileLat = spherical.phi * 180 / Math.PI;
+
+		// Find which feature contains this tile
+		var containingFeature = null;
+
+		for (var j = 0; j < processedFeatures.length; j++) {
+			var pf = processedFeatures[j];
+
+			// Quick bounding box check
+			if (tileLon < pf.bbox.minLon || tileLon > pf.bbox.maxLon ||
+				tileLat < pf.bbox.minLat || tileLat > pf.bbox.maxLat) {
+				continue;
+			}
+
+			// Point-in-polygon test
+			for (var k = 0; k < pf.polygons.length; k++) {
+				if (pointInPolygon([tileLon, tileLat], pf.polygons[k])) {
+					containingFeature = pf.feature;
+					break;
+				}
+			}
+
+			if (containingFeature) break;
+		}
+
+		// Assign properties based on the containing feature
+		if (containingFeature) {
+			var props = containingFeature.properties || {};
+
+			// Set elevation based on feature
+			if (props.isOcean || props.biome === 'ocean') {
+				tile.elevation = -0.3;
+			} else if (props.elevation !== undefined) {
+				tile.elevation = props.elevation;
+			} else {
+				tile.elevation = 0.3; // Default land elevation
+			}
+
+			// Set other properties
+			tile.temperature = props.temperature !== undefined ? props.temperature : 0.5;
+			tile.moisture = props.moisture !== undefined ? props.moisture : 0.5;
+			tile.biome = props.biome || (tile.elevation > 0 ? 'grassland' : 'ocean');
+
+			// Store region ID for potential watershed display
+			if (props.regionId !== undefined) {
+				tile.finalRegionId = props.regionId;
+			}
+
+			// Mark rivers/lakes
+			if (props.hasRiver) tile.river = true;
+			if (props.hasLake) tile.lake = true;
+
+		} else {
+			// Default to ocean if no feature contains this tile
+			tile.elevation = -0.5;
+			tile.temperature = 0.5;
+			tile.moisture = 1.0;
+			tile.biome = 'ocean';
+		}
+
+		// Initialize other required properties
+		tile.shore = tile.elevation > 0 ? 1 : -1;
+		tile.rain = tile.moisture * 100;
+		tile.outflow = 0;
+		tile.inflow = 0;
+	}
+
+	// Calculate shore distances
+	calculateShoreDistancesForImport(tiles);
+
+	action.provideResult("GeoJSON projection complete");
+}
+
+/**
+ * Calculate shore distances for imported tiles
+ */
+function calculateShoreDistancesForImport(tiles) {
+	// Initialize all shore values to 0
+	for (var i = 0; i < tiles.length; i++) {
+		tiles[i].shore = 0;
+	}
+
+	// First pass: identify immediate shore tiles
+	for (var i = 0; i < tiles.length; i++) {
+		var tile = tiles[i];
+		if (tile.elevation > 0) {
+			// Land tile: check if any neighbors are ocean
+			var hasOceanNeighbor = false;
+			for (var j = 0; j < tile.tiles.length; j++) {
+				if (tile.tiles[j].elevation <= 0) {
+					hasOceanNeighbor = true;
+					break;
+				}
+			}
+			if (hasOceanNeighbor) tile.shore = 1;
+		} else {
+			// Ocean tile: check if any neighbors are land
+			var hasLandNeighbor = false;
+			for (var j = 0; j < tile.tiles.length; j++) {
+				if (tile.tiles[j].elevation > 0) {
+					hasLandNeighbor = true;
+					break;
+				}
+			}
+			if (hasLandNeighbor) tile.shore = -1;
+		}
+	}
+
+	// Iterative expansion
+	var currentDistance = 1;
+	var hasChanges = true;
+
+	while (hasChanges && currentDistance < 100) {
+		hasChanges = false;
+
+		for (var i = 0; i < tiles.length; i++) {
+			var tile = tiles[i];
+			if (Math.abs(tile.shore) === currentDistance) {
+				for (var j = 0; j < tile.tiles.length; j++) {
+					var neighbor = tile.tiles[j];
+					if (neighbor.shore === 0) {
+						if (neighbor.elevation > 0) {
+							neighbor.shore = tile.shore + 1;
+						} else {
+							neighbor.shore = tile.shore - 1;
+						}
+						hasChanges = true;
+					}
+				}
+			}
+		}
+		currentDistance++;
+	}
+}
+
+/**
+ * Point-in-polygon test using ray casting algorithm
+ */
+function pointInPolygon(point, polygon) {
+	var x = point[0], y = point[1];
+	var inside = false;
+
+	for (var i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+		var xi = polygon[i][0], yi = polygon[i][1];
+		var xj = polygon[j][0], yj = polygon[j][1];
+
+		var intersect = ((yi > y) !== (yj > y)) &&
+			(x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+		if (intersect) inside = !inside;
+	}
+
+	return inside;
+}
+
+/**
+ * Load GeoJSON file and import it as a planet
+ */
+function loadGeoJSONAsPlanet() {
+	var input = document.createElement('input');
+	input.type = 'file';
+	input.accept = '.geojson,.json';
+
+	input.onchange = function(e) {
+		var file = e.target.files[0];
+		var reader = new FileReader();
+
+		reader.onload = function(event) {
+			importGeoJSONAsPlanet(event.target.result);
+		};
+
+		reader.readAsText(file);
+	};
+
+	input.click();
 }
