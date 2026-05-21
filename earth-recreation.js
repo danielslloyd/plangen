@@ -728,16 +728,20 @@ function applyEarthDataToTiles(planet, action) {
 $(document).ready(function() {
 	// Add Earth generation button to control panel if it exists
 	if ($('#controlPanel').length > 0) {
-		var earthButton = $('<button id="generateEarthBtn" class="editor-button" style="margin-top: 0.5em; width: 100%; padding: 0.75em; background-color: rgba(64, 128, 64, 0.8);">Generate Earth (Brute Force)</button>');
+		// Create the section HTML with proper styling matching the control panel
+		var earthSection = $('<div style="margin-top: 1em;">' +
+			'<h2 style="margin: 0 0 0.5em 0; font-size: 110%; border-bottom: 1px solid #89B; padding-bottom: 0.25em;">Earth Recreation (Brute Force)</h2>' +
+			'<button id="generateEarthBtn" style="width: 100%; padding: 0.5em; font-size: 85%; background-color: rgba(64, 128, 64, 0.8); border: none; border-radius: 0.25em; color: #FFFFFF; cursor: pointer;">Generate Earth (Brute Force)</button>' +
+			'</div>');
 
-		earthButton.click(function() {
+		// Add click handler
+		earthSection.find('#generateEarthBtn').click(function() {
 			if (confirm('Generate Earth with MAXIMUM detail?\n\nConfiguration:\n- Detail: 100 subdivisions (~60,000+ tiles)\n- Distortion: 100 (maximum variation)\n\nThis will take 3-5 minutes and auto-save when complete.\n\nWarning: This creates a very large file (10-20 MB).\n\nContinue?')) {
 				generateEarthPlanet();
 			}
 		});
 
-		// Add to control panel
-		$('#controlPanel .panel-section:last').before('<div class="panel-section"><div class="section-title">Earth Recreation (Brute Force)</div></div>');
-		$('#controlPanel .panel-section:last').prev().append(earthButton);
+		// Add to control panel after the Save/Load Planet section
+		$('#controlPanel').append(earthSection);
 	}
 });

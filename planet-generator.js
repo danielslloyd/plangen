@@ -812,12 +812,12 @@ function displayPlanet(newPlanet) {
     if (planet) {
         tileSelection = null;
         scene.remove(planet.renderData.surface.renderObject);
-        
+
         // Remove test cube if it exists
         if (planet.renderData.surface.testCube) {
             scene.remove(planet.renderData.surface.testCube);
         }
-        
+
         // Remove existing path render object
         if (planet.pathRenderObject) {
             for (let i = planet.pathRenderObject.length - 1; i >= 0; i--) {
@@ -829,7 +829,7 @@ function displayPlanet(newPlanet) {
         if (planet.edgeCostsRenderObject) {
             scene.remove(planet.edgeCostsRenderObject);
         }
-        
+
         // Remove existing labels
         if (planet.renderData && planet.renderData.labels) {
             scene.remove(planet.renderData.labels);
@@ -838,6 +838,24 @@ function displayPlanet(newPlanet) {
         // Clear all text sprites (city labels, etc.)
         if (typeof clearAllTextLabels !== 'undefined') {
             clearAllTextLabels();
+        }
+
+        // Release the per-projection render-data cache from the previous planet.
+        if (planet.renderDataCache) {
+            Object.keys(planet.renderDataCache).forEach(function(key) {
+                var entry = planet.renderDataCache[key];
+                if (!entry || !entry.renderData) return;
+                Object.keys(entry.renderData).forEach(function(k) {
+                    var obj = entry.renderData[k];
+                    if (!obj) return;
+                    if (obj.geometry && typeof obj.geometry.dispose === "function") obj.geometry.dispose();
+                    if (obj.material) {
+                        if (Array.isArray(obj.material)) obj.material.forEach(function(m) { m && m.dispose && m.dispose(); });
+                        else if (typeof obj.material.dispose === "function") obj.material.dispose();
+                    }
+                });
+            });
+            planet.renderDataCache = null;
         }
     } else {
         sunTimeOffset = Math.PI * 2 * (1 / 12 - Date.now() / 60000);

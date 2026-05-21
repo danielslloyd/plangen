@@ -66,48 +66,27 @@ $(document).ready(function onDocumentReady() {
 	ui.projectGlobe = $("#projectGlobe");
 	ui.projectRaisedGlobe = $("#projectRaisedGlobe");
 	ui.projectMercatorMap = $("#projectMercatorMap");
-	
-	ui.projectGlobe.click(function() {
-		// Radio button behavior: only act if not already in flat globe mode
-		// Flat globe mode means: projectionMode === "globe" AND useElevationDisplacement === false
-		var currentlyInFlatGlobe = (projectionMode === "globe" && !useElevationDisplacement);
+	ui.projectRaisedMercator = $("#projectRaisedMercator");
 
-		if (!currentlyInFlatGlobe) {
-			// Need to switch to flat globe mode
-			if (projectionMode === "mercator") {
-				toggleMercatorProjection(); // Switch from mercator to globe
-			}
-			if (useElevationDisplacement) {
-				toggleElevationExaggeration(); // Turn off elevation exaggeration
-			}
+	// Switch to a target (projection, raised) state, using the cache so repeat switches are instant.
+	function applyProjectionMode(targetProjection, targetRaised) {
+		if (projectionMode === targetProjection && useElevationDisplacement === targetRaised) {
+			return; // already there
 		}
-		// If already in flat globe mode, do nothing (radio button behavior)
-	});
-
-	ui.projectRaisedGlobe.click(function() {
-		// Radio button behavior: only act if not already in raised globe mode
-		// Raised globe mode means: projectionMode === "globe" AND useElevationDisplacement === true
-		var currentlyInRaisedGlobe = (projectionMode === "globe" && useElevationDisplacement);
-
-		if (!currentlyInRaisedGlobe) {
-			// Need to switch to raised globe mode
-			if (projectionMode === "mercator") {
-				toggleMercatorProjection(); // Switch from mercator to globe first
-			}
-			if (!useElevationDisplacement) {
-				toggleElevationExaggeration(); // Turn on elevation exaggeration
-			}
+		var previousCacheKey = (typeof getProjectionCacheKey === "function") ? getProjectionCacheKey() : null;
+		projectionMode = targetProjection;
+		useElevationDisplacement = targetRaised;
+		if (typeof updateCamera === "function") updateCamera();
+		if (typeof updateProjectionButtonStates === "function") updateProjectionButtonStates();
+		if (planet && planet.topology && typeof applyProjectionStateChange === "function") {
+			applyProjectionStateChange(previousCacheKey);
 		}
-		// If already in raised globe mode, do nothing (radio button behavior)
-	});
+	}
 
-	ui.projectMercatorMap.click(function() {
-		// Radio button behavior: only act if not already in this mode
-		if (projectionMode !== "mercator") {
-			toggleMercatorProjection(); // Switch to mercator mode
-		}
-		// If already in mercator mode, do nothing (radio button behavior)
-	});
+	ui.projectGlobe.click(function() { applyProjectionMode("globe", false); });
+	ui.projectRaisedGlobe.click(function() { applyProjectionMode("globe", true); });
+	ui.projectMercatorMap.click(function() { applyProjectionMode("mercator", false); });
+	ui.projectRaisedMercator.click(function() { applyProjectionMode("mercator", true); });
 	
 	// Overlay buttons
 	ui.showSunlightButton = $("#showSunlightButton");
@@ -287,9 +266,9 @@ $(document).ready(function onDocumentReady() {
 	setTimeout(function() {
 		setSurfaceRenderMode(surfaceRenderMode, true);
 	}, 100);
-	// Initialize projection button states
-	if (elevationMultiplier > 0) {
-		ui.projectRaisedGlobe.addClass("toggled");
+	// Initialize projection button states from the actual mode state.
+	if (typeof updateProjectionButtonStates === "function") {
+		updateProjectionButtonStates();
 	}
 	
 	// Initialize overlay button states  
@@ -787,58 +766,25 @@ function populateColorOverlayDropdown() {
 }
 
 function toggleElevationExaggeration() {
+	var previousCacheKey = (typeof getProjectionCacheKey === "function") ? getProjectionCacheKey() : null;
+
 	// Toggle binary displacement parameter
 	useElevationDisplacement = !useElevationDisplacement;
-	
-	// Update button state if we have the UI button
-	if (typeof ui !== 'undefined' && ui.projectRaisedGlobe) {
+
+	// Update button state to reflect both projection and elevation toggle.
+	if (typeof updateProjectionButtonStates === "function") {
+		updateProjectionButtonStates();
+	} else if (typeof ui !== 'undefined' && ui.projectRaisedGlobe) {
 		if (useElevationDisplacement) {
 			ui.projectRaisedGlobe.addClass("toggled");
 		} else {
 			ui.projectRaisedGlobe.removeClass("toggled");
 		}
 	}
-	
-	// Simple render data regeneration (no displacement recalculation needed)
-	if (planet && planet.topology) {
-		var startTime = Date.now();
-		
-		// Regenerate render data using existing displacement values and new binary parameter
-		var regenerateAction = new SteppedAction("Updating 3D Elevation");
-		regenerateAction
-			.executeSubaction(function(action) {
-				return generatePlanetRenderData(planet.topology, planet.random, action);
-			})
-			.getResult(function(renderData) {
-				// Update the planet's render data
-				Object.keys(renderData).forEach(function(key) {
-					if (planet.renderData[key] && planet.renderData[key].renderObject) {
-						// Remove old render object from scene
-						scene.remove(planet.renderData[key].renderObject);
-					}
-					planet.renderData[key] = renderData[key];
-					
-					// Only automatically add the surface render object to the scene
-					// Overlays will be handled by their visibility functions
-					if (key === 'surface' && renderData[key] && renderData[key].renderObject) {
-						scene.add(renderData[key].renderObject);
-					}
-				});
-				
-				// Reapply current visibility settings (this will add/remove overlays as needed)
-				showHideSunlight(renderSunlight);
-				showHidePlateBoundaries(renderPlateBoundaries);
-				showHidePlateMovements(renderPlateMovements);
-				showHideAirCurrents(renderAirCurrents);
-				showHideRivers(renderRivers);
 
-				// Rebuild labels for the new elevation mode
-				if (planet && planet.topology && planet.topology.tiles && typeof rebuildAllLabelsForProjection !== 'undefined') {
-					rebuildAllLabelsForProjection(planet.topology.tiles);
-				}
-
-			})
-			.execute();
+	// Reuse the projection cache so toggling elevation is instant on repeat.
+	if (planet && planet.topology && typeof applyProjectionStateChange === "function") {
+		applyProjectionStateChange(previousCacheKey);
 	}
 }
 

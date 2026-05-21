@@ -1,6 +1,76 @@
 // Legacy Three.js r68 compatibility code removed - now using direct BufferGeometry creation
 // Note: terrainColors is now defined in planet-generator.js
 
+// Raised Mercator: how much elevation contributes to vertex Z (in scaled-map units).
+// Map width is ~25; ~3 units of relief gives noticeable but not overwhelming depth.
+var MERCATOR_ELEVATION_Z_SCALE = 0.04;
+
+// Hillshade light direction in 2D mercator XY (light comes from the NW).
+var MERCATOR_SHADE_LIGHT_X = -0.7071;
+var MERCATOR_SHADE_LIGHT_Y = 0.7071;
+
+// Returns the Z component for a tile/corner in mercator. Raised mode uses
+// elevationDisplacement to lift land above sea level.
+function mercatorVertexZ(elevationDisplacement, isLand) {
+	if (!useElevationDisplacement || projectionMode !== "mercator") {
+		return 0.001;
+	}
+	if (!isLand || !elevationDisplacement || elevationDisplacement <= 0) {
+		return 0.001;
+	}
+	return 0.001 + elevationDisplacement * MERCATOR_ELEVATION_Z_SCALE;
+}
+
+// For overlays drawn at a fixed layer above the surface (rivers, air currents),
+// lift the layer by the underlying tile's elevation in raised mercator so the
+// overlay rides on top of the relief rather than being buried.
+function mercatorOverlayLayerZ(baseZ, tileOrCorner) {
+	if (!useElevationDisplacement || projectionMode !== "mercator") return baseZ;
+	if (!tileOrCorner) return baseZ;
+	var disp = tileOrCorner.elevationDisplacement;
+	if (disp === undefined && tileOrCorner.elevationMedian !== undefined) {
+		// Corner-style input - approximate by elevation directly.
+		if (tileOrCorner.elevationMedian > 0) {
+			return baseZ + tileOrCorner.elevationMedian * 80 * MERCATOR_ELEVATION_Z_SCALE;
+		}
+		return baseZ;
+	}
+	if (!disp || disp <= 0) return baseZ;
+	return baseZ + disp * MERCATOR_ELEVATION_Z_SCALE;
+}
+
+// Returns a multiplicative shade factor (~[0.6, 1.3]) for a land tile in raised
+// mercator. Slopes facing the light (NW) brighten; back-facing slopes darken.
+// Returns 1.0 in any other mode or for ocean tiles - cheap no-op then.
+function computeMercatorTileShade(tile) {
+	if (!useElevationDisplacement || projectionMode !== "mercator") return 1.0;
+	if (!tile || !tile.tiles || tile.elevation === undefined || tile.elevation <= 0) return 1.0;
+
+	var tileMerc = cartesianToMercator(tile.averagePosition, mercatorCenterLat, mercatorCenterLon);
+	var gx = 0, gy = 0, n = 0;
+	for (var k = 0; k < tile.tiles.length; k++) {
+		var nb = tile.tiles[k];
+		if (!nb || !nb.averagePosition) continue;
+		var nbMerc = cartesianToMercator(nb.averagePosition, mercatorCenterLat, mercatorCenterLon);
+		var ddx = nbMerc.x - tileMerc.x;
+		if (ddx > Math.PI) ddx -= 2 * Math.PI;
+		else if (ddx < -Math.PI) ddx += 2 * Math.PI;
+		var ddy = nbMerc.y - tileMerc.y;
+		var de = (nb.elevation || 0) - tile.elevation;
+		gx += de * ddx;
+		gy += de * ddy;
+		n++;
+	}
+	if (n === 0) return 1.0;
+	gx /= n;
+	gy /= n;
+
+	// Slope face direction is -gradient. Brightness = dot(slope_face, light).
+	var brightness = -(gx * MERCATOR_SHADE_LIGHT_X + gy * MERCATOR_SHADE_LIGHT_Y);
+	var shade = 1.0 + Math.max(-0.35, Math.min(0.3, brightness * 8.0));
+	return shade;
+}
+
 function buildSurfaceRenderObject(tiles, watersheds, random, action, customMaterial) {
 	
 	// Calculate geometry requirements (independent triangles - no vertex sharing)
@@ -89,15 +159,28 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 
 		// Calculate terrain color using extracted function
 		var terrainColor = calculateTerrainColor(tile);
-		
+
+		// Raised Mercator: bake hillshade into the vertex color so relief is
+		// visible from straight top-down (lambert ambient otherwise clips).
+		var shade = computeMercatorTileShade(tile);
+		if (shade !== 1.0) {
+			terrainColor = {
+				r: Math.max(0, Math.min(1, terrainColor.r * shade)),
+				g: Math.max(0, Math.min(1, terrainColor.g * shade)),
+				b: Math.max(0, Math.min(1, terrainColor.b * shade))
+			};
+		}
+
+		var tileIsLand = tile.elevation > 0;
+
 		// Calculate tile center position (with elevation and projection)
 		var centerPos = tile.averagePosition.clone();
 		if (projectionMode === "mercator") {
 			// Project to Mercator coordinates
 			var mercatorCoords = cartesianToMercator(centerPos, mercatorCenterLat, mercatorCenterLon);
 			// Scale coordinates for experimental zoom range (larger world)
-			// Add small Z-offset based on tile index to prevent Z-fighting
-			var zOffset = 0.001;
+			// Raised Mercator lifts land vertices; flat Mercator keeps tiny Z offset.
+			var zOffset = mercatorVertexZ(tile.elevationDisplacement, tileIsLand);
 			centerPos = new THREE.Vector3(mercatorCoords.x * 2.0, mercatorCoords.y * 2.0, zOffset);
 
 			// Debug logging for first few tiles
@@ -125,10 +208,16 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 				var mercatorCoords = cartesianToMercator(cornerPos, mercatorCenterLat, mercatorCenterLon);
 				cornerMercatorCoords.push(mercatorCoords);
 
-				// Scale coordinates for experimental zoom range (larger world)
-				// Use same Z-offset as tile center to keep triangle coplanar
-				var zOffset = 0.001;
-				cornerPos = new THREE.Vector3(mercatorCoords.x * 2.0, mercatorCoords.y * 2.0, zOffset);
+				// Raised Mercator: lift corner by its median elevation displacement.
+				// Corners adjacent to ocean stay at sea level to avoid wall artifacts.
+				var cornerIsLand = corner.elevationMedian > 0;
+				if (cornerIsLand) {
+					for (var k = 0; k < corner.tiles.length; k++) {
+						if (corner.tiles[k].elevation <= 0) { cornerIsLand = false; break; }
+					}
+				}
+				var cornerZ = mercatorVertexZ(corner.elevationDisplacement, cornerIsLand);
+				cornerPos = new THREE.Vector3(mercatorCoords.x * 2.0, mercatorCoords.y * 2.0, cornerZ);
 
 				// Debug logging for first tile's corners
 				if (i < 1 && j < 3) {
@@ -167,20 +256,21 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 				console.log("Tile", i, "crosses antimeridian! MinLon:", minLon.toFixed(3), "MaxLon:", maxLon.toFixed(3), "Span:", (maxLon - minLon).toFixed(3));
 
 				// Create two versions: left side (subtract 2π from positive coords) and right side (add 2π to negative coords)
+				// Preserve per-corner Z from the already-built cornerPositions so wraparound triangles raise correctly.
 				var leftCorners = [];
 				var rightCorners = [];
-				var zOffset = 0.001;
 
 				for (var k = 0; k < cornerMercatorCoords.length; k++) {
 					var coord = cornerMercatorCoords[k];
+					var cornerZForWrap = cornerPositions[k] ? cornerPositions[k].z : 0.001;
 
 					// Left side: shift positive longitudes left by 2π
 					var leftX = coord.x > 0 ? coord.x - 2 * Math.PI : coord.x;
-					leftCorners.push(new THREE.Vector3(leftX * 2.0, coord.y * 2.0, zOffset));
+					leftCorners.push(new THREE.Vector3(leftX * 2.0, coord.y * 2.0, cornerZForWrap));
 
 					// Right side: shift negative longitudes right by 2π
 					var rightX = coord.x < 0 ? coord.x + 2 * Math.PI : coord.x;
-					rightCorners.push(new THREE.Vector3(rightX * 2.0, coord.y * 2.0, zOffset));
+					rightCorners.push(new THREE.Vector3(rightX * 2.0, coord.y * 2.0, cornerZForWrap));
 				}
 
 				// Replace default version with both wrapped versions
@@ -340,8 +430,8 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 			// Map width in scaled coordinates = 4π * 2.0 ≈ 25.13
 			var mapWidth = Math.PI * 4.0 * 2.0;
 
-			// Create 2 copies: center (0) and right (+1) for seamless wrapping
-			for (var offset = 0; offset <= 1; offset++) {
+			// Create 3 copies: left (-1), center (0), right (+1) for seamless wrapping in both directions
+			for (var offset = -1; offset <= 1; offset++) {
 				var meshCopy = new THREE.Mesh(planetGeometry, planetMaterial);
 				meshCopy.position.x = offset * mapWidth;
 				planetRenderObject.add(meshCopy);
@@ -455,8 +545,8 @@ function buildPlateBoundariesRenderObject(borders, action) {
 		// Map width in scaled coordinates = 4π * 2.0 ≈ 25.13
 		var mapWidth = Math.PI * 4.0 * 2.0;
 
-		// Create 2 copies: center (0) and right (+1) for seamless wrapping
-		for (var offset = 0; offset <= 1; offset++) {
+		// Create 3 copies: left (-1), center (0), right (+1) for seamless wrapping in both directions
+		for (var offset = -1; offset <= 1; offset++) {
 			var meshCopy = new THREE.Mesh(geometry, material);
 			meshCopy.position.x = offset * mapWidth;
 			renderObject.add(meshCopy);
@@ -533,8 +623,8 @@ function buildPlateMovementsRenderObject(tiles, action) {
 		// Map width in scaled coordinates = 4π * 2.0 ≈ 25.13
 		var mapWidth = Math.PI * 4.0 * 2.0;
 
-		// Create 2 copies: center (0) and right (+1) for seamless wrapping
-		for (var offset = 0; offset <= 1; offset++) {
+		// Create 3 copies: left (-1), center (0), right (+1) for seamless wrapping in both directions
+		for (var offset = -1; offset <= 1; offset++) {
 			var meshCopy = new THREE.Mesh(geometry, material);
 			meshCopy.position.x = offset * mapWidth;
 			renderObject.add(meshCopy);
@@ -594,7 +684,7 @@ function buildAirCurrentsRenderObject(corners, action) {
 			basePosition = new THREE.Vector3(
 				mercatorCoords.x * 2.0,
 				mercatorCoords.y * 2.0,
-				0.2 // Air currents layer: Map(0) → Rivers(0.1) → Air Currents(0.2) → Labels(0.3)
+				mercatorOverlayLayerZ(0.2, corner) // Air currents ride on top of raised terrain
 			);
 		} else {
 			// 3D globe mode - position at atmospheric level
@@ -732,8 +822,8 @@ function buildAirCurrentsRenderObject(corners, action) {
 		// Map width in scaled coordinates = 4π * 2.0 ≈ 25.13
 		var mapWidth = Math.PI * 4.0 * 2.0;
 
-		// Create 2 copies: center (0) and right (+1) for seamless wrapping
-		for (var offset = 0; offset <= 1; offset++) {
+		// Create 3 copies: left (-1), center (0), right (+1) for seamless wrapping in both directions
+		for (var offset = -1; offset <= 1; offset++) {
 			var meshCopy = new THREE.Mesh(geometry, material);
 			meshCopy.position.x = offset * mapWidth;
 			renderObject.add(meshCopy);
@@ -779,7 +869,7 @@ function buildRiversRenderObject(tiles, action) {
 				tileCenterPos = new THREE.Vector3(
 					mercatorCoords.x * 2.0,
 					mercatorCoords.y * 2.0,
-					0.1 // Rivers layer: Map(0) → Rivers(0.1) → Air Currents(0.2) → Labels(0.3)
+					mercatorOverlayLayerZ(0.1, tile) // Rivers ride on top of raised terrain
 				);
 			} else {
 				// 3D globe mode - use elevation
@@ -820,10 +910,12 @@ function buildRiversRenderObject(tiles, action) {
 				if (projectionMode === "mercator") {
 					// In Mercator mode, project to 2D coordinates with river layer Z
 					var mercatorCoords = cartesianToMercator(drainBorderPos, mercatorCenterLat, mercatorCenterLon);
+					// Lift to the higher of the two adjacent tiles in raised mercator.
+					var drainBorderTile = (tile.drain && (tile.drain.elevationDisplacement || 0) > (tile.elevationDisplacement || 0)) ? tile.drain : tile;
 					drainBorderPos = new THREE.Vector3(
 						mercatorCoords.x * 2.0,
 						mercatorCoords.y * 2.0,
-						0.1 // Rivers layer Z
+						mercatorOverlayLayerZ(0.1, drainBorderTile)
 					);
 				} else {
 					// 3D globe mode - apply elevation
@@ -924,10 +1016,12 @@ function buildRiversRenderObject(tiles, action) {
 				if (projectionMode === "mercator") {
 					// In Mercator mode, project to 2D coordinates with river layer Z
 					var mercatorCoords = cartesianToMercator(sourceBorderPos, mercatorCenterLat, mercatorCenterLon);
+					// Lift to the higher of the two adjacent tiles in raised mercator.
+					var sourceBorderTile = ((source && (source.elevationDisplacement || 0) > (tile.elevationDisplacement || 0))) ? source : tile;
 					sourceBorderPos = new THREE.Vector3(
 						mercatorCoords.x * 2.0,
 						mercatorCoords.y * 2.0,
-						0.1 // Rivers layer Z
+						mercatorOverlayLayerZ(0.1, sourceBorderTile)
 					);
 				} else {
 					// 3D globe mode - apply elevation
@@ -1044,8 +1138,8 @@ function buildRiversRenderObject(tiles, action) {
 		// Map width in scaled coordinates = 4π * 2.0 ≈ 25.13
 		var mapWidth = Math.PI * 4.0 * 2.0;
 
-		// Create 2 copies: center (0) and right (+1) for seamless wrapping
-		for (var offset = 0; offset <= 1; offset++) {
+		// Create 3 copies: left (-1), center (0), right (+1) for seamless wrapping in both directions
+		for (var offset = -1; offset <= 1; offset++) {
 			var meshCopy = new THREE.Mesh(geometry, material);
 			meshCopy.position.x = offset * mapWidth;
 			renderObject.add(meshCopy);
@@ -1431,6 +1525,17 @@ function recalculateBufferGeometryColors(tiles, geometry, overlayId) {
 	for (var i = 0; i < tiles.length; i++) {
 		var tile = tiles[i];
 		var tileColor = calculateColor(tile);
+
+		// Match buildSurfaceRenderObject: bake hillshade for raised mercator so
+		// the relief shading survives overlay changes.
+		var shade = computeMercatorTileShade(tile);
+		if (shade !== 1.0) {
+			tileColor = {
+				r: Math.max(0, Math.min(1, tileColor.r * shade)),
+				g: Math.max(0, Math.min(1, tileColor.g * shade)),
+				b: Math.max(0, Math.min(1, tileColor.b * shade))
+			};
+		}
 
 		// IMPORTANT: Must replicate the exact wraparound logic from buildSurfaceRenderObject
 		// to maintain vertex index synchronization

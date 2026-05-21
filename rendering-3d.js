@@ -122,25 +122,25 @@ function updateCamera() {
 			);
 		}
 
-		// Position camera based on mercatorCameraX/Y for smooth panning
+		// Wrap horizontal camera position first so bounds line up with wrapped X.
+		updateMercatorWrapping();
+
+		// Position camera based on (possibly wrapped) mercatorCameraX/Y for smooth panning.
 		camera.position.set(mercatorCameraX, mercatorCameraY, 1000);
 		camera.lookAt(mercatorCameraX, mercatorCameraY, 0); // Look at camera position but at z=0
 		camera.up.set(0, 1, 0);
 
-		// Update orthographic camera zoom and bounds relative to camera position
+		// Update orthographic camera zoom and bounds relative to camera position.
 		var aspect = window.innerWidth / window.innerHeight;
 		var viewSize = 7;
 		var zoomFactor = Math.pow(2, zoom); // Exponential zoom mapping that works for negative values
 		var actualViewSize = viewSize / zoomFactor;
 
-		// Offset camera bounds by camera position for smooth panning
+		// Offset camera bounds by camera position for smooth panning.
 		camera.left = mercatorCameraX - actualViewSize * aspect;
 		camera.right = mercatorCameraX + actualViewSize * aspect;
 		camera.top = mercatorCameraY + actualViewSize;
 		camera.bottom = mercatorCameraY - actualViewSize;
-
-		// Update wrapped geometry positions for infinite horizontal scrolling
-		updateMercatorWrapping();
 
 	} else {
 		// Globe 3D mode - use perspective camera
@@ -171,15 +171,10 @@ function updateMercatorWrapping() {
 	// Map width in scaled coordinates = 4π * 2.0 ≈ 25.13
 	var mapWidth = Math.PI * 4.0 * 2.0;
 
-	// Wrap camera position when it goes too far
-	while (mercatorCameraX > mapWidth / 2) {
-		mercatorCameraX -= mapWidth;
-		console.log("Wrapped camera right to left, new cameraX:", mercatorCameraX);
-	}
-	while (mercatorCameraX < -mapWidth / 2) {
-		mercatorCameraX += mapWidth;
-		console.log("Wrapped camera left to right, new cameraX:", mercatorCameraX);
-	}
+	// Wrap camera position when it goes too far. The 3 mesh copies at
+	// (-mapWidth, 0, +mapWidth) make the wrap visually seamless.
+	while (mercatorCameraX > mapWidth / 2) mercatorCameraX -= mapWidth;
+	while (mercatorCameraX < -mapWidth / 2) mercatorCameraX += mapWidth;
 }
 
 function buildArrow(positions, colors, indices, vertexIndex, position, direction, normal, baseWidth, color) {
@@ -748,28 +743,21 @@ function updateFPS() {
 
 // Mercator projection toggle function
 function toggleMercatorProjection() {
+	var previousCacheKey = getProjectionCacheKey();
+
 	if (projectionMode === "globe") {
 		projectionMode = "mercator";
-		// Reset zoom for good initial Mercator view
-		zoom = 1.0; // Good overview level based on user testing
-		console.log("Switched to Mercator projection mode");
+		zoom = 1.0;
 	} else {
 		projectionMode = "globe";
-		// Reset zoom for 3D globe view
-		zoom = 1.0; // Standard globe zoom level
-		console.log("Switched to Globe projection mode");
+		zoom = 1.0;
 	}
 
-	// Update camera for the new projection mode
 	updateCamera();
-
-	// Update UI button states
 	updateProjectionButtonStates();
 
-	// Regenerate render data to reflect the new projection
-	// (Labels will be rebuilt automatically in the completion callback)
 	if (planet && planet.topology) {
-		regenerateRenderDataForProjection();
+		regenerateRenderDataForProjection(previousCacheKey);
 	}
 }
 
@@ -780,10 +768,15 @@ function updateProjectionButtonStates() {
 		if (ui.projectGlobe) ui.projectGlobe.removeClass("toggled");
 		if (ui.projectRaisedGlobe) ui.projectRaisedGlobe.removeClass("toggled");
 		if (ui.projectMercatorMap) ui.projectMercatorMap.removeClass("toggled");
+		if (ui.projectRaisedMercator) ui.projectRaisedMercator.removeClass("toggled");
 
-		// Set active button based on current mode
+		// Set active button based on current (projection, raised) state.
 		if (projectionMode === "mercator") {
-			if (ui.projectMercatorMap) ui.projectMercatorMap.addClass("toggled");
+			if (useElevationDisplacement) {
+				if (ui.projectRaisedMercator) ui.projectRaisedMercator.addClass("toggled");
+			} else {
+				if (ui.projectMercatorMap) ui.projectMercatorMap.addClass("toggled");
+			}
 		} else if (useElevationDisplacement) {
 			if (ui.projectRaisedGlobe) ui.projectRaisedGlobe.addClass("toggled");
 		} else {
@@ -795,75 +788,111 @@ function updateProjectionButtonStates() {
 // Regeneration control variables
 var isRegenerating = false; // Flag to prevent double regeneration
 
-// Regenerate render data when switching projection modes
-function regenerateRenderDataForProjection() {
-	console.log("Regenerating render data for projection mode:", projectionMode);
+// Compute the cache key for the current projection state.
+function getProjectionCacheKey() {
+	return projectionMode + "_" + (useElevationDisplacement ? "raised" : "flat");
+}
 
-	if (planet && planet.topology) {
-		// Use the same regeneration pattern as the working elevation toggle
-		var regenerateAction = new SteppedAction("Updating Projection Mode");
-		regenerateAction
-			.executeSubaction(function(action) {
-				return generatePlanetRenderData(planet.topology, planet.random, action);
-			})
-			.getResult(function(renderData) {
-				console.log("Starting cleanup - Scene children before:", scene.children.length);
+// Remove every render object owned by planet.renderData from the scene without disposing.
+function detachPlanetRenderObjects() {
+	if (!planet || !planet.renderData) return;
+	Object.keys(planet.renderData).forEach(function(key) {
+		var entry = planet.renderData[key];
+		if (entry && entry.renderObject && entry.renderObject.parent) {
+			entry.renderObject.parent.remove(entry.renderObject);
+		}
+	});
+}
 
-				// More thorough cleanup - remove ALL existing planet render objects
-				if (planet.renderData) {
-					console.log("Existing render data keys:", Object.keys(planet.renderData));
-					Object.keys(planet.renderData).forEach(function(key) {
-						if (planet.renderData[key] && planet.renderData[key].renderObject) {
-							console.log("Removing render object for key:", key);
-							scene.remove(planet.renderData[key].renderObject);
-							// Also dispose of geometry and materials to prevent memory leaks
-							if (planet.renderData[key].renderObject.geometry) {
-								planet.renderData[key].renderObject.geometry.dispose();
-							}
-							if (planet.renderData[key].renderObject.material) {
-								if (Array.isArray(planet.renderData[key].renderObject.material)) {
-									planet.renderData[key].renderObject.material.forEach(mat => mat.dispose());
-								} else {
-									planet.renderData[key].renderObject.material.dispose();
-								}
-							}
-						} else {
-							console.log("No render object found for key:", key);
-						}
-					});
-				}
+// Reapply visibility for all overlays after a render-data swap.
+function reapplyOverlayVisibility() {
+	showHideSunlight(renderSunlight);
+	showHidePlateBoundaries(renderPlateBoundaries);
+	showHidePlateMovements(renderPlateMovements);
+	showHideAirCurrents(renderAirCurrents);
+	showHideRivers(renderRivers);
+	showHideMoon(renderMoon);
+}
 
-				console.log("Scene children after cleanup:", scene.children.length);
+// Restore a cached render-data entry as the active render data.
+// Refreshes surface colors if the cached overlay does not match the current one.
+function activateCachedRenderData(cacheEntry) {
+	planet.renderData = cacheEntry.renderData;
 
-				// Update the planet's render data using same pattern as elevation toggle
-				Object.keys(renderData).forEach(function(key) {
-					planet.renderData[key] = renderData[key];
-
-					// Only automatically add the surface render object to the scene
-					// Overlays will be handled by their visibility functions
-					if (key === 'surface' && renderData[key] && renderData[key].renderObject) {
-						scene.add(renderData[key].renderObject);
-					}
-				});
-
-				// Reapply current visibility settings (this will add/remove overlays as needed)
-				showHideSunlight(renderSunlight);
-				showHidePlateBoundaries(renderPlateBoundaries);
-				showHidePlateMovements(renderPlateMovements);
-				showHideAirCurrents(renderAirCurrents);
-				showHideRivers(renderRivers);
-				showHideMoon(renderMoon);
-
-				// Rebuild labels AFTER render data is updated with correct mercator coordinates
-				if (planet && planet.topology && planet.topology.tiles && typeof rebuildAllLabelsForProjection !== 'undefined') {
-					rebuildAllLabelsForProjection(planet.topology.tiles);
-				}
-
-				console.log("Render data regenerated for", projectionMode, "projection");
-				console.log("Surface geometry vertices:", renderData.surface ? renderData.surface.geometry.attributes.position.count : "none");
-				console.log("Scene children count:", scene.children.length);
-
-			})
-			.execute();
+	if (planet.renderData.surface && planet.renderData.surface.renderObject) {
+		scene.add(planet.renderData.surface.renderObject);
 	}
+
+	// If the cached colors are for a different overlay, recompute them in place.
+	if (cacheEntry.overlayId !== surfaceRenderMode &&
+		planet.renderData.surface && planet.renderData.surface.geometry &&
+		typeof recalculateBufferGeometryColors === "function") {
+		recalculateBufferGeometryColors(planet.topology.tiles, planet.renderData.surface.geometry, surfaceRenderMode);
+		cacheEntry.overlayId = surfaceRenderMode;
+	}
+
+	reapplyOverlayVisibility();
+
+	if (planet.topology && planet.topology.tiles && typeof rebuildAllLabelsForProjection !== "undefined") {
+		rebuildAllLabelsForProjection(planet.topology.tiles);
+	}
+}
+
+// Apply a projection-state change (projectionMode and/or useElevationDisplacement).
+// Uses planet.renderDataCache to make repeat switches instant.
+function applyProjectionStateChange(previousCacheKey) {
+	if (!planet || !planet.topology) return;
+
+	if (!planet.renderDataCache) planet.renderDataCache = {};
+
+	// Stash the current render data under its previous key (do not dispose - we want it for swap-back).
+	if (planet.renderData && previousCacheKey) {
+		planet.renderDataCache[previousCacheKey] = {
+			renderData: planet.renderData,
+			overlayId: surfaceRenderMode
+		};
+	}
+
+	// Pull the active render objects out of the scene so we can swap in the new ones.
+	detachPlanetRenderObjects();
+
+	var newKey = getProjectionCacheKey();
+	var cached = planet.renderDataCache[newKey];
+
+	if (cached) {
+		// Instant swap.
+		activateCachedRenderData(cached);
+		return;
+	}
+
+	// First time we've seen this mode for this planet - generate fresh.
+	var regenerateAction = new SteppedAction("Updating Projection Mode");
+	regenerateAction
+		.executeSubaction(function(action) {
+			return generatePlanetRenderData(planet.topology, planet.random, action);
+		})
+		.getResult(function(renderData) {
+			planet.renderData = renderData;
+
+			if (renderData.surface && renderData.surface.renderObject) {
+				scene.add(renderData.surface.renderObject);
+			}
+
+			planet.renderDataCache[newKey] = {
+				renderData: renderData,
+				overlayId: surfaceRenderMode
+			};
+
+			reapplyOverlayVisibility();
+
+			if (planet.topology && planet.topology.tiles && typeof rebuildAllLabelsForProjection !== "undefined") {
+				rebuildAllLabelsForProjection(planet.topology.tiles);
+			}
+		})
+		.execute();
+}
+
+// Regenerate render data when switching projection modes (cache-aware entry point).
+function regenerateRenderDataForProjection(previousCacheKey) {
+	applyProjectionStateChange(previousCacheKey);
 }
