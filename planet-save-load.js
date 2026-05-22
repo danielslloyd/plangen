@@ -261,6 +261,8 @@ function loadPlanetFull(data, callback) {
 			loadedPlanet.statistics = result;
 		})
 		.executeSubaction(function(a) {
+			// Recompute hierarchical feature overlays for the loaded planet (safe no-op if shore data absent).
+			if (typeof generateFeatureOverlays === "function") generateFeatureOverlays(loadedPlanet);
 			// Generate render data
 			var random = new XorShift128(data.seed);
 			generatePlanetRenderData(loadedPlanet.topology, random, a);
@@ -927,6 +929,8 @@ function importGeoJSONAsPlanet(geojsonData, callback) {
 			projectGeoJSONOntoTiles(planet.topology.tiles, geojson, a);
 		}, 1, "Projecting GeoJSON")
 		.executeSubaction(function(a) {
+			// Recompute hierarchical feature overlays (safe no-op if shore data absent).
+			if (typeof generateFeatureOverlays === "function") generateFeatureOverlays(planet);
 			// Generate render data
 			planet.random = new XorShift128(planet.seed);
 			return generatePlanetRenderData(planet.topology, planet.random, a);

@@ -125,6 +125,9 @@ function updateCamera() {
 		// Wrap horizontal camera position first so bounds line up with wrapped X.
 		updateMercatorWrapping();
 
+		// Keep the selection highlight on the copy the camera is viewing.
+		updateMercatorSelectionWrap();
+
 		// Position camera based on (possibly wrapped) mercatorCameraX/Y for smooth panning.
 		camera.position.set(mercatorCameraX, mercatorCameraY, 1000);
 		camera.lookAt(mercatorCameraX, mercatorCameraY, 0); // Look at camera position but at z=0
@@ -168,8 +171,8 @@ function updateMercatorWrapping() {
 		return;
 	}
 
-	// Map width in scaled coordinates = 4π * 2.0 ≈ 25.13
-	var mapWidth = Math.PI * 4.0 * 2.0;
+	// One world width in scaled coordinates = longitude 2π * 2.0 scale = 4π ≈ 12.57
+	var mapWidth = Math.PI * 4.0; // one world = longitude 2pi * 2.0 scale = 4pi
 
 	// Wrap camera position when it goes too far. The 3 mesh copies at
 	// (-mapWidth, 0, +mapWidth) make the wrap visually seamless.
@@ -363,6 +366,28 @@ function selectTile(tile) {
         tileSelection.xstreamRenderObjects.push(xstreamRenderObject);
     	};
 	};
+    // Mercator: place the highlight on the map copy nearest the camera so it is
+    // visible wherever you have scrolled to (the map scrolls infinitely).
+    updateMercatorSelectionWrap();
+}
+
+// Shift the active selection highlight (and its upstream/downstream tiles) onto
+// whichever wrapped copy of the world the camera is viewing. Mercator content
+// repeats every 4π, so adding a multiple of 4π to x lands the highlight on the
+// on-screen copy. Resets to base x in globe mode.
+function updateMercatorSelectionWrap() {
+    if (!tileSelection || !tileSelection.renderObject) return;
+    var objects = [tileSelection.renderObject].concat(tileSelection.xstreamRenderObjects || []);
+    if (projectionMode !== "mercator" || !tileSelection.tile) {
+        for (var g = 0; g < objects.length; g++) objects[g].position.x = 0;
+        return;
+    }
+    var mapWidth = Math.PI * 4.0;
+    var visibleCenterX = 2 * mercatorCameraX; // world center (see clickHandler bounds math)
+    var m = cartesianToMercator(tileSelection.tile.averagePosition, mercatorCenterLat, mercatorCenterLon);
+    var x0 = m.x * 2.0;
+    var shift = Math.round((visibleCenterX - x0) / mapWidth) * mapWidth;
+    for (var i = 0; i < objects.length; i++) objects[i].position.x = shift;
 }
 
 function deselectTile() {
@@ -382,6 +407,74 @@ function deselectTile() {
     }
 }
 
+
+// ============================================================================
+// PLATE OUTLINE (for the "Tectonic Plates" overlay = land/water + black edges)
+// ============================================================================
+var plateOutlineObject = null;
+
+function buildPlateOutlineObject() {
+	if (!planet || !planet.topology || !planet.topology.tiles) return null;
+	var tiles = planet.topology.tiles;
+	var mercator = (projectionMode === "mercator");
+	var period = Math.PI * 4.0, half = period / 2;
+	var positions = [];
+
+	function projC(corner) {
+		if (mercator) {
+			var m = cartesianToMercator(corner.position, mercatorCenterLat, mercatorCenterLon);
+			return new THREE.Vector3(m.x * 2.0, m.y * 2.0, 0.2);
+		}
+		var p = corner.position.clone();
+		return p.normalize().multiplyScalar(p.length() + 3);
+	}
+	function shared(a, b) {
+		var r = [];
+		for (var i = 0; i < a.corners.length; i++) if (b.corners.indexOf(a.corners[i]) >= 0) r.push(a.corners[i]);
+		return r;
+	}
+	function emit(a, b) {
+		if (mercator) {
+			if (Math.abs(a.x - b.x) > half) { if (a.x > b.x) a = a.clone().setX(a.x - period); else b = b.clone().setX(b.x - period); }
+			for (var o = -1; o <= 1; o++) positions.push(a.x + o * period, a.y, a.z, b.x + o * period, b.y, b.z);
+		} else {
+			positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
+		}
+	}
+
+	for (var t = 0; t < tiles.length; t++) {
+		var tile = tiles[t], nb = tile.tiles;
+		for (var k = 0; k < nb.length; k++) {
+			var n = nb[k];
+			if ((n.id || 0) <= (tile.id || 0)) continue;   // each border once
+			if (tile.plate === n.plate) continue;          // same plate - interior
+			var sc = shared(tile, n);
+			if (sc.length === 2) emit(projC(sc[0]), projC(sc[1]));
+		}
+	}
+	if (!positions.length) return null;
+	var geo = new THREE.BufferGeometry();
+	geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+	var mat = new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.9, depthTest: false });
+	var obj = new THREE.LineSegments(geo, mat);
+	obj.renderOrder = 998;
+	return obj;
+}
+
+// Show the black plate outline only while the "plates" overlay is active; rebuild
+// it for the current projection (it is projection-specific, like feature roots).
+function rebuildPlateOutline() {
+	if (plateOutlineObject) {
+		if (plateOutlineObject.parent) plateOutlineObject.parent.remove(plateOutlineObject);
+		if (plateOutlineObject.geometry) plateOutlineObject.geometry.dispose();
+		if (plateOutlineObject.material) plateOutlineObject.material.dispose();
+		plateOutlineObject = null;
+	}
+	if (typeof surfaceRenderMode === "undefined" || surfaceRenderMode !== "plates") return;
+	if (typeof scene === "undefined" || !scene) return;
+	var obj = buildPlateOutlineObject();
+	if (obj) { scene.add(obj); plateOutlineObject = obj; }
+}
 
 function buildEdgeCostsRenderObject(edges) {
     var geometry = new THREE.BufferGeometry();
@@ -836,6 +929,10 @@ function activateCachedRenderData(cacheEntry) {
 	if (planet.topology && planet.topology.tiles && typeof rebuildAllLabelsForProjection !== "undefined") {
 		rebuildAllLabelsForProjection(planet.topology.tiles);
 	}
+
+	// Feature root/node markers are projection-specific - rebuild for the new view.
+	if (typeof rebuildFeatureRoots === "function") rebuildFeatureRoots();
+	if (typeof rebuildPlateOutline === "function") rebuildPlateOutline();
 }
 
 // Apply a projection-state change (projectionMode and/or useElevationDisplacement).
@@ -888,6 +985,9 @@ function applyProjectionStateChange(previousCacheKey) {
 			if (planet.topology && planet.topology.tiles && typeof rebuildAllLabelsForProjection !== "undefined") {
 				rebuildAllLabelsForProjection(planet.topology.tiles);
 			}
+
+			if (typeof rebuildFeatureRoots === "function") rebuildFeatureRoots();
+			if (typeof rebuildPlateOutline === "function") rebuildPlateOutline();
 		})
 		.execute();
 }

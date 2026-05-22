@@ -260,8 +260,7 @@ function rebuildAllLabelsForProjection(tiles) {
     // Rebuild Mount Everest label
     addMountEverestLabel(tiles);
 
-    // Rebuild city labels
-    addCityLabels(tiles);
+    // City labels removed by request.
 
     console.log("Labels rebuilt - tracking", textSpriteData.length, "labels");
 }

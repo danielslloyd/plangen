@@ -62,6 +62,9 @@ $(document).ready(function onDocumentReady() {
 		setSurfaceRenderMode(selectedOverlay);
 	});
 
+	// Feature-detection tuning sliders -> regenerateFeatureOverlays (live).
+	setupFeatureDetectionControls();
+
 	// Projection buttons
 	ui.projectGlobe = $("#projectGlobe");
 	ui.projectRaisedGlobe = $("#projectRaisedGlobe");
@@ -568,6 +571,88 @@ function setSurfaceRenderMode(mode, force) {
 				scene.add(planet.renderData.labels);
 			}
 		}
+	}
+
+	// Rebuild feature root/node markers for the (possibly new) active overlay.
+	if (typeof rebuildFeatureRoots === "function") rebuildFeatureRoots();
+	// Show/hide the black plate outline depending on whether "plates" is active.
+	if (typeof rebuildPlateOutline === "function") rebuildPlateOutline();
+	// Show only the active feature overlay's tuning knobs.
+	if (typeof updateFeatureControlsVisibility === "function") updateFeatureControlsVisibility();
+}
+
+// Wire the feature-detection tuning sliders + "Show Feature Roots" toggle.
+// Labels update live while dragging; the (heavier) recompute fires on release.
+function setupFeatureDetectionControls() {
+	var rootsButton = document.getElementById("showFeatureRootsButton");
+	if (rootsButton) {
+		rootsButton.addEventListener("click", function() {
+			var on = !rootsButton.classList.contains("toggled");
+			if (on) rootsButton.classList.add("toggled"); else rootsButton.classList.remove("toggled");
+			if (typeof toggleFeatureRoots === "function") toggleFeatureRoots(on);
+		});
+	}
+
+	// `toValue`  maps slider int -> config value; `fromValue` maps config -> slider
+	// int (for init); `format` renders the value label.
+	var sliders = [
+		{ id: "fdPlateSmooth",  key: "plateSmooth" },
+		{ id: "fdPlateMin",     key: "plateMinSize" },
+		{ id: "fdMaxErosion",   key: "maxErosion" },
+		{ id: "fdLobeEdge",     key: "lobeEdgeWater" },
+		{ id: "fdLobeMin",      key: "lobeMinSize" },
+		{ id: "fdThickMax",     key: "thicknessMax" },
+		{ id: "fdNeckWidth",    key: "neckWidth" },
+		{ id: "fdEFollowBasins", key: "eFollowBasins",
+		  toValue: function(v) { return v === 1; }, fromValue: function(v) { return v ? 1 : 0; },
+		  format: function(v) { return v ? "on" : "off"; } },
+		{ id: "fdClimateBands", key: "climateBands" },
+		{ id: "fdClimateMin",   key: "climateMinSize" },
+		{ id: "fdDarken",       key: "darkenPerLevel",
+		  toValue: function(v) { return v / 100; }, fromValue: function(v) { return Math.round(v * 100); },
+		  format: function(v) { return (v / 100).toFixed(2); } }
+	];
+
+	sliders.forEach(function(s) {
+		var el = document.getElementById(s.id);
+		if (!el) return;
+		var label = document.getElementById(s.id + "Val");
+		var fmt = function(v) { return s.format ? s.format(v) : String(v); };
+
+		// Initialize the slider position from the live config when available.
+		if (typeof featureDetectionConfig !== "undefined" && featureDetectionConfig) {
+			var cfgVal = featureDetectionConfig[s.key];
+			if (cfgVal !== undefined) {
+				el.value = s.fromValue ? s.fromValue(cfgVal) : cfgVal;
+			}
+		}
+		if (label) label.textContent = fmt(+el.value);
+
+		el.addEventListener("input", function() {
+			if (label) label.textContent = fmt(+el.value);
+		});
+		el.addEventListener("change", function() {
+			if (typeof regenerateFeatureOverlays !== "function") return;
+			var overrides = {};
+			overrides[s.key] = s.toValue ? s.toValue(+el.value) : +el.value;
+			regenerateFeatureOverlays(overrides);
+		});
+	});
+
+	updateFeatureControlsVisibility();
+}
+
+// Show the tuning panel (and only the active overlay's knob group) when a feature
+// overlay is selected; hide the whole panel otherwise.
+function updateFeatureControlsVisibility() {
+	var panel = document.getElementById("featureDetectionPanel");
+	if (!panel) return;
+	var mode = (typeof surfaceRenderMode !== "undefined") ? surfaceRenderMode : null;
+	var letter = (typeof featureApproachForMode === "function") ? featureApproachForMode(mode) : null;
+	panel.style.display = letter ? "" : "none";
+	var groups = panel.querySelectorAll(".fdGroup");
+	for (var i = 0; i < groups.length; i++) {
+		groups[i].style.display = (groups[i].getAttribute("data-approach") === letter) ? "" : "none";
 	}
 }
 

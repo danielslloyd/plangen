@@ -18,6 +18,7 @@
 		<script src="generatePlanetTerrain_functions.js"></script>
 		<script src="post-generation.js"></script>
 		<script src="generatePlanetRenderData_functions.js"></script>
+		<script src="feature-detection.js"></script>
 		<script src="rendering-3d.js"></script>
 		<script src="weather-generation.js"></script>
 		<script src="planet-generator.js"></script>
@@ -147,6 +148,45 @@
 				<select id="colorOverlayDropdown" title="Select color overlay mode" style="width: 100%; height: 1.8em; background-color: rgba(16, 32, 64, 1); color: #FFFFFF; border: none; border-radius: 0.25em; padding: 0.25em; font-size: 90%;">
 					<!-- Options will be populated dynamically -->
 				</select>
+
+				<!-- Feature Detection tuning sliders (apply live to the feature overlays) -->
+				<details id="featureDetectionPanel" style="margin-top: 0.5em; font-size: 85%;">
+					<summary style="cursor: pointer; user-select: none; opacity: 0.85;">Feature Detection tuning</summary>
+					<div style="margin-top: 0.4em;">
+						<button id="showFeatureRootsButton" title="Show each feature's marker tile (furthest from any other feature) and its link to its parent (the feature node-tree)" style="font-size: 75%; width: 100%; margin-bottom: 0.5em;">Show Feature Roots</button>
+
+						<div class="fdGroup" data-approach="A">
+							<div style="opacity: 0.7; margin: 0.3em 0 0.15em 0;">A — Plate provinces</div>
+							<div class="fdSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Majority-vote passes that clean jagged plate boundaries. 0 = raw plate edges.">Boundary smoothing</span><input type="range" id="fdPlateSmooth" min="0" max="8" step="1" value="2" style="flex:1.5;"><span id="fdPlateSmoothVal" style="width:2.6em; text-align:right;">2</span></div>
+							<div class="fdSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;">Min province size</span><input type="range" id="fdPlateMin" min="1" max="60" step="1" value="8" style="flex:1.5;"><span id="fdPlateMinVal" style="width:2.6em; text-align:right;">8</span></div>
+						</div>
+
+						<div class="fdGroup" data-approach="B">
+							<div style="opacity: 0.7; margin: 0.3em 0 0.15em 0;">B — Erosion</div>
+							<div class="fdSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;">Max erosion</span><input type="range" id="fdMaxErosion" min="1" max="15" step="1" value="6" style="flex:1.5;"><span id="fdMaxErosionVal" style="width:2.6em; text-align:right;">6</span></div>
+							<div class="fdSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;">Darken / level</span><input type="range" id="fdDarken" min="50" max="95" step="1" value="72" style="flex:1.5;"><span id="fdDarkenVal" style="width:2.6em; text-align:right;">0.72</span></div>
+						</div>
+
+						<div class="fdGroup" data-approach="C">
+							<div style="opacity: 0.7; margin: 0.3em 0 0.15em 0;">C — Lobes (inscribed disk)</div>
+							<div class="fdSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;">Edge water %</span><input type="range" id="fdLobeEdge" min="10" max="90" step="5" value="40" style="flex:1.5;"><span id="fdLobeEdgeVal" style="width:2.6em; text-align:right;">40</span></div>
+							<div class="fdSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;">Min lobe size</span><input type="range" id="fdLobeMin" min="1" max="60" step="1" value="12" style="flex:1.5;"><span id="fdLobeMinVal" style="width:2.6em; text-align:right;">12</span></div>
+						</div>
+
+						<div class="fdGroup" data-approach="E">
+							<div style="opacity: 0.7; margin: 0.3em 0 0.15em 0;">E — Thickness (favourite)</div>
+							<div class="fdSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;">Max thickness</span><input type="range" id="fdThickMax" min="2" max="80" step="1" value="8" style="flex:1.5;"><span id="fdThickMaxVal" style="width:2.6em; text-align:right;">8</span></div>
+							<div class="fdSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Tiles within this many steps of the coast act as walls, so narrow straits/isthmuses are cut. 0 = off.">Neck cut width</span><input type="range" id="fdNeckWidth" min="0" max="12" step="1" value="1" style="flex:1.5;"><span id="fdNeckWidthVal" style="width:2.6em; text-align:right;">1</span></div>
+							<div class="fdSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Last-minute LAND-ONLY rule: keep each drainage basin inside a single feature (does not add features or affect water)">Drainage basins</span><input type="range" id="fdEFollowBasins" min="0" max="1" step="1" value="0" style="flex:1.5;"><span id="fdEFollowBasinsVal" style="width:2.6em; text-align:right;">off</span></div>
+						</div>
+
+						<div class="fdGroup" data-approach="H">
+							<div style="opacity: 0.7; margin: 0.3em 0 0.15em 0;">H — Bioregions</div>
+							<div class="fdSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;">Climate bands</span><input type="range" id="fdClimateBands" min="2" max="8" step="1" value="4" style="flex:1.5;"><span id="fdClimateBandsVal" style="width:2.6em; text-align:right;">4</span></div>
+							<div class="fdSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;">Min region size</span><input type="range" id="fdClimateMin" min="1" max="40" step="1" value="8" style="flex:1.5;"><span id="fdClimateMinVal" style="width:2.6em; text-align:right;">8</span></div>
+						</div>
+					</div>
+				</details>
 			</div>
 
 			<!-- Overlay Display Options -->

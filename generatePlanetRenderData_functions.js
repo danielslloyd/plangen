@@ -427,8 +427,8 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 			// For Mercator mode, create a Group with 2 copies for seamless wrapping
 			planetRenderObject = new THREE.Group();
 
-			// Map width in scaled coordinates = 4π * 2.0 ≈ 25.13
-			var mapWidth = Math.PI * 4.0 * 2.0;
+			// One world width in scaled coordinates = longitude 2π * 2.0 scale = 4π ≈ 12.57
+			var mapWidth = Math.PI * 4.0; // one world = longitude 2pi * 2.0 scale = 4pi
 
 			// Create 3 copies: left (-1), center (0), right (+1) for seamless wrapping in both directions
 			for (var offset = -1; offset <= 1; offset++) {
@@ -542,8 +542,8 @@ function buildPlateBoundariesRenderObject(borders, action) {
 		// For Mercator mode, create a Group with 2 copies for seamless wrapping
 		renderObject = new THREE.Group();
 
-		// Map width in scaled coordinates = 4π * 2.0 ≈ 25.13
-		var mapWidth = Math.PI * 4.0 * 2.0;
+		// One world width in scaled coordinates = longitude 2π * 2.0 scale = 4π ≈ 12.57
+		var mapWidth = Math.PI * 4.0; // one world = longitude 2pi * 2.0 scale = 4pi
 
 		// Create 3 copies: left (-1), center (0), right (+1) for seamless wrapping in both directions
 		for (var offset = -1; offset <= 1; offset++) {
@@ -620,8 +620,8 @@ function buildPlateMovementsRenderObject(tiles, action) {
 		// For Mercator mode, create a Group with 2 copies for seamless wrapping
 		renderObject = new THREE.Group();
 
-		// Map width in scaled coordinates = 4π * 2.0 ≈ 25.13
-		var mapWidth = Math.PI * 4.0 * 2.0;
+		// One world width in scaled coordinates = longitude 2π * 2.0 scale = 4π ≈ 12.57
+		var mapWidth = Math.PI * 4.0; // one world = longitude 2pi * 2.0 scale = 4pi
 
 		// Create 3 copies: left (-1), center (0), right (+1) for seamless wrapping in both directions
 		for (var offset = -1; offset <= 1; offset++) {
@@ -819,8 +819,8 @@ function buildAirCurrentsRenderObject(corners, action) {
 		// For Mercator mode, create a Group with 2 copies for seamless wrapping
 		renderObject = new THREE.Group();
 
-		// Map width in scaled coordinates = 4π * 2.0 ≈ 25.13
-		var mapWidth = Math.PI * 4.0 * 2.0;
+		// One world width in scaled coordinates = longitude 2π * 2.0 scale = 4π ≈ 12.57
+		var mapWidth = Math.PI * 4.0; // one world = longitude 2pi * 2.0 scale = 4pi
 
 		// Create 3 copies: left (-1), center (0), right (+1) for seamless wrapping in both directions
 		for (var offset = -1; offset <= 1; offset++) {
@@ -1135,8 +1135,8 @@ function buildRiversRenderObject(tiles, action) {
 		// For Mercator mode, create a Group with 2 copies for seamless wrapping
 		renderObject = new THREE.Group();
 
-		// Map width in scaled coordinates = 4π * 2.0 ≈ 25.13
-		var mapWidth = Math.PI * 4.0 * 2.0;
+		// One world width in scaled coordinates = longitude 2π * 2.0 scale = 4π ≈ 12.57
+		var mapWidth = Math.PI * 4.0; // one world = longitude 2pi * 2.0 scale = 4pi
 
 		// Create 3 copies: left (-1), center (0), right (+1) for seamless wrapping in both directions
 		for (var offset = -1; offset <= 1; offset++) {
@@ -1500,10 +1500,10 @@ function calculateMoistureColor(tile) {
 }
 
 function calculatePlatesColor(tile) {
-	if (tile.plate && tile.plate.color) {
-		return new THREE.Color(tile.plate.color.r, tile.plate.color.g, tile.plate.color.b);
-	}
-	return new THREE.Color(0x888888); // Default gray
+	// Plates view = plain land/water fill; the plate outlines are drawn on top as
+	// thin black boundary lines (auto-enabled when this overlay is selected).
+	if (tile.elevation > 0) return new THREE.Color(0x74ad5a); // land (green)
+	return new THREE.Color(0x4f86c6);                         // water (blue)
 }
 
 // Function to recalculate colors for BufferGeometry based on render mode
@@ -1824,20 +1824,33 @@ function recreateGeometryWithMaterial(materialType) {
 	// Create new material
 	var newMaterial = createPlanetMaterial(materialType);
 
-	// Create new mesh with same geometry but new material
-	var newMesh = new THREE.Mesh(oldGeometry, newMaterial);
-	newMesh.position.copy(surfaceRenderObject.position);
-	newMesh.rotation.copy(surfaceRenderObject.rotation);
-	newMesh.scale.copy(surfaceRenderObject.scale);
+	// Build the replacement render object. In Mercator mode the surface is a
+	// Group of 3 copies for seamless horizontal wrapping - preserve that so a
+	// material/overlay switch does not collapse the map to a single copy.
+	var newObject;
+	if (projectionMode === "mercator") {
+		newObject = new THREE.Group();
+		var mapWidth = Math.PI * 4.0; // one world width (see build functions)
+		for (var offset = -1; offset <= 1; offset++) {
+			var meshCopy = new THREE.Mesh(oldGeometry, newMaterial);
+			meshCopy.position.x = offset * mapWidth;
+			newObject.add(meshCopy);
+		}
+	} else {
+		newObject = new THREE.Mesh(oldGeometry, newMaterial);
+		newObject.position.copy(surfaceRenderObject.position);
+		newObject.rotation.copy(surfaceRenderObject.rotation);
+		newObject.scale.copy(surfaceRenderObject.scale);
+	}
 
 	// Replace in scene
 	if (scene) {
 		scene.remove(surfaceRenderObject);
-		scene.add(newMesh);
+		scene.add(newObject);
 	}
 
 	// Update planet render data reference
-	planet.renderData.surface.renderObject = newMesh;
+	planet.renderData.surface.renderObject = newObject;
 }
 
 // Register the existing color overlays

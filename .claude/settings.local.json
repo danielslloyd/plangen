@@ -6,7 +6,8 @@
       "Bash(start PlanGen.html)",
       "Read(//c/Users/U064928/Downloads/**)",
       "Bash(rg:*)",
-      "mcp__Claude_Preview__preview_start"
+      "mcp__Claude_Preview__preview_start",
+      "Bash(curl -s http://localhost:8765/PlanGen.html)"
     ],
     "deny": [],
     "ask": []

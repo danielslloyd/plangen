@@ -251,21 +251,6 @@ function collectLabeledTiles(tiles, overlayMode) {
 				elevation: tiles[i].elevation,
 				elevationDisplacement: tiles[i].elevationDisplacement
 			};
-		} else if (tiles[i].isCity === true) {
-			// Show city labels for all overlay modes
-			if (!tiles[i].cityLabel) {
-				// Generate city label if it doesn't exist
-				var cityNumber = labeledTiles.filter(function(tile) { return tile.label && tile.label.indexOf('City') === 0; }).length + 1;
-				tiles[i].cityLabel = 'City ' + cityNumber;
-			}
-			labelToShow = tiles[i].cityLabel;
-			tileToAdd = {
-				label: labelToShow,
-				averagePosition: tiles[i].averagePosition,
-				elevation: tiles[i].elevation,
-				elevationDisplacement: tiles[i].elevationDisplacement,
-				isCity: true
-			};
 		} else if (overlayMode !== "landRegions" && overlayMode !== "watershedRegions" && tiles[i].label) {
 			// Show regular labels (like Mount Everest) for all other overlays
 			labelToShow = tiles[i].label;
@@ -400,6 +385,10 @@ function generatePlanetTerrain(planet, plateCount, oceanicRate, heatLevel, moist
 			ctimeEnd('4h. Post-Generation Analysis');
 			ctime('4i. Dynamic Overlays');
 			generateDynamicShoreOverlays(planet.topology.tiles);
+			// Hierarchical nested feature detection (continents>peninsulas, oceans>bays...).
+			if (typeof generateFeatureOverlays === "function") {
+				generateFeatureOverlays(planet);
+			}
 			ctimeEnd('4i. Dynamic Overlays');
 			ctime('4j. Render Data Generation');
 			generatePlanetRenderData(planet.topology, random, action);
@@ -893,10 +882,7 @@ function displayPlanet(newPlanet) {
     // Add nodes and edges to the graph
     //buildGraph(planet.aStarVertices, planet.aStarEdges);
 
-    // Add city labels if they exist
-    if (typeof addCityLabels !== 'undefined' && planet.topology && planet.topology.tiles) {
-        addCityLabels(planet.topology.tiles);
-    }
+    // City labels removed by request.
 }
 
 function showHideLabels(show) {
