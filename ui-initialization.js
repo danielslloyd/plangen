@@ -52,10 +52,25 @@ $(document).ready(function onDocumentReady() {
 
 	ui.controlPanel = $("#controlPanel");
 	ui.colorOverlayDropdown = $("#colorOverlayDropdown");
-	
+
+	// Global variable to track selected overlay category
+	window.selectedOverlayCategory = 'geography'; // Default to geography
+
+	// Set up category button handlers. Clicking a category rebuilds the dropdown and
+	// switches to that category's default view (unless the current view already
+	// belongs to the category, which populateColorOverlayDropdown preserves).
+	$('.categoryButton').click(function() {
+		window.selectedOverlayCategory = $(this).data('category');
+		updateCategoryButtonStates();
+		populateColorOverlayDropdown();
+		var sel = ui.colorOverlayDropdown.val();
+		if (sel) setSurfaceRenderMode(sel);
+	});
+	updateCategoryButtonStates(); // reflect the default category at startup
+
 	// Populate color overlay dropdown with registered overlays
 	populateColorOverlayDropdown();
-	
+
 	// Set up change handler for dropdown
 	ui.colorOverlayDropdown.change(function() {
 		var selectedOverlay = $(this).val();
@@ -95,13 +110,17 @@ $(document).ready(function onDocumentReady() {
 	ui.showSunlightButton = $("#showSunlightButton");
 	ui.showPlateBoundariesButton = $("#showPlateBoundariesButton");
 	ui.showRiversButton = $("#showRiversButton");
+	ui.showRiverLinesButton = $("#showRiverLinesButton");
 	ui.showAirCurrentsButton = $("#showAirCurrentsButton");
-	
+	ui.showCoastlineButton = $("#showCoastlineButton");
+
 
 	ui.showSunlightButton.click(showHideSunlight);
 	ui.showPlateBoundariesButton.click(showHidePlateBoundaries);
 	ui.showRiversButton.click(showHideRivers);
+	ui.showRiverLinesButton.click(showHideRiverLines);
 	ui.showAirCurrentsButton.click(showHideAirCurrents);
+	ui.showCoastlineButton.click(showHideCoastline);
 
 	// Removed detail level and generate buttons
 	ui.advancedSettingsButton = $("#advancedSettingsButton");
@@ -281,6 +300,7 @@ $(document).ready(function onDocumentReady() {
 	showHideAirCurrents(renderAirCurrents);
 	//showHideEdgeCosts(renderEdgeCosts);
 	showHideRivers(renderRivers);
+	showHideRiverLines(renderRiverLines);
 
 	// Set default subdivisions to low detail (20) since buttons are removed
 	setSubdivisions(20);
@@ -431,6 +451,7 @@ function updateTerrainColorsAndRefresh() {
 				showHidePlateMovements(renderPlateMovements);
 				showHideAirCurrents(renderAirCurrents);
 				showHideRivers(renderRivers);
+				showHideRiverLines(renderRiverLines);
 				
 			})
 			.execute();
@@ -542,6 +563,16 @@ function hideAdvancedSettings() {
 }
 
 function setSurfaceRenderMode(mode, force) {
+	// Keep the active category in sync with the overlay being shown. Needed when an
+	// overlay is selected outside the dropdown (e.g. keyboard shortcuts) so the
+	// category buttons and the filtered dropdown reflect the visible view.
+	var ov = (typeof getColorOverlay === "function") ? getColorOverlay(mode) : null;
+	if (ov && ov.category && window.selectedOverlayCategory !== ov.category) {
+		window.selectedOverlayCategory = ov.category;
+		if (typeof updateCategoryButtonStates === "function") updateCategoryButtonStates();
+		populateColorOverlayDropdown();
+	}
+
 	// Update the dropdown to match the new mode
 	if (ui.colorOverlayDropdown) {
 		ui.colorOverlayDropdown.val(mode);
@@ -573,6 +604,9 @@ function setSurfaceRenderMode(mode, force) {
 		}
 	}
 
+	// Swap the top-left colour panel to match the active overlay.
+	if (typeof refreshLayerColorPanel === "function") refreshLayerColorPanel(mode);
+
 	// Rebuild feature root/node markers for the (possibly new) active overlay.
 	if (typeof rebuildFeatureRoots === "function") rebuildFeatureRoots();
 	// Show/hide the black plate outline depending on whether "plates" is active.
@@ -598,6 +632,7 @@ function setupFeatureDetectionControls() {
 	var sliders = [
 		{ id: "fdPlateSmooth",  key: "plateSmooth" },
 		{ id: "fdPlateMin",     key: "plateMinSize" },
+		{ id: "fdPlateMerge",   key: "plateMerge" },
 		{ id: "fdMaxErosion",   key: "maxErosion" },
 		{ id: "fdLobeEdge",     key: "lobeEdgeWater" },
 		{ id: "fdLobeMin",      key: "lobeMinSize" },
@@ -728,6 +763,19 @@ function showHidePlateBoundaries(show) {
 	else planet.renderData.surface.renderObject.remove(planet.renderData.plateBoundaries.renderObject);
 }
 
+// Toggle the thin black coastline outline (land/water boundary). The geometry is
+// projection-specific, so rebuildCoastlineOutline (rendering-3d.js) builds it for
+// the current view; it is also re-run on projection switches and planet load.
+function showHideCoastline(show) {
+	if (typeof (show) === "boolean") renderCoastline = show;
+	else renderCoastline = !renderCoastline;
+	if (ui.showCoastlineButton) {
+		if (renderCoastline) ui.showCoastlineButton.addClass("toggled");
+		else ui.showCoastlineButton.removeClass("toggled");
+	}
+	if (typeof rebuildCoastlineOutline === "function") rebuildCoastlineOutline();
+}
+
 function showHidePlateMovements(show) {
 	if (typeof (show) === "boolean") renderPlateMovements = show;
 	else renderPlateMovements = !renderPlateMovements;
@@ -802,6 +850,25 @@ function showHideRivers(show) {
 	}
 }
 
+function showHideRiverLines(show) {
+	if (typeof (show) === "boolean") renderRiverLines = show;
+	else renderRiverLines = !renderRiverLines;
+	if (ui.showRiverLinesButton) {
+		if (renderRiverLines) ui.showRiverLinesButton.addClass("toggled");
+		else ui.showRiverLinesButton.removeClass("toggled");
+	}
+
+	if (!planet || !planet.renderData || !planet.renderData.RiverLines || !planet.renderData.RiverLines.renderObject) {
+		return;
+	}
+
+	if (renderRiverLines) {
+		planet.renderData.surface.renderObject.add(planet.renderData.RiverLines.renderObject);
+	} else {
+		planet.renderData.surface.renderObject.remove(planet.renderData.RiverLines.renderObject);
+	}
+}
+
 function showHideMoon(show) {
 	if (typeof (show) === "boolean") renderMoon = show;
 	else renderMoon = !renderMoon;
@@ -831,23 +898,52 @@ function showHideMoon(show) {
 	}
 }
 
+// Rebuild the overlay dropdown to show only the active category's overlays.
+// Preserves the current selection if it still belongs to the category; otherwise
+// selects that category's default. Does NOT apply the overlay - callers that want
+// a view switch (the category buttons) do that explicitly. This keeps incidental
+// callers (feature-slider regeneration, planet load, dynamic overlay registration)
+// from yanking the view back to a default.
 function populateColorOverlayDropdown() {
 	var dropdown = ui.colorOverlayDropdown;
 	dropdown.empty(); // Clear existing options
-	
+
+	var selectedCategory = window.selectedOverlayCategory || 'geography';
+	var current = (typeof surfaceRenderMode !== "undefined") ? surfaceRenderMode : null;
+
 	var overlays = getColorOverlays();
+	var defaultOverlay = null;
+	var currentInCategory = false;
+
 	for (var i = 0; i < overlays.length; i++) {
 		var overlay = overlays[i];
-		var option = $('<option>', {
-			value: overlay.id,
-			text: overlay.name,
-			title: overlay.description
-		});
-		dropdown.append(option);
+		if (overlay.category !== selectedCategory) continue;
+		dropdown.append($('<option>', { value: overlay.id, text: overlay.name, title: overlay.description }));
+		if (!defaultOverlay) defaultOverlay = overlay.id;
+		if (overlay.id === current) currentInCategory = true;
 	}
-	
-	// Set default to terrain
-	dropdown.val("terrain");
+
+	// Keep showing the active overlay if it's in this category; else show the default.
+	dropdown.val(currentInCategory ? current : defaultOverlay);
+}
+
+// Reflect the active overlay category on the category toggle buttons.
+function updateCategoryButtonStates() {
+	var active = window.selectedOverlayCategory || 'geography';
+	$('.categoryButton').each(function() {
+		if ($(this).data('category') === active) $(this).addClass('toggled');
+		else $(this).removeClass('toggled');
+	});
+}
+
+// Default overlay id for the active category (first registered in that category).
+function defaultOverlayForCategory() {
+	var selectedCategory = window.selectedOverlayCategory || 'geography';
+	var overlays = getColorOverlays();
+	for (var i = 0; i < overlays.length; i++) {
+		if (overlays[i].category === selectedCategory) return overlays[i].id;
+	}
+	return null;
 }
 
 function toggleElevationExaggeration() {

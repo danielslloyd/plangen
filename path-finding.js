@@ -227,6 +227,15 @@ function aStarPathfinding(startTile, goalTile, planet) {
 }
 
 function setDistances(planet, action, sailingCostConstant) {
+    // Recalculate shore distances after elevation is finalized
+    // This ensures shore values are consistent with final elevation values
+    ctime('Recalculating Shore Distances');
+    calculateShoreDistances(planet.topology.tiles);
+    calculateReverseShoreDistances(planet.topology.tiles);
+    calculateNeighborShoreComparison(planet.topology.tiles);
+    calculateShoreDelta(planet.topology.tiles);
+    ctimeEnd('Recalculating Shore Distances');
+
     planet.aStarVertices = [];
     for (let i = 0; i < planet.topology.tiles.length; i++) {
         const tile = planet.topology.tiles[i];

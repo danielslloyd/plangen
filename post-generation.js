@@ -8,9 +8,6 @@
 
 // Simplified watershed region assignment using land-only BFS to joint tiles
 function performWatershedAbsorption(watersheds) {
-
-	console.log("Starting simplified watershed region assignment...");
-
 	// Step 1: Find all joint tiles (marked as extrema in previous processing)
 	var jointTiles = [];
 	var allTiles = [];
@@ -25,8 +22,6 @@ function performWatershedAbsorption(watersheds) {
 			}
 		}
 	}
-
-	console.log(`Found ${jointTiles.length} joint tiles from ${watersheds.length} watersheds`);
 
 	// Step 2: Assign each watershed to its closest joint tile using land-only BFS from watershed mouth
 	var regions = [];
@@ -547,21 +542,6 @@ function generatePlanetBiomesResources(tiles, planetRadius, action) {
 	normalizeTiles(tiles.filter(t => t.elevation > 0), {upstreamWeight: 0});
 
 	// Add labeling system - find highest elevation tile and label it
-	if (tiles && tiles.length > 0) {
-		// Find tile with highest elevation
-		var highestTile = tiles[0];
-		for (var i = 1; i < tiles.length; i++) {
-			if (tiles[i].elevation > highestTile.elevation) {
-				highestTile = tiles[i];
-			}
-		}
-
-		// Add label to highest elevation tile
-		if (highestTile && highestTile.elevation > 0) {
-			highestTile.label = 'Mount Everest';
-		}
-	}
-
 	// Add K-means clustering for geographical features
 	clusterLandFeatures(tiles);
 	selectTopCityLocations(tiles);
@@ -1222,358 +1202,131 @@ function calculateNeighborShoreComparison(tiles) {
 	}
 }
 
-// Populate shoreN arrays by running shore movement simulations
-function populateShoreNArrays(tiles) {
-	console.log("Populating shoreN arrays...");
+// ============================================================================
+// SHORE DELTA CALCULATION (for Strategic C overlay)
+// ============================================================================
 
-	// Calculate planet size factor for N range
-	var planetSizeFactor = Math.sqrt(tiles.length);
-	var maxN = Math.max(3, Math.round(planetSizeFactor / 30)); // Ensure at least N=3, scale with planet size
+// For each tile, calculates how much its position relative to shore would
+// change if the shore boundary shifted ±1. This identifies places where small
+// boundary shifts create large strategic differences: mouths of deep bays,
+// isolated islands, peninsulas, etc.
+//
+// Algorithm:
+//   1. Save original shore values
+//   2. For scenario 1: set N-1 to -1, N+1 to +1, recalculate
+//   3. For scenario 2: set N-1 to +1, N+1 to -1, recalculate
+//   4. Delta = abs(scenario1_shore - scenario2_shore) per tile
+//   5. Restore originals
+//   6. High delta = steep gradient (cliffs, straits, bay mouths)
+//
+function calculateShoreDelta(tiles, N) {
+	if (!N) N = Math.max(2, Math.round((tiles.length > 1000 ? 60 : 40) / 20)); // default ~2-3
 
-	console.log("Planet size factor:", planetSizeFactor, "Max N:", maxN);
-
-	// Test shore movements for exactly 4 values: maxN, -maxN, 0.5maxN, -0.5maxN
-	var testValues = [maxN, -maxN, Math.round(0.5 * maxN), -Math.round(0.5 * maxN)];
-
-	for (var t = 0; t < testValues.length; t++) {
-		var N = testValues[t];
-		if (N === 0) continue; // Skip if 0.5maxN rounds to 0
-
-		console.log("Simulating shore movement N =", N);
-
-		// Store original shore values
-		var originalShores = {};
-		for (var i = 0; i < tiles.length; i++) {
-			originalShores[i] = tiles[i].shore;
+	// Group tiles by distance
+	var tilesByDistance = new Map();
+	for (var i = 0; i < tiles.length; i++) {
+		var dist = Math.abs(tiles[i].shore || 0);
+		if (!tilesByDistance.has(dist)) {
+			tilesByDistance.set(dist, []);
 		}
-
-		// Simulate shore movement (this populates the shoreN arrays)
-		simulateShoreMovement(tiles, N);
-
-		// Restore original shore values for next simulation
-		for (var i = 0; i < tiles.length; i++) {
-			tiles[i].shore = originalShores[i];
-		}
+		tilesByDistance.get(dist).push(tiles[i]);
 	}
 
-	console.log("Shore N arrays populated");
-}
-
-// Calculate shore movement sensitivity for each tile
-// Reads pre-calculated values from shoreN arrays and tracks biggest change/N ratio for each direction
-function calculateShoreMovementSensitivity(tiles) {
-	console.log("Calculating shore movement sensitivity from shoreN arrays...");
-
-	// Initialize sensitivity values
+	// Save original shore values
+	var originalShore = new Float64Array(tiles.length);
 	for (var i = 0; i < tiles.length; i++) {
-		tiles[i].positiveChangeScore = 0;
-		tiles[i].negativeChangeScore = 0;
-		tiles[i].maxPositiveRatio = 0;
-		tiles[i].maxNegativeRatio = 0;
+		originalShore[i] = tiles[i].shore || 0;
 	}
 
-	// Calculate change/N ratios for each tile using pre-calculated shoreN data
+	// Scenario 1: boundary shifted outward (N-1→-1, N+1→+1)
+	_computeShoreScenario(tiles, tilesByDistance, N, false);
+	var scenario1 = new Float64Array(originalShore.length);
 	for (var i = 0; i < tiles.length; i++) {
-		var tile = tiles[i];
-		var originalShore = tile.shore;
-
-		// Read from shoreN array
-		if (tile.shoreN && Array.isArray(tile.shoreN)) {
-			for (var j = 0; j < tile.shoreN.length; j++) {
-				var N = tile.shoreN[j][0];
-				var calculatedShore = tile.shoreN[j][1];
-
-				var change = Math.abs(calculatedShore - originalShore);
-				var changeRatio = change / Math.abs(N); // change per unit N
-
-				// Track biggest ratios by direction
-				if (N > 0) {
-					// Shore moving out (positive N)
-					tile.maxPositiveRatio = Math.max(tile.maxPositiveRatio, changeRatio);
-				} else {
-					// Shore moving in (negative N)
-					tile.maxNegativeRatio = Math.max(tile.maxNegativeRatio, changeRatio);
-				}
-			}
-		}
+		scenario1[i] = tiles[i].shore || 0;
 	}
 
-	// Separate normalization for each of the 4 categories
-	var landTiles = tiles.filter(t => t.elevation > 0);
-	var oceanTiles = tiles.filter(t => t.elevation <= 0);
-
-	var maxLandPositiveRatio = landTiles.length > 0 ? Math.max(...landTiles.map(t => t.maxPositiveRatio)) : 0;
-	var maxLandNegativeRatio = landTiles.length > 0 ? Math.max(...landTiles.map(t => t.maxNegativeRatio)) : 0;
-	var maxOceanPositiveRatio = oceanTiles.length > 0 ? Math.max(...oceanTiles.map(t => t.maxPositiveRatio)) : 0;
-	var maxOceanNegativeRatio = oceanTiles.length > 0 ? Math.max(...oceanTiles.map(t => t.maxNegativeRatio)) : 0;
-
-	console.log("Max ratios - Land Positive:", maxLandPositiveRatio, "Land Negative:", maxLandNegativeRatio);
-	console.log("Max ratios - Ocean Positive:", maxOceanPositiveRatio, "Ocean Negative:", maxOceanNegativeRatio);
-
-	// Normalize each tile based on its category (land/ocean) and direction (positive/negative)
+	// Scenario 2: boundary shifted inward (N-1→+1, N+1→-1)
+	_computeShoreScenario(tiles, tilesByDistance, N, true);
+	var scenario2 = new Float64Array(originalShore.length);
 	for (var i = 0; i < tiles.length; i++) {
-		var tile = tiles[i];
+		scenario2[i] = tiles[i].shore || 0;
+	}
 
-		if (tile.elevation > 0) {
-			// Land tile normalization
-			tile.positiveChangeScore = maxLandPositiveRatio > 0 ? tile.maxPositiveRatio / maxLandPositiveRatio : 0;
-			tile.negativeChangeScore = maxLandNegativeRatio > 0 ? tile.maxNegativeRatio / maxLandNegativeRatio : 0;
+	// Restore original and compute delta
+	for (var i = 0; i < tiles.length; i++) {
+		tiles[i].shore = originalShore[i];
+		tiles[i]._shoreDelta = Math.abs(scenario1[i] - scenario2[i]);
+	}
+
+	// Normalize per domain
+	var maxLand = 0, maxOcean = 0;
+	for (var i = 0; i < tiles.length; i++) {
+		if (tiles[i].elevation > 0) {
+			if (tiles[i]._shoreDelta > maxLand) maxLand = tiles[i]._shoreDelta;
 		} else {
-			// Ocean tile normalization
-			tile.positiveChangeScore = maxOceanPositiveRatio > 0 ? tile.maxPositiveRatio / maxOceanPositiveRatio : 0;
-			tile.negativeChangeScore = maxOceanNegativeRatio > 0 ? tile.maxNegativeRatio / maxOceanNegativeRatio : 0;
+			if (tiles[i]._shoreDelta > maxOcean) maxOcean = tiles[i]._shoreDelta;
 		}
 	}
 
-	console.log("Shore movement sensitivity calculation complete");
-}
-
-
-// Simulate shore movement by N tiles in or out
-function simulateShoreMovement(tiles, N) {
-	// Create clone C = shore - N
 	for (var i = 0; i < tiles.length; i++) {
-		tiles[i].C = tiles[i].shore + N;
-		if (!tiles[i].shoreN) { tiles[i].shoreN = [];}
-	}
-
-	if (N > 0) {
-		// For N > 0: set C=0 for all tiles where C >= 0
-		for (var i = 0; i < tiles.length; i++) {
-			if (tiles[i].C >= 0) {
-				tiles[i].C = 0;
-			}
-		}
-
-		// Propagate from C=-1 outward
-		var currentDistance = -1;
-
-		while (tiles.filter(t => t.C === 0).length>0) {
-			currentRing = tiles.filter(t => t.C === currentDistance);
-			for (var i = 0; i < currentRing.length; i++) {
-				var tile = currentRing[i];
-				// For all neighbors where C=0, set appropriate value
-				for (var j = 0; j < tile.tiles.length; j++) {
-					var neighbor = tile.tiles[j];
-					if (neighbor.C === 0) {
-						neighbor.C = Math.max(1, currentDistance + 1);
-					}
-				}
-			}
-			if (currentDistance === -1) {currentDistance++}
-			currentDistance++;
-		}
-
-	} else {
-		// For N < 0: set C=0 for all tiles where C <= 0
-		for (var i = 0; i < tiles.length; i++) {
-			if (tiles[i].C <= 0) {
-				tiles[i].C = 0;
-			}
-		}
-
-		// Propagate from C=1 outward
-		var currentDistance = 1;
-
-		while (tiles.filter(t => t.C === 0).length>0) {
-			currentRing = tiles.filter(t => t.C === currentDistance);
-			for (var i = 0; i < currentRing.length; i++) {
-				var tile = currentRing[i];
-				// For all neighbors where C=0, set appropriate value
-				for (var j = 0; j < tile.tiles.length; j++) {
-					var neighbor = tile.tiles[j];
-					if (neighbor.C === 0) {
-						neighbor.C = Math.min(-1, currentDistance - 1);
-					}
-				}
-			}
-			if (currentDistance === 1) {currentDistance--}
-			currentDistance--;
-		}
-	}
-
-	// Copy C to shoreN array and clean up
-	for (var i = 0; i < tiles.length; i++) {
-		tiles[i].shoreN.push([N, tiles[i].C]);
-		delete tiles[i].C; // Clean up temporary variable
+		var mx = tiles[i].elevation > 0 ? maxLand : maxOcean;
+		tiles[i]._shoreDelta = mx > 0 ? tiles[i]._shoreDelta / mx : 0;
 	}
 }
 
-// Recalculate all shore distances from scratch after shore movement
-function recalculateAllShoreDistances(tiles) {
-	// First, identify the new shore boundaries by looking at the elevation-shore mismatch
-	// Reset all tiles to 0 first
+// Helper: compute shore distances for a shifted-boundary scenario
+function _computeShoreScenario(tiles, tilesByDistance, N, inverted) {
+	// Reset all shore values
 	for (var i = 0; i < tiles.length; i++) {
 		tiles[i].shore = 0;
 	}
 
-	// Find immediate shore tiles based on current elevation vs neighbor relationships
-	for (var i = 0; i < tiles.length; i++) {
-		var tile = tiles[i];
-		if (tile.shore === 0) {
-			if (tile.elevation > 0) {
-				// Land tile: check if any neighbors are ocean
-				var hasOceanNeighbor = false;
-				for (var j = 0; j < tile.tiles.length; j++) {
-					if (tile.tiles[j].elevation <= 0) {
-						hasOceanNeighbor = true;
-						break;
-					}
-				}
-				if (hasOceanNeighbor) {
-					tile.shore = 1;
-				}
-			} else if (tile.elevation <= 0) {
-				// Ocean tile: check if any neighbors are land
-				var hasLandNeighbor = false;
-				for (var j = 0; j < tile.tiles.length; j++) {
-					if (tile.tiles[j].elevation > 0) {
-						hasLandNeighbor = true;
-						break;
-					}
-				}
-				if (hasLandNeighbor) {
-					tile.shore = -1;
-				}
-			}
-		}
+	// Set seed values at N-1 and N+1
+	var nMinusTiles = tilesByDistance.get(N - 1) || [];
+	var nPlusTiles = tilesByDistance.get(N + 1) || [];
+
+	// Invert controls which scenario we're in
+	var nMinusSign = inverted ? 1 : -1; // inverted: interior is +1, boundary is -1
+	var nPlusSign = inverted ? -1 : 1;
+
+	for (var i = 0; i < nMinusTiles.length; i++) {
+		var t = nMinusTiles[i];
+		t.shore = t.elevation > 0 ? nMinusSign : -nMinusSign;
+	}
+	for (var i = 0; i < nPlusTiles.length; i++) {
+		var t = nPlusTiles[i];
+		t.shore = t.elevation > 0 ? nPlusSign : -nPlusSign;
 	}
 
-	// Iterative expansion: propagate shore values outward
-	var currentDistance = 1;
-	var hasChanges = true;
+	// Also seed the original shore boundary
+	var shoreBoundaryTiles = tilesByDistance.get(1) || [];
+	for (var i = 0; i < shoreBoundaryTiles.length; i++) {
+		var t = shoreBoundaryTiles[i];
+		t.shore = t.elevation > 0 ? 1 : -1;
+	}
 
-	while (hasChanges && currentDistance < tiles.length) {
-		hasChanges = false;
-
+	// Iterative BFS expansion from seeds, limited to avoid long computation
+	var maxIterations = Math.max(20, tiles.length / 50);
+	for (var iter = 0; iter < maxIterations; iter++) {
+		var anyChanges = false;
 		for (var i = 0; i < tiles.length; i++) {
 			var tile = tiles[i];
+			if (tile.shore === 0 || Math.abs(tile.shore) >= maxIterations) continue;
 
-			if (Math.abs(tile.shore) === currentDistance) {
-				for (var j = 0; j < tile.tiles.length; j++) {
-					var neighbor = tile.tiles[j];
-					if (neighbor.shore === 0) {
-						if (neighbor.elevation > 0) {
-							// Land neighbor gets positive value
-							neighbor.shore = tile.shore + 1;
-							hasChanges = true;
-						} else {
-							// Ocean neighbor gets negative value
-							neighbor.shore = tile.shore - 1;
-							hasChanges = true;
-						}
-					}
-				}
-			}
-		}
-		currentDistance++;
-	}
-}
-
-// Recalculate shore distances for tiles that became land (shore > 0)
-function recalculateShoreDistancesForNewLand(tiles) {
-	// Find new shore boundary (shore = 1)
-	var shoreTiles = tiles.filter(t => t.shore === 1);
-
-	// Reset all land tiles to 0 first
-	for (var i = 0; i < tiles.length; i++) {
-		if (tiles[i].elevation > 0) {
-			tiles[i].shore = 0;
-		}
-	}
-
-	// Set shore tiles to 1
-	for (var i = 0; i < shoreTiles.length; i++) {
-		shoreTiles[i].shore = 1;
-	}
-
-	// Propagate outward from shore tiles
-	var currentDistance = 1;
-	var hasChanges = true;
-
-	while (hasChanges && currentDistance < tiles.length) {
-		hasChanges = false;
-
-		for (var i = 0; i < tiles.length; i++) {
-			var tile = tiles[i];
-			if (Math.abs(tile.shore) === currentDistance) {
-				for (var j = 0; j < tile.tiles.length; j++) {
-					var neighbor = tile.tiles[j];
-					if (neighbor.shore === 0) {
-						if (neighbor.elevation > 0) {
-							// Land neighbor gets positive value
-							neighbor.shore = tile.shore + 1;
-							hasChanges = true;
-						} else {
-							// Ocean neighbor gets negative value
-							neighbor.shore = tile.shore - 1;
-							hasChanges = true;
-						}
-					}
-				}
-			}
-		}
-		currentDistance++;
-	}
-}
-
-// Recalculate shore distances for tiles that became ocean (shore <= 0)
-function recalculateShoreDistancesForNewOcean(tiles) {
-	// Find new shore boundary (shore = 1, i.e., remaining land tiles adjacent to new ocean)
-	var newShoreTiles = [];
-
-	for (var i = 0; i < tiles.length; i++) {
-		var tile = tiles[i];
-		if (tile.shore > 0) {
-			// Check if this land tile has any neighbors that became ocean (shore <= 0)
-			var hasOceanNeighbor = false;
+			var s = tile.shore;
 			for (var j = 0; j < tile.tiles.length; j++) {
-				if (tile.tiles[j].shore <= 0) {
-					hasOceanNeighbor = true;
-					break;
-				}
-			}
-			if (hasOceanNeighbor) {
-				tile.shore = 1;
-				newShoreTiles.push(tile);
-			}
-		}
-	}
-
-	// Reset all ocean tiles (shore <= 0) to 0 first
-	for (var i = 0; i < tiles.length; i++) {
-		if (tiles[i].shore <= 0) {
-			tiles[i].shore = 0;
-		}
-	}
-
-	// Propagate outward from new shore tiles
-	var currentDistance = 1;
-	var hasChanges = true;
-
-	while (hasChanges && currentDistance < tiles.length) {
-		hasChanges = false;
-
-		for (var i = 0; i < tiles.length; i++) {
-			var tile = tiles[i];
-			if (Math.abs(tile.shore) === currentDistance) {
-				for (var j = 0; j < tile.tiles.length; j++) {
-					var neighbor = tile.tiles[j];
-					if (neighbor.shore === 0) {
-						if (neighbor.elevation > 0) {
-							// Land neighbor gets positive value
-							neighbor.shore = tile.shore + 1;
-							hasChanges = true;
-						} else {
-							// Ocean neighbor gets negative value
-							neighbor.shore = tile.shore - 1;
-							hasChanges = true;
-						}
+				var nb = tile.tiles[j];
+				if (nb.shore === 0) {
+					anyChanges = true;
+					if (nb.elevation > 0) {
+						nb.shore = s > 0 ? s + 1 : 1;
+					} else {
+						nb.shore = s < 0 ? s - 1 : -1;
 					}
 				}
 			}
 		}
-		currentDistance++;
+		if (!anyChanges) break;
 	}
 }
 

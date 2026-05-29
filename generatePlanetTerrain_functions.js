@@ -382,14 +382,9 @@ function erodeElevation(planet, action) {
 	groupBodies(planet);
 	ctimeEnd("groupBodies");
 
-	// Calculate shore distances immediately after body grouping
-	ctime("Shore Distances");
-	calculateShoreDistances(planet.topology.tiles);
-	calculateReverseShoreDistances(planet.topology.tiles);
-	calculateNeighborShoreComparison(planet.topology.tiles);
-	populateShoreNArrays(planet.topology.tiles);
-	calculateShoreMovementSensitivity(planet.topology.tiles);
-	ctimeEnd("Shore Distances");
+	// Shore distances moved to setDistances (after elevation finalization) to ensure consistency
+	// with final elevation values. Earlier attempts to calculate here become inconsistent
+	// when elevation is modified in tileElevationProcs and reshapeLandElevations.
 
 	ctime("randomLocalMax");
 	randomLocalMax();

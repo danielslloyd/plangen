@@ -55,12 +55,14 @@ var renderPlateBoundaries = false;
 var renderPlateMovements = false;
 var renderAirCurrents = false;
 var renderRivers = true;
+var renderRiverLines = false; // alternate curvy ribbon river visualization
 var renderMoon = false;
+var renderCoastline = false; // thin black outline along land/water boundary edges
 var renderLabels = false;
 var renderWireframe = false;
 var elevationMultiplier = 80; // Controls how exaggerated the 3D terrain elevation appears
 var projectionMode = "globe"; // "globe" or "mercator"
-var mercatorCenterLat = 0; // Center latitude for Mercator projection (-π/2 to π/2) - now fixed at 0
+var mercatorCenterLat = 0; // Center latitude for Mercator projection (-π/2 to π/2) - fixed at 0
 var mercatorCenterLon = 0; // Center longitude for Mercator projection (-π to π) - now fixed at 0
 
 // Camera position for Mercator panning (separate from projection center)
@@ -71,7 +73,6 @@ var riverElevationDeltaThreshold = 0.1; // Minimum elevation difference for whit
 var enableElevationDistributionReshaping = true; // Apply realistic elevation distribution
 var elevationExponent = 4; // Exponential curve steepness for elevation distribution (higher = more contrast)
 var renderEdgeCosts = false;
-var enablePathDensityCalculation = false; // Enable/disable expensive path density computation and overlay
 var sailingCostConstant = 10.0; // Configurable constant for sailing cost calculation (cost = k / speed)
 var sunTimeOffset = 0;
 var pressedKeys = {};
@@ -389,6 +390,9 @@ function generatePlanetTerrain(planet, plateCount, oceanicRate, heatLevel, moist
 			if (typeof generateFeatureOverlays === "function") {
 				generateFeatureOverlays(planet);
 			}
+			if (typeof generateStrategicOverlays === "function") {
+				generateStrategicOverlays(planet);
+			}
 			ctimeEnd('4i. Dynamic Overlays');
 			ctime('4j. Render Data Generation');
 			generatePlanetRenderData(planet.topology, random, action);
@@ -498,6 +502,12 @@ function generatePlanetRenderData(topology, random, action) {
 		}, 2, "Building River Visuals")
 		.getResult(function (result) {
 			renderData.Rivers = result;
+		})
+		.executeSubaction(function (action) {
+			buildRiverLinesRenderObject(topology.tiles, action);
+		}, 2, "Building River Line Visuals")
+		.getResult(function (result) {
+			renderData.RiverLines = result;
 		})
 		.executeSubaction(function (action) {
 			buildMoonRenderObject(action);
@@ -859,7 +869,9 @@ function displayPlanet(newPlanet) {
     showHidePlateMovements(renderPlateMovements);
     showHideAirCurrents(renderAirCurrents);
     showHideRivers(renderRivers);
+    showHideRiverLines(renderRiverLines);
     showHideMoon(renderMoon);
+    showHideCoastline(renderCoastline);
     showHideLabels(renderLabels);
     updateCamera();
     updateUI();
@@ -914,12 +926,13 @@ function showHideInterface() {
 	ui.controlPanel.toggle();
 	ui.updatePanel.toggle();
 	
-	// Toggle terrain color panel
-	var terrainColorPanel = document.getElementById('terrainColorPanel');
-	if (terrainColorPanel) {
-		terrainColorPanel.style.display = terrainColorPanel.style.display === 'none' ? 'block' : 'none';
+	// Toggle the top-left colour panel(s). refreshLayerColorPanel picks the right
+	// one (terrain vs. the dynamic Layer Colors panel) based on the active overlay
+	// and the now-current interface visibility.
+	if (typeof refreshLayerColorPanel === 'function') {
+		refreshLayerColorPanel(typeof surfaceRenderMode !== 'undefined' ? surfaceRenderMode : 'terrain');
 	}
-	
+
 	// Toggle FPS overlay - show with control panel
 	var fpsOverlay = document.getElementById('fpsOverlay');
 	if (fpsOverlay) {
@@ -989,14 +1002,6 @@ function updateBackgroundProgressUI(action) {
 	var actionName = action.getCurrentActionName();
 	var detailText = actionName;
 
-	// Add specific details for path density calculation
-	if (actionName === "Computing path density" && action.pathDensityState) {
-		var state = action.pathDensityState;
-		detailText = `Computing path density: Body ${state.bodyIndex + 1}/${state.totalBodies}`;
-		if (state.totalPairs > 0) {
-			detailText += ` (${state.currentPairIndex}/${state.totalPairs} paths)`;
-		}
-	}
 
 	ui.backgroundProgressActionLabel.text(detailText);
 }
@@ -1004,15 +1009,6 @@ function updateBackgroundProgressUI(action) {
 // Calculate heavy overlays in background
 function calculateBackgroundOverlays(planet, action) {
 	action
-		.executeSubaction(function (action) {
-			if (enablePathDensityCalculation) {
-				ctime('Background: Path Density');
-				calculatePathDensityIncremental(action);
-				ctimeEnd('Background: Path Density');
-			} else {
-				console.log("Path density calculation disabled (enablePathDensityCalculation = false)");
-			}
-		}, enablePathDensityCalculation ? 50 : 0, enablePathDensityCalculation ? "Computing path density" : "Skipping path density")
 		.executeSubaction(function (action) {
 			ctime('Background: Land Regions');
 			// Land regions calculation will be implemented here

@@ -270,7 +270,7 @@ function processElevationBorderQueue(elevationBorderQueue, elevationBorderQueueS
 	for (var i = 0; i < iEnd; ++i) {
 		var front = elevationBorderQueue[i];
 		var corner = front.nextCorner;
-		if (!corner.elevation) {
+		if (corner.elevation === undefined) {
 			corner.distanceToPlateBoundary = front.distanceToPlateBoundary;
 			corner.elevation = front.origin.calculateElevation(
 				corner.distanceToPlateBoundary,
@@ -326,10 +326,22 @@ function calculateTileAverageElevations(tiles, action) {
 	for (var i = 0; i < tiles.length; ++i) {
 		var tile = tiles[i];
 		var elevation = 0;
+		var validCornerCount = 0;
 		for (var j = 0; j < tile.corners.length; ++j) {
-			elevation += tile.corners[j].elevation;
+			var cornerElev = tile.corners[j].elevation;
+			// Handle undefined elevations by using plate elevation as fallback
+			if (typeof cornerElev === 'number') {
+				elevation += cornerElev;
+				validCornerCount++;
+			} else if (tile.corners[j].tiles && tile.corners[j].tiles.length > 0 && tile.corners[j].tiles[0].plate) {
+				elevation += tile.corners[j].tiles[0].plate.elevation;
+				validCornerCount++;
+			} else {
+				validCornerCount++;
+				// elevation stays 0 for this corner
+			}
 		}
-		tile.elevation = (elevation / tile.corners.length);
+		tile.elevation = validCornerCount > 0 ? (elevation / validCornerCount) : 0;
 		tile.shore = 0;
 		tile.shoreZ = 0;
 		tile.shoreA = 0;
@@ -426,11 +438,11 @@ function calculateElevationDisplacements(topology, action) {
 			tile.elevationDisplacement = 0;
 		}
 	}
-	
+
 	// Calculate displacement values for corners
 	for (var i = 0; i < topology.corners.length; ++i) {
 		var corner = topology.corners[i];
-		
+
 		// Check if any adjacent tile is ocean (elevation <= 0)
 		var hasOceanTile = false;
 		for (var j = 0; j < corner.tiles.length; ++j) {
@@ -439,7 +451,7 @@ function calculateElevationDisplacements(topology, action) {
 				break;
 			}
 		}
-		
+
 		// Apply elevation displacement only if no adjacent tiles are ocean and median elevation is positive
 		if (!hasOceanTile && corner.elevationMedian && corner.elevationMedian > 0) {
 			corner.elevationDisplacement = elevationMultiplier * corner.elevationMedian;

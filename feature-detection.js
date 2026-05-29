@@ -61,6 +61,10 @@
 		// Approach A (plate provinces)
 		plateSmooth: 2,       // smoothing passes that clean jagged plate boundaries.
 		plateMinSize: 8,      // merge plate provinces smaller than this into a neighbour.
+		plateMerge: 50,       // cohesion merge strength (0 = off). After the tiny-region
+		                      // merge, adjacent same-domain provinces are joined when they
+		                      // share a wide border AND the union is more compact
+		                      // (area/perimeter²). Higher = more aggressive joining.
 		// Approach B (erosion split)
 		maxErosion: 6,        // deepest erosion level to attempt.
 		// Approach C (inscribed-disk lobes)
@@ -250,6 +254,88 @@
 				best._tiles.push(R._tiles[m]);
 			}
 			R._dead = true;
+		}
+	}
+
+	// Cohesion merge: greedily join adjacent same-domain regions when doing so makes
+	// a rounder feature. Compactness = area / perimeter² (peaks for disks). Two
+	// regions merge only when (a) they share a wide border (so they are snugly
+	// adjacent, not touching at a thin neck/bay mouth) and (b) the union is at least
+	// as compact as the area-weighted compactness of the parts. This joins blobby
+	// pairs/triples but refuses to absorb a concave bay (which would lower
+	// compactness). `strength` (0..100) tunes the bar: 50 ≈ require no loss, lower is
+	// stricter, higher tolerates a small loss. `claimed` maps tile -> owning region.
+	function mergeByCohesion(regions, claimed, strength) {
+		if (!strength || strength <= 0) return;
+		var requiredRatio = 1.0 + (50 - strength) / 100 * 0.6; // 0→1.30, 50→1.00, 100→0.70
+		var minBorderFrac = 0.15;   // shared border / smaller region perimeter
+		var maxPasses = 8;
+
+		function perimeterOf(R) {
+			var p = 0;
+			for (var i = 0; i < R._tiles.length; i++) {
+				var nb = R._tiles[i].tiles;
+				for (var k = 0; k < nb.length; k++) {
+					if (claimed.get(nb[k]) !== R) p++;
+				}
+			}
+			return p;
+		}
+		function compactness(area, perim) { return perim > 0 ? area / (perim * perim) : 0; }
+
+		for (var pass = 0; pass < maxPasses; pass++) {
+			var live = regions.filter(function (r) { return !r._dead; });
+			var area = new Map(), perim = new Map();
+			for (var i = 0; i < live.length; i++) {
+				area.set(live[i], live[i]._tiles.length);
+				perim.set(live[i], perimeterOf(live[i]));
+			}
+
+			// Shared-border counts: region -> Map(neighbourRegion -> shared edge count).
+			var cands = [];
+			for (var i = 0; i < live.length; i++) {
+				var R = live[i], shared = new Map();
+				for (var t = 0; t < R._tiles.length; t++) {
+					var nb = R._tiles[t].tiles;
+					for (var k = 0; k < nb.length; k++) {
+						var o = claimed.get(nb[k]);
+						if (!o || o === R || o._dead) continue;
+						if (o.isLand !== R.isLand) continue;            // same-domain only
+						shared.set(o, (shared.get(o) || 0) + 1);
+					}
+				}
+				shared.forEach(function (S, O) {
+					if (R.id > O.id) return;                            // count each pair once
+					var aR = area.get(R), aO = area.get(O);
+					var pR = perim.get(R), pO = perim.get(O);
+					var mergedPerim = pR + pO - 2 * S;
+					if (mergedPerim <= 0) return;
+					var borderFrac = S / Math.min(pR, pO);
+					if (borderFrac < minBorderFrac) return;
+					var compMerged = compactness(aR + aO, mergedPerim);
+					var weighted = (aR * compactness(aR, pR) + aO * compactness(aO, pO)) / (aR + aO);
+					if (compMerged < requiredRatio * weighted) return;
+					cands.push({ a: R, b: O, gain: compMerged - weighted });
+				});
+			}
+			if (cands.length === 0) break;
+
+			cands.sort(function (x, y) { return y.gain - x.gain; });
+			var used = new Set(), merged = 0;
+			for (var c = 0; c < cands.length; c++) {
+				var A = cands[c].a, B = cands[c].b;
+				if (A._dead || B._dead || used.has(A) || used.has(B)) continue;
+				var big = A._tiles.length >= B._tiles.length ? A : B;   // merge smaller into larger
+				var small = big === A ? B : A;
+				for (var z = 0; z < small._tiles.length; z++) {
+					claimed.set(small._tiles[z], big);
+					big._tiles.push(small._tiles[z]);
+				}
+				small._dead = true;
+				used.add(big); used.add(small);
+				merged++;
+			}
+			if (merged === 0) break;
 		}
 	}
 
@@ -531,6 +617,7 @@
 		}
 
 		mergeSmallRegions(regions, owner, CONFIG.plateMinSize, true);   // same-domain merges only
+		mergeByCohesion(regions, owner, CONFIG.plateMerge);            // join into rounder features
 		var survivors = regions.filter(function (r) { return !r._dead; });
 		for (var sv = 0; sv < survivors.length; sv++) allOut.push(survivors[sv]);
 		for (var ti = 0; ti < tiles.length; ti++) {

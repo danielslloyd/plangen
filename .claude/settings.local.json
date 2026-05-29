@@ -7,7 +7,9 @@
       "Read(//c/Users/U064928/Downloads/**)",
       "Bash(rg:*)",
       "mcp__Claude_Preview__preview_start",
-      "Bash(curl -s http://localhost:8765/PlanGen.html)"
+      "Bash(curl -s http://localhost:8765/PlanGen.html)",
+      "Bash(curl -s http://localhost:8765/)",
+      "mcp__Claude_in_Chrome__tabs_context_mcp"
     ],
     "deny": [],
     "ask": []

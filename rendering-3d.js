@@ -26,9 +26,9 @@ function render() {
 	var cameraLatitudeDelta = getLatitudeDelta();
 	if (frameDuration > 0 && cameraLatitudeDelta !== 0) {
 		if (projectionMode === "mercator") {
-			// In Mercator mode, move the camera position instead of regenerating geometry
+			// In Mercator mode, pan the camera over the static map. Reversed so up = north.
 			var panSpeed = 2.0; // Increased speed since we're not regenerating geometry
-			mercatorCameraY += frameDuration * -cameraLatitudeDelta * panSpeed;
+			mercatorCameraY += frameDuration * cameraLatitudeDelta * panSpeed;
 			// Limit vertical panning to reasonable bounds (about ±80° latitude equivalent)
 			mercatorCameraY = Math.max(-2.5, Math.min(mercatorCameraY, 2.5));
 		} else {
@@ -384,10 +384,24 @@ function updateMercatorSelectionWrap() {
     }
     var mapWidth = Math.PI * 4.0;
     var visibleCenterX = 2 * mercatorCameraX; // world center (see clickHandler bounds math)
-    var m = cartesianToMercator(tileSelection.tile.averagePosition, mercatorCenterLat, mercatorCenterLon);
-    var x0 = m.x * 2.0;
-    var shift = Math.round((visibleCenterX - x0) / mapWidth) * mapWidth;
-    for (var i = 0; i < objects.length; i++) objects[i].position.x = shift;
+
+    // Apply individual wrapping to each tile based on its position, not a single global shift
+    // This prevents upstream/downstream tiles from smearing across the anti-meridian
+    var tilesForWrap = [tileSelection.tile];
+    if (tileSelection.tile.upstream) tilesForWrap = tilesForWrap.concat(tileSelection.tile.upstream);
+    if (tileSelection.tile.downstream) tilesForWrap = tilesForWrap.concat(tileSelection.tile.downstream);
+
+    for (var i = 0; i < objects.length; i++) {
+        if (i < tilesForWrap.length) {
+            var tile = tilesForWrap[i];
+            var m = cartesianToMercator(tile.averagePosition, mercatorCenterLat, mercatorCenterLon);
+            var x0 = m.x * 2.0;
+            var shift = Math.round((visibleCenterX - x0) / mapWidth) * mapWidth;
+            objects[i].position.x = shift;
+        } else {
+            objects[i].position.x = 0;
+        }
+    }
 }
 
 function deselectTile() {
@@ -426,7 +440,8 @@ function buildPlateOutlineObject() {
 			return new THREE.Vector3(m.x * 2.0, m.y * 2.0, 0.2);
 		}
 		var p = corner.position.clone();
-		return p.normalize().multiplyScalar(p.length() + 3);
+		var len = p.length();
+		return p.normalize().multiplyScalar(len + 0.5);
 	}
 	function shared(a, b) {
 		var r = [];
@@ -455,7 +470,7 @@ function buildPlateOutlineObject() {
 	if (!positions.length) return null;
 	var geo = new THREE.BufferGeometry();
 	geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-	var mat = new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.9, depthTest: false });
+	var mat = new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.9 });
 	var obj = new THREE.LineSegments(geo, mat);
 	obj.renderOrder = 998;
 	return obj;
@@ -474,6 +489,75 @@ function rebuildPlateOutline() {
 	if (typeof scene === "undefined" || !scene) return;
 	var obj = buildPlateOutlineObject();
 	if (obj) { scene.add(obj); plateOutlineObject = obj; }
+}
+
+// Coastline outline: a thin black line along every land/water boundary edge.
+// Built like the plate outline (projection-aware, 3-copy in mercator) but driven
+// by the independent `renderCoastline` toggle rather than a surface render mode.
+var coastlineOutlineObject = null;
+
+function buildCoastlineOutlineObject() {
+	if (!planet || !planet.topology || !planet.topology.tiles) return null;
+	var tiles = planet.topology.tiles;
+	var mercator = (projectionMode === "mercator");
+	var period = Math.PI * 4.0, half = period / 2;
+	var positions = [];
+
+	function isLandTile(t) { return t.elevation > 0; }
+	function projC(corner) {
+		if (mercator) {
+			var m = cartesianToMercator(corner.position, mercatorCenterLat, mercatorCenterLon);
+			return new THREE.Vector3(m.x * 2.0, m.y * 2.0, 0.21);
+		}
+		var p = corner.position.clone();
+		var len = p.length();
+		return p.normalize().multiplyScalar(len + 0.5);
+	}
+	function shared(a, b) {
+		var r = [];
+		for (var i = 0; i < a.corners.length; i++) if (b.corners.indexOf(a.corners[i]) >= 0) r.push(a.corners[i]);
+		return r;
+	}
+	function emit(a, b) {
+		if (mercator) {
+			if (Math.abs(a.x - b.x) > half) { if (a.x > b.x) a = a.clone().setX(a.x - period); else b = b.clone().setX(b.x - period); }
+			for (var o = -1; o <= 1; o++) positions.push(a.x + o * period, a.y, a.z, b.x + o * period, b.y, b.z);
+		} else {
+			positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
+		}
+	}
+
+	for (var t = 0; t < tiles.length; t++) {
+		var tile = tiles[t], nb = tile.tiles;
+		for (var k = 0; k < nb.length; k++) {
+			var n = nb[k];
+			if ((n.id || 0) <= (tile.id || 0)) continue;        // each border once
+			if (isLandTile(tile) === isLandTile(n)) continue;    // same domain - not a coastline
+			var sc = shared(tile, n);
+			if (sc.length === 2) emit(projC(sc[0]), projC(sc[1]));
+		}
+	}
+	if (!positions.length) return null;
+	var geo = new THREE.BufferGeometry();
+	geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+	var mat = new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.9 });
+	var obj = new THREE.LineSegments(geo, mat);
+	obj.renderOrder = 999;
+	return obj;
+}
+
+// Rebuild the coastline outline for the current projection when enabled.
+function rebuildCoastlineOutline() {
+	if (coastlineOutlineObject) {
+		if (coastlineOutlineObject.parent) coastlineOutlineObject.parent.remove(coastlineOutlineObject);
+		if (coastlineOutlineObject.geometry) coastlineOutlineObject.geometry.dispose();
+		if (coastlineOutlineObject.material) coastlineOutlineObject.material.dispose();
+		coastlineOutlineObject = null;
+	}
+	if (typeof renderCoastline === "undefined" || !renderCoastline) return;
+	if (typeof scene === "undefined" || !scene) return;
+	var obj = buildCoastlineOutlineObject();
+	if (obj) { scene.add(obj); coastlineOutlineObject = obj; }
 }
 
 function buildEdgeCostsRenderObject(edges) {
@@ -904,7 +988,9 @@ function reapplyOverlayVisibility() {
 	showHidePlateMovements(renderPlateMovements);
 	showHideAirCurrents(renderAirCurrents);
 	showHideRivers(renderRivers);
+	showHideRiverLines(renderRiverLines);
 	showHideMoon(renderMoon);
+	rebuildCoastlineOutline(); // projection-specific; rebuild for the new view
 }
 
 // Restore a cached render-data entry as the active render data.

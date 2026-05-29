@@ -18,6 +18,9 @@
 		<script src="generatePlanetTerrain_functions.js"></script>
 		<script src="post-generation.js"></script>
 		<script src="generatePlanetRenderData_functions.js"></script>
+		<script src="overlay-colors.js"></script>
+		<script src="resource-overlays.js"></script>
+		<script src="strategic-overlays.js"></script>
 		<script src="feature-detection.js"></script>
 		<script src="rendering-3d.js"></script>
 		<script src="weather-generation.js"></script>
@@ -103,7 +106,16 @@
 				</div>
 			</div>
 		</div>
-		
+
+		<!-- Dynamic per-overlay colour pickers (shown for non-terrain overlays) -->
+		<div id="layerColorPanel" class="panel" style="position: absolute; left: 1em; top: 1em; width: 20em; display: none; padding: 1em;">
+			<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75em;">
+				<h2 style="margin: 0; font-size: 110%;">Layer Colors</h2>
+				<button id="resetLayerColorsButton" style="font-size: 75%; padding: 0.25em 0.5em;" title="Reset this layer's colours to defaults">Reset</button>
+			</div>
+			<div id="layerColorContent"></div>
+		</div>
+
 		<!--<div id="helpPanel" class="panel" style="position: absolute; left: 1em; top: 1em; width: 30em; height: 13em;">
 			<h2 style="top: 0.5em; width: 10em;">Move Camera</h2>
 			<div style="position: absolute; left: 0.5em; right: 0.5em; top: 2.0em; height: 3.5em;">
@@ -145,6 +157,14 @@
 			<!-- Surface Color Overlay -->
 			<div style="margin-bottom: 1em;">
 				<h2 style="margin: 0 0 0.5em 0; font-size: 110%; border-bottom: 1px solid #89B; padding-bottom: 0.25em;">Surface Color Overlay</h2>
+
+				<!-- View Category Buttons -->
+				<div id="viewCategoryList" class="toggleButtonList onlyOne" style="margin-bottom: 0.5em;">
+					<button id="categoryGeography" title="Geographic features and terrain" class="categoryButton" data-category="geography">Geography</button>
+					<button id="categoryFood" title="Food resources and productivity" class="categoryButton" data-category="food">Food</button>
+					<button id="categoryResources" title="Strategic mineral resources" class="categoryButton" data-category="resources">Resources</button>
+				</div>
+
 				<select id="colorOverlayDropdown" title="Select color overlay mode" style="width: 100%; height: 1.8em; background-color: rgba(16, 32, 64, 1); color: #FFFFFF; border: none; border-radius: 0.25em; padding: 0.25em; font-size: 90%;">
 					<!-- Options will be populated dynamically -->
 				</select>
@@ -159,6 +179,7 @@
 							<div style="opacity: 0.7; margin: 0.3em 0 0.15em 0;">A — Plate provinces</div>
 							<div class="fdSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Majority-vote passes that clean jagged plate boundaries. 0 = raw plate edges.">Boundary smoothing</span><input type="range" id="fdPlateSmooth" min="0" max="8" step="1" value="2" style="flex:1.5;"><span id="fdPlateSmoothVal" style="width:2.6em; text-align:right;">2</span></div>
 							<div class="fdSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;">Min province size</span><input type="range" id="fdPlateMin" min="1" max="60" step="1" value="8" style="flex:1.5;"><span id="fdPlateMinVal" style="width:2.6em; text-align:right;">8</span></div>
+							<div class="fdSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Join adjacent same-domain provinces into rounder features when they share a wide border. 0 = off; higher = more joining.">Cohesion merge</span><input type="range" id="fdPlateMerge" min="0" max="100" step="5" value="50" style="flex:1.5;"><span id="fdPlateMergeVal" style="width:2.6em; text-align:right;">50</span></div>
 						</div>
 
 						<div class="fdGroup" data-approach="B">
@@ -195,7 +216,9 @@
 				<div id="extrasDisplayList" class="toggleButtonList" style="margin: 0;">
 					<button id="showSunlightButton" title="Show Sunlight" style="font-size: 75%;">Sun (U)</button>
 					<button id="showRiversButton" title="Show Rivers" style="font-size: 75%;">Rivers (R)</button>
+					<button id="showRiverLinesButton" title="Show curvy river lines (width scales with flow)" style="font-size: 75%;">River Lines</button>
 					<button id="showAirCurrentsButton" title="Show Air Currents" style="font-size: 75%;">Air Currents (P)</button>
+					<button id="showCoastlineButton" title="Show a thin black outline along coastlines (land/water boundary)" style="font-size: 75%;">Coastline</button>
 				</div>
 			</div>
 

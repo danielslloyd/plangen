@@ -171,32 +171,6 @@ function clearAllTextLabels() {
 }
 
 /**
- * Adds "Mount Everest" label to the highest elevation tile
- * @param {Array} tiles - Array of planet tiles
- */
-function addMountEverestLabel(tiles) {
-    if (!tiles || tiles.length === 0) return;
-
-    // Find tile with highest elevation
-    var highestTile = tiles[0];
-    for (var i = 1; i < tiles.length; i++) {
-        if (tiles[i].elevation > highestTile.elevation) {
-            highestTile = tiles[i];
-        }
-    }
-
-    if (highestTile && highestTile.averagePosition) {
-        addTextLabelAtPosition(
-            highestTile.averagePosition,
-            'Mount Everest',
-            'black',
-            48,
-            80 // Higher offset for mountain peaks
-        );
-    }
-}
-
-/**
  * Adds city labels for all tiles marked as cities
  * @param {Array} tiles - Array of planet tiles
  */
@@ -252,15 +226,8 @@ function updateAllLabelPositions() {
 function rebuildAllLabelsForProjection(tiles) {
     if (!tiles || tiles.length === 0) return;
 
-    console.log("Rebuilding labels for projection mode:", typeof projectionMode !== 'undefined' ? projectionMode : '3d');
-
     // Clear existing labels and tracking data completely
     clearAllTextLabels();
 
-    // Rebuild Mount Everest label
-    addMountEverestLabel(tiles);
-
-    // City labels removed by request.
-
-    console.log("Labels rebuilt - tracking", textSpriteData.length, "labels");
+    // Mount Everest + city labels removed by request.
 }

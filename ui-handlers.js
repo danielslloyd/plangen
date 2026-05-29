@@ -133,10 +133,6 @@ function keyUpHandler(event) {
             setFromVertex(event);
             event.preventDefault();
             break;
-		case KEY.X:
-			setSurfaceRenderMode("shoreA");
-			event.preventDefault();
-			break;
 		case KEY.B:
 			setToVertex(event);
 			event.preventDefault();
@@ -147,14 +143,6 @@ function keyUpHandler(event) {
 			break;
 		case KEY.D:
 			setSurfaceRenderMode("rice");
-			event.preventDefault();
-			break;
-		case KEY.Z:
-			setSurfaceRenderMode("shoreZ");
-			event.preventDefault();
-			break;
-		case KEY.Q:
-			setSurfaceRenderMode("port");
 			event.preventDefault();
 			break;
 		case KEY_LEFTARROW:

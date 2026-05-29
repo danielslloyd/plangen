@@ -95,7 +95,6 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 		var currentTriangleCapacity = indices.length / 3;
 
 		if (requiredVertices > currentVertexCapacity || requiredTriangles > currentTriangleCapacity) {
-			console.log("Expanding buffers - Vertices:", currentVertexCapacity, "->", requiredVertices, "Triangles:", currentTriangleCapacity, "->", requiredTriangles);
 
 			// Calculate new capacity (add 50% more for future growth)
 			var newVertexCapacity = Math.max(requiredVertices, currentVertexCapacity) * 1.5;
@@ -132,30 +131,12 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 
 	var i = 0;
 	action.executeSubaction(function (action) {
-		//console.log("*** TILE LOOP EXECUTING! i =", i, "tiles.length =", tiles.length, "***");
-		
 		if (i >= tiles.length) {
-			//console.log("*** TILE LOOP ENDING - reached tiles.length ***");
 			action.provideResult("completed");
 			return;
 		}
 
-		if (i % 100 === 0) {
-			//console.log("Processing tile", i, "of", tiles.length);
-		}
-
 		var tile = tiles[i];
-
-		// Debug coordinate system - mark tiles based on different criteria
-		var spherical = cartesianToSpherical(tile.averagePosition);
-		var pos = tile.averagePosition;
-
-
-		// Debug logging for first few tiles to understand coordinate mapping
-		if (i < 5) {
-			console.log("Tile", i, "Cartesian:", pos.x.toFixed(2), pos.y.toFixed(2), pos.z.toFixed(2),
-						"Spherical theta:", (spherical.theta * 180/Math.PI).toFixed(1), "phi:", (spherical.phi * 180/Math.PI).toFixed(1));
-		}
 
 		// Calculate terrain color using extracted function
 		var terrainColor = calculateTerrainColor(tile);
@@ -182,11 +163,6 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 			// Raised Mercator lifts land vertices; flat Mercator keeps tiny Z offset.
 			var zOffset = mercatorVertexZ(tile.elevationDisplacement, tileIsLand);
 			centerPos = new THREE.Vector3(mercatorCoords.x * 2.0, mercatorCoords.y * 2.0, zOffset);
-
-			// Debug logging for first few tiles
-			if (i < 3) {
-				console.log("Tile", i, "center - Original:", tile.averagePosition, "Mercator:", mercatorCoords, "Final:", centerPos);
-			}
 		} else {
 			// Original 3D positioning
 			if (tile.elevation > 0) {
@@ -218,11 +194,6 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 				}
 				var cornerZ = mercatorVertexZ(corner.elevationDisplacement, cornerIsLand);
 				cornerPos = new THREE.Vector3(mercatorCoords.x * 2.0, mercatorCoords.y * 2.0, cornerZ);
-
-				// Debug logging for first tile's corners
-				if (i < 1 && j < 3) {
-					console.log("Tile", i, "corner", j, "- Original:", corner.position, "Mercator:", mercatorCoords, "Final:", cornerPos);
-				}
 			} else {
 				// Original 3D positioning with elevation
 				var hasOceanTile = false;
@@ -253,7 +224,6 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 
 			// If longitude span > π, tile crosses antimeridian
 			if (maxLon - minLon > Math.PI) {
-				console.log("Tile", i, "crosses antimeridian! MinLon:", minLon.toFixed(3), "MaxLon:", maxLon.toFixed(3), "Span:", (maxLon - minLon).toFixed(3));
 
 				// Create two versions: left side (subtract 2π from positive coords) and right side (add 2π to negative coords)
 				// Preserve per-corner Z from the already-built cornerPositions so wraparound triangles raise correctly.
@@ -304,8 +274,6 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 
 					// If triangle spans more than half the map width, it's wrapping
 					if (maxX - minX > Math.PI * 2.0) { // 2π * 2.0 scaling = map width
-						console.log("Triangle", i, j, "spans map boundary! MinX:", minX.toFixed(3), "MaxX:", maxX.toFixed(3), "- Fixing coordinates in-place");
-
 						// Fix coordinates in-place by moving outlying vertices to the correct side
 						var mapWidth = Math.PI * 4.0; // Full map width in scaled coordinates
 						var avgX = (vertex1.x + vertex2.x + vertex3.x) / 3;
@@ -313,15 +281,12 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 						// Correct each vertex that is far from the average
 						if (Math.abs(vertex1.x - avgX) > Math.PI * 2.0) {
 							vertex1.x += vertex1.x > avgX ? -mapWidth : mapWidth;
-							console.log("  Corrected vertex1 X coordinate");
 						}
 						if (Math.abs(vertex2.x - avgX) > Math.PI * 2.0) {
 							vertex2.x += vertex2.x > avgX ? -mapWidth : mapWidth;
-							console.log("  Corrected vertex2 X coordinate");
 						}
 						if (Math.abs(vertex3.x - avgX) > Math.PI * 2.0) {
 							vertex3.x += vertex3.x > avgX ? -mapWidth : mapWidth;
-							console.log("  Corrected vertex3 X coordinate");
 						}
 					}
 				}
@@ -382,8 +347,6 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 		var finalPositions = positions.slice(0, vertexIndex * 3);
 		var finalColors = colors.slice(0, vertexIndex * 3);
 		var finalIndices = indices.slice(0, triangleIndex * 3);
-
-		console.log("Final buffer sizes - Vertices used:", vertexIndex, "Triangles used:", triangleIndex);
 
 		// Set buffer attributes directly
 		var positionAttribute = new THREE.BufferAttribute(finalPositions, 3);
@@ -1156,6 +1119,180 @@ function buildRiversRenderObject(tiles, action) {
 	});
 }
 
+/**
+ * Alternate river visualization: curvy ribbon "lines" that follow the same
+ * source -> tile center -> drain path as buildRiversRenderObject, but rendered
+ * as smooth Catmull-Rom ribbons whose width is proportional to flow.
+ * Stored as planet.renderData.RiverLines.
+ */
+function buildRiverLinesRenderObject(tiles, action) {
+	var ABL = averageBorderLength;
+	var isMercator = (projectionMode === "mercator");
+
+	// Width scaling: base half-width and flow normalization.
+	var maxOutflow = 0;
+	for (var i = 0; i < tiles.length; i++) {
+		if (tiles[i].river && tiles[i].outflow > maxOutflow) maxOutflow = tiles[i].outflow;
+	}
+	if (maxOutflow <= 0) maxOutflow = 1;
+
+	var baseHalfWidth = isMercator ? (ABL / 3) * (2.0 / 1000) : (ABL / 3);
+	var minHalfWidth = baseHalfWidth * 0.25;
+
+	var waterfallThreshold = riverElevationDeltaThreshold || 0.1;
+	var mapWidth = Math.PI * 4.0; // mercator world width in scaled coords
+
+	// Project a cartesian border/center point into the current projection,
+	// applying elevation like the triangle rivers do. tileForZ picks the tile
+	// used for the raised-mercator Z layer.
+	function projectRiverPoint(cartPos, tileForZ, borderTilePair) {
+		var p = cartPos.clone();
+		if (isMercator) {
+			var mc = cartesianToMercator(p, mercatorCenterLat, mercatorCenterLon);
+			return new THREE.Vector3(mc.x * 2.0, mc.y * 2.0, mercatorOverlayLayerZ(0.1, tileForZ));
+		}
+		if (borderTilePair) {
+			// Border point: elevate using border elevation between the two tiles.
+			var be = calculateBorderElevation(borderTilePair[0], borderTilePair[1]);
+			if (be > 0) {
+				var border = findBorderBetweenTiles(borderTilePair[0], borderTilePair[1]);
+				var disp = border ? border.elevationDisplacement : be * elevationMultiplier;
+				var d = p.length();
+				p.normalize().multiplyScalar(d + (useElevationDisplacement ? disp : 0) + 3);
+			} else {
+				p.multiplyScalar(1.003);
+			}
+		} else {
+			// Tile-center point.
+			if (tileForZ.elevation > 0) {
+				var d2 = p.length();
+				p.normalize().multiplyScalar(d2 + (useElevationDisplacement ? tileForZ.elevationDisplacement : 0) + 3);
+			} else {
+				p.multiplyScalar(1.003);
+			}
+		}
+		return p;
+	}
+
+	function borderMidpoint(a, b) {
+		var border = findBorderBetweenTiles(a, b);
+		if (border && border.midpoint) return border.midpoint.clone();
+		return a.averagePosition.clone().add(b.averagePosition).multiplyScalar(0.5);
+	}
+
+	// Fix antimeridian wrapping by pulling each projected point near a reference x.
+	function unwrapX(pts, refX) {
+		for (var k = 0; k < pts.length; k++) {
+			while (pts[k].x - refX > mapWidth / 2) pts[k].x -= mapWidth;
+			while (pts[k].x - refX < -mapWidth / 2) pts[k].x += mapWidth;
+		}
+	}
+
+	var positions = [];
+	var colors = [];
+	var indices = [];
+	var vIndex = 0;
+
+	for (var t = 0; t < tiles.length; t++) {
+		var tile = tiles[t];
+		if (!(tile.river && tile.riverSources && tile.drain)) continue;
+
+		var halfWidth = minHalfWidth + (baseHalfWidth - minHalfWidth) * Math.sqrt(tile.outflow / maxOutflow);
+
+		var centerProj = projectRiverPoint(tile.averagePosition, tile, null);
+		var drainMid = borderMidpoint(tile, tile.drain);
+		var drainBorderTile = (isMercator && (tile.drain.elevationDisplacement || 0) > (tile.elevationDisplacement || 0)) ? tile.drain : tile;
+		var drainProj = projectRiverPoint(drainMid, drainBorderTile, isMercator ? null : [tile, tile.drain]);
+
+		// One ribbon per source: sourceBorder -> tileCenter -> drainBorder (curvy).
+		for (var s = 0; s < tile.riverSources.length; s++) {
+			var source = tile.riverSources[s];
+			var srcMid = borderMidpoint(source, tile);
+			var srcBorderTile = (isMercator && (source.elevationDisplacement || 0) > (tile.elevationDisplacement || 0)) ? source : tile;
+			var srcProj = projectRiverPoint(srcMid, srcBorderTile, isMercator ? null : [source, tile]);
+
+			var ctrl = [srcProj.clone(), centerProj.clone(), drainProj.clone()];
+			if (isMercator) unwrapX(ctrl, centerProj.x);
+
+			var curve = new THREE.CatmullRomCurve3(ctrl, false, "catmullrom", 0.5);
+			var samples = curve.getPoints(10); // 11 points
+
+			// Waterfall coloring: whiten if there's a significant drop into this tile.
+			var drop = (source.elevation || 0) - (tile.elevation || 0);
+			var col = drop >= waterfallThreshold ? { r: 1, g: 1, b: 1 } : { r: 0.2, g: 0.6, b: 1 };
+
+			// Up vector for ribbon offset.
+			var firstStripIndex = vIndex;
+			for (var i2 = 0; i2 < samples.length; i2++) {
+				var pt = samples[i2];
+				// Tangent from neighbours.
+				var prev = samples[Math.max(0, i2 - 1)];
+				var next = samples[Math.min(samples.length - 1, i2 + 1)];
+				var tangent = next.clone().sub(prev);
+				if (tangent.lengthSq() < 1e-9) tangent.set(1, 0, 0);
+				tangent.normalize();
+
+				var up = isMercator ? new THREE.Vector3(0, 0, 1) : pt.clone().normalize();
+				var perp = new THREE.Vector3().crossVectors(tangent, up);
+				if (perp.lengthSq() < 1e-9) perp.set(0, 1, 0); else perp.normalize();
+				perp.multiplyScalar(halfWidth);
+
+				var left = pt.clone().add(perp);
+				var right = pt.clone().sub(perp);
+
+				positions.push(left.x, left.y, left.z);
+				colors.push(col.r, col.g, col.b);
+				positions.push(right.x, right.y, right.z);
+				colors.push(col.r, col.g, col.b);
+				vIndex += 2;
+
+				if (i2 > 0) {
+					var a0 = firstStripIndex + (i2 - 1) * 2;
+					var b0 = a0 + 1;
+					var c0 = firstStripIndex + i2 * 2;
+					var d0 = c0 + 1;
+					indices.push(a0, b0, c0);
+					indices.push(b0, d0, c0);
+				}
+			}
+		}
+	}
+
+	var geometry = new THREE.BufferGeometry();
+	if (positions.length > 0) {
+		geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+		geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+		geometry.setIndex(indices);
+		geometry.computeVertexNormals();
+		geometry.computeBoundingSphere();
+	}
+
+	var material = new THREE.MeshBasicMaterial({
+		vertexColors: true,
+		side: THREE.DoubleSide,
+		transparent: true,
+		opacity: 0.9
+	});
+
+	var renderObject;
+	if (isMercator) {
+		renderObject = new THREE.Group();
+		for (var offset = -1; offset <= 1; offset++) {
+			var meshCopy = new THREE.Mesh(geometry, material);
+			meshCopy.position.x = offset * mapWidth;
+			renderObject.add(meshCopy);
+		}
+	} else {
+		renderObject = new THREE.Mesh(geometry, material);
+	}
+
+	action.provideResult({
+		geometry: geometry,
+		material: material,
+		renderObject: renderObject,
+	});
+}
+
 // Utility functions for terrain-following arrow rendering
 
 
@@ -1474,11 +1611,13 @@ function calculateElevationColor(tile) {
 	if (tile.elevation <= 0) {
 		// Ocean depths - blue gradient
 		var normalizedDepth = Math.min(-tile.elevation, 1);
-		return new THREE.Color(0x224488).lerp(new THREE.Color(0x000044), normalizedDepth);
+		return new THREE.Color(getOverlayColor("elevation", "oceanShallow", "#224488"))
+			.lerp(new THREE.Color(getOverlayColor("elevation", "oceanDeep", "#000044")), normalizedDepth);
 	} else {
 		// Land elevation - brown to white gradient
 		var normalizedElevation = Math.min(tile.elevation, 1);
-		return new THREE.Color(0x4B2F20).lerp(new THREE.Color(0xFFFFFF), normalizedElevation);
+		return new THREE.Color(getOverlayColor("elevation", "landLow", "#4b2f20"))
+			.lerp(new THREE.Color(getOverlayColor("elevation", "landHigh", "#ffffff")), normalizedElevation);
 	}
 }
 
@@ -1486,24 +1625,27 @@ function calculateTemperatureColor(tile) {
 	var normalizedTemp = Math.max(-1, Math.min(tile.temperature || 0, 1));
 	if (normalizedTemp < 0) {
 		// Cold - blue to cyan
-		return new THREE.Color(0x0000FF).lerp(new THREE.Color(0x00FFFF), Math.abs(normalizedTemp));
+		return new THREE.Color(getOverlayColor("temperature", "coldLow", "#0000ff"))
+			.lerp(new THREE.Color(getOverlayColor("temperature", "coldHigh", "#00ffff")), Math.abs(normalizedTemp));
 	} else {
 		// Warm - yellow to red
-		return new THREE.Color(0xFFFF00).lerp(new THREE.Color(0xFF0000), normalizedTemp);
+		return new THREE.Color(getOverlayColor("temperature", "warmLow", "#ffff00"))
+			.lerp(new THREE.Color(getOverlayColor("temperature", "warmHigh", "#ff0000")), normalizedTemp);
 	}
 }
 
 function calculateMoistureColor(tile) {
 	var normalizedMoisture = Math.max(0, Math.min(tile.moisture || 0, 1));
-	// Dry (brown) to wet (green)
-	return new THREE.Color(0x8B4513).lerp(new THREE.Color(0x00FF00), normalizedMoisture);
+	// Dry to wet
+	return new THREE.Color(getOverlayColor("moisture", "dry", "#8b4513"))
+		.lerp(new THREE.Color(getOverlayColor("moisture", "wet", "#00ff00")), normalizedMoisture);
 }
 
 function calculatePlatesColor(tile) {
 	// Plates view = plain land/water fill; the plate outlines are drawn on top as
 	// thin black boundary lines (auto-enabled when this overlay is selected).
-	if (tile.elevation > 0) return new THREE.Color(0x74ad5a); // land (green)
-	return new THREE.Color(0x4f86c6);                         // water (blue)
+	if (tile.elevation > 0) return new THREE.Color(getOverlayColor("plates", "land", "#74ad5a"));
+	return new THREE.Color(getOverlayColor("plates", "water", "#4f86c6"));
 }
 
 // Function to recalculate colors for BufferGeometry based on render mode
@@ -1738,6 +1880,20 @@ function buildSimpleTestObject(action) {
 // Modular Color Overlay System
 var colorOverlayRegistry = {};
 
+// Memoize expensive per-overlay aggregates (e.g. min/max over all tiles) so color
+// functions stay O(1) per tile and a full recolor is O(N) instead of O(N²). Several
+// overlays previously recomputed Math.min/max over every tile FOR every tile, which
+// froze the page on large planets when switching to them. Cached on the planet
+// object, so it auto-invalidates when a new planet is generated (fresh object).
+function getOverlayAggregate(key, compute) {
+	if (typeof planet === "undefined" || !planet) return compute();
+	if (!planet._overlayAggregates) planet._overlayAggregates = {};
+	if (planet._overlayAggregates[key] === undefined) {
+		planet._overlayAggregates[key] = compute();
+	}
+	return planet._overlayAggregates[key];
+}
+
 // Material management system
 var materialCache = {};
 var currentMaterialType = 'basic';
@@ -1767,14 +1923,15 @@ function createPlanetMaterial(materialType) {
 }
 
 // Register a color overlay function
-function registerColorOverlay(id, name, description, colorFunction, materialType, computationType) {
+function registerColorOverlay(id, name, description, colorFunction, materialType, computationType, category) {
 	colorOverlayRegistry[id] = {
 		id: id,
 		name: name,
 		description: description,
 		colorFunction: colorFunction,
 		materialType: materialType || 'basic', // Default to basic material if not specified
-		computationType: computationType || 'lazy' // 'precompute', 'lazy', or 'immediate'
+		computationType: computationType || 'lazy', // 'precompute', 'lazy', or 'immediate'
+		category: category || 'geography' // 'resources', 'food', or 'geography'
 	};
 }
 
@@ -1854,21 +2011,15 @@ function recreateGeometryWithMaterial(materialType) {
 }
 
 // Register the existing color overlays
-registerColorOverlay("terrain", "Realistic Terrain", "Realistic biome-based terrain coloring", calculateTerrainColor, "lambert");
-registerColorOverlay("elevation", "Elevation Map", "Height-based visualization from brown (low) to white (high)", calculateElevationColor, "lambert");
-registerColorOverlay("temperature", "Temperature Map", "Thermal visualization from blue (cold) to red (hot)", calculateTemperatureColor, "lambert");
-registerColorOverlay("moisture", "Moisture Map", "Precipitation visualization from brown (dry) to green (wet)", calculateMoistureColor, "lambert");
-registerColorOverlay("plates", "Tectonic Plates", "Tectonic plate boundaries and colors", calculatePlatesColor, "basic");
+registerColorOverlay("terrain", "Realistic Terrain", "Realistic biome-based terrain coloring", calculateTerrainColor, "lambert", "lazy", "geography");
+registerColorOverlay("elevation", "Elevation Map", "Height-based visualization from brown (low) to white (high)", calculateElevationColor, "lambert", "lazy", "geography");
+registerColorOverlay("temperature", "Temperature Map", "Thermal visualization from blue (cold) to red (hot)", calculateTemperatureColor, "lambert", "lazy", "geography");
+registerColorOverlay("moisture", "Moisture Map", "Precipitation visualization from brown (dry) to green (wet)", calculateMoistureColor, "lambert", "lazy", "geography");
+registerColorOverlay("plates", "Tectonic Plates", "Tectonic plate boundaries and colors", calculatePlatesColor, "basic", "lazy", "geography");
 
-// Example: Add new overlays - demonstrating how easy it is to extend
 registerColorOverlay("simple", "Simple Land/Water", "Basic land (green) vs water (blue) visualization", function(tile) {
 	return tile.elevation <= 0 ? new THREE.Color(0x0066CC) : new THREE.Color(0x00AA44);
-}, "basic");
-/* 
-registerColorOverlay("heat", "Heat Map", "Red-hot visualization based on elevation and temperature", function(tile) {
-	var intensity = Math.max(0, Math.min(1, (tile.elevation || 0) + (tile.temperature || 0) * 0.5));
-	return new THREE.Color(intensity, 0, 0);
-}, "basic"); */
+}, "basic", "lazy", "geography");
 
 // Watersheds color overlay - shows drainage basins in different colors
 registerColorOverlay("watersheds", "Watersheds", "Shows drainage basins with distinct colors", function(tile) {
@@ -1886,7 +2037,7 @@ registerColorOverlay("watersheds", "Watersheds", "Shows drainage basins with dis
 	}
 	// Default color for land tiles without watershed assignment
 	return new THREE.Color(0x888888);
-}, "basic");
+}, "basic", "lazy", "geography");
 
 // Shore distance color overlay - shows distance from shoreline
 registerColorOverlay("shore", "Shore Distance", "Distance from shore: light blue (ocean edge) to dark blue (deep ocean), bright yellow (land edge) to dark green (inland)", function(tile) {
@@ -1898,10 +2049,16 @@ registerColorOverlay("shore", "Shore Distance", "Distance from shore: light blue
 		return new THREE.Color(0x888888); // Gray for uncategorized tiles
 	}
 
+	var shoreExt = getOverlayAggregate("shore", function() {
+		var min = Infinity, max = -Infinity, ts = planet.topology.tiles;
+		for (var i = 0; i < ts.length; i++) { var s = ts[i].shore || 0; if (s < min) min = s; if (s > max) max = s; }
+		return { min: min, max: max };
+	});
+
 	if (tile.shore < 0) {
 		// Ocean tiles: negative values
 		// Light blue (-1) to dark blue (very negative)
-		var maxNegative = Math.min(...planet.topology.tiles.map(t => t.shore || 0));
+		var maxNegative = shoreExt.min;
 		var normalizedValue = Math.abs(tile.shore) / Math.abs(maxNegative);
 
 		// Lerp from light blue to dark blue
@@ -1911,7 +2068,7 @@ registerColorOverlay("shore", "Shore Distance", "Distance from shore: light blue
 	} else {
 		// Land tiles: positive values
 		// Bright yellow (1) to dark green (very positive)
-		var maxPositive = Math.max(...planet.topology.tiles.map(t => t.shore || 0));
+		var maxPositive = shoreExt.max;
 		var normalizedValue = tile.shore / maxPositive;
 
 		// Lerp from bright yellow to dark green
@@ -1919,7 +2076,7 @@ registerColorOverlay("shore", "Shore Distance", "Distance from shore: light blue
 		var darkGreen = new THREE.Color(0x006400);    // Dark green
 		return brightYellow.clone().lerp(darkGreen, normalizedValue);
 	}
-}, "basic");
+}, "basic", "lazy", "geography");
 
 // Reverse shore distance color overlay - shows distance from the extreme inland/deep ocean points
 registerColorOverlay("reverseShore", "Reverse Shore Distance", "Distance from extreme inland/deep ocean points: same color scheme as shore distance", function(tile) {
@@ -1931,10 +2088,16 @@ registerColorOverlay("reverseShore", "Reverse Shore Distance", "Distance from ex
 		return new THREE.Color(0x888888); // Gray for uncategorized tiles
 	}
 
+	var revExt = getOverlayAggregate("reverseShore", function() {
+		var min = Infinity, max = -Infinity, ts = planet.topology.tiles;
+		for (var i = 0; i < ts.length; i++) { var s = ts[i].reverseShore || 0; if (s < min) min = s; if (s > max) max = s; }
+		return { min: min, max: max };
+	});
+
 	if (tile.reverseShore < 0) {
 		// Ocean tiles: negative values
 		// Light blue (-1) to dark blue (very negative)
-		var maxNegative = Math.min(...planet.topology.tiles.map(t => t.reverseShore || 0));
+		var maxNegative = revExt.min;
 		var normalizedValue = Math.abs(tile.reverseShore) / Math.abs(maxNegative);
 
 		// Lerp from light blue to dark blue
@@ -1944,7 +2107,7 @@ registerColorOverlay("reverseShore", "Reverse Shore Distance", "Distance from ex
 	} else {
 		// Land tiles: positive values
 		// Bright yellow (1) to dark green (very positive)
-		var maxPositive = Math.max(...planet.topology.tiles.map(t => t.reverseShore || 0));
+		var maxPositive = revExt.max;
 		var normalizedValue = tile.reverseShore / maxPositive;
 
 		// Lerp from bright yellow to dark green
@@ -1952,7 +2115,7 @@ registerColorOverlay("reverseShore", "Reverse Shore Distance", "Distance from ex
 		var darkGreen = new THREE.Color(0x006400);    // Dark green
 		return brightYellow.clone().lerp(darkGreen, normalizedValue);
 	}
-}, "basic");
+}, "basic", "lazy", "geography");
 
 // Net Shore color overlay - shows reverseShore minus shore
 registerColorOverlay("shoreRatio", "Net Shore", "Net shore distance (reverseShore - shore) with custom color schemes", function(tile) {
@@ -1967,18 +2130,29 @@ registerColorOverlay("shoreRatio", "Net Shore", "Net shore distance (reverseShor
 	// Calculate net shore: reverseShore - shore
 	var netShore = tile.reverseShore - tile.shore;
 
+	// Per-domain net-shore extremes, computed once per planet (was O(N) per tile).
+	var netExt = getOverlayAggregate("shoreRatio", function() {
+		var lMin = Infinity, lMax = -Infinity, lCount = 0;
+		var oMin = Infinity, oMax = -Infinity, oCount = 0;
+		var ts = planet.topology.tiles;
+		for (var i = 0; i < ts.length; i++) {
+			var t = ts[i];
+			if (!t.hasOwnProperty('reverseShore')) continue;
+			var net = t.reverseShore - t.shore;
+			if (t.shore > 0) { if (net < lMin) lMin = net; if (net > lMax) lMax = net; lCount++; }
+			else if (t.shore < 0) { if (net < oMin) oMin = net; if (net > oMax) oMax = net; oCount++; }
+		}
+		return { lMin: lMin, lMax: lMax, lCount: lCount, oMin: oMin, oMax: oMax, oCount: oCount };
+	});
+
 	if (tile.shore > 0) {
 		// Land tiles: red (negative) -> yellow (0) -> dark green (positive)
-		var landNetShores = planet.topology.tiles
-			.filter(t => t.shore > 0 && t.hasOwnProperty('reverseShore'))
-			.map(t => t.reverseShore - t.shore);
-
-		if (landNetShores.length === 0) {
+		if (netExt.lCount === 0) {
 			return new THREE.Color(0x888888);
 		}
 
-		var minLandNet = Math.min(...landNetShores);
-		var maxLandNet = Math.max(...landNetShores);
+		var minLandNet = netExt.lMin;
+		var maxLandNet = netExt.lMax;
 
 		if (netShore < 0) {
 			// Negative: interpolate from yellow (0) to red (most negative)
@@ -1997,16 +2171,12 @@ registerColorOverlay("shoreRatio", "Net Shore", "Net shore distance (reverseShor
 		}
 	} else {
 		// Ocean tiles: dark blue (negative) -> blue (0) -> magenta (positive)
-		var oceanNetShores = planet.topology.tiles
-			.filter(t => t.shore < 0 && t.hasOwnProperty('reverseShore'))
-			.map(t => t.reverseShore - t.shore);
-
-		if (oceanNetShores.length === 0) {
+		if (netExt.oCount === 0) {
 			return new THREE.Color(0x888888);
 		}
 
-		var minOceanNet = Math.min(...oceanNetShores);
-		var maxOceanNet = Math.max(...oceanNetShores);
+		var minOceanNet = netExt.oMin;
+		var maxOceanNet = netExt.oMax;
 
 		if (netShore < 0) {
 			// Negative: interpolate from blue (0) to dark blue (most negative)
@@ -2024,7 +2194,7 @@ registerColorOverlay("shoreRatio", "Net Shore", "Net shore distance (reverseShor
 			return blue.clone().lerp(magenta, normalizedValue);
 		}
 	}
-}, "basic");
+}, "basic", "lazy", "geography");
 
 // Neighbor Shore Comparison color overlay - shows % of neighbors' neighbors (NN) with higher/lower shore values
 registerColorOverlay("neighborShore", "Neighbor Shore Comparison", "For each land/ocean tile, shows % of neighbors' neighbors (NN) with higher/lower shore values using shore distance colors", function(tile) {
@@ -2063,268 +2233,12 @@ registerColorOverlay("neighborShore", "Neighbor Shore Comparison", "For each lan
 		var darkGreen = new THREE.Color(0x006400);    // Dark green
 		return brightYellow.clone().lerp(darkGreen, normalizedValue);
 	}
-}, "basic");
+}, "basic", "lazy", "geography");
 
-// Shore Movement Sensitivity color overlay - shows tiles most affected by hypothetical shore movements
-registerColorOverlay("shoreSensitivity", "Shore Movement Sensitivity", "Highlights tiles most sensitive to shore position changes with distinct land/ocean color schemes", function(tile) {
-	if (!tile.hasOwnProperty('positiveChangeScore') || !tile.hasOwnProperty('negativeChangeScore')) {
-		return new THREE.Color(0x888888); // Gray fallback if sensitivity not calculated
-	}
-
-	var positiveScore = tile.positiveChangeScore;
-	var negativeScore = tile.negativeChangeScore;
-
-	// Determine if tile has high sensitivity in either or both directions
-	var sensitivityThreshold = 0.3; // Tiles with scores above this are considered "high"
-	var highPositive = positiveScore > sensitivityThreshold;
-	var highNegative = negativeScore > sensitivityThreshold;
-	var bothHigh = highPositive && highNegative;
-
-	if (tile.elevation > 0) {
-		// LAND TILES: Light gray baseline with green/red/yellow highlights
-		var lightGray = new THREE.Color(0xC0C0C0); // Light gray
-		var green = new THREE.Color(0x00AA00);     // Green for positive changes
-		var red = new THREE.Color(0xCC0000);       // Red for negative changes
-		var yellow = new THREE.Color(0xFFFF00);    // Yellow for both high
-
-/* 		if (bothHigh) {
-			// High in both directions - lerp toward yellow
-			var intensity = Math.min((positiveScore + negativeScore) / 2, 1);
-			return lightGray.clone().lerp(yellow, intensity * 0.8);
-		} else if (highPositive) {
-			// High positive changes - lerp toward green
-			return lightGray.clone().lerp(green, positiveScore * 0.8);
-		} else if (highNegative) {
-			// High negative changes - lerp toward red
-			return lightGray.clone().lerp(red, negativeScore * 0.8);
-		} else {
-			// Low sensitivity - return light gray baseline
-			return lightGray;
-		} */
-		return new THREE.Color(0xC0C0C0).lerp(green,positiveScore).lerp(red,negativeScore)
-	} else {
-		// OCEAN TILES: Dark gray baseline with cyan/darkblue/magenta highlights
-		var darkGray = new THREE.Color(0x404040);  // Dark gray
-		var cyan = new THREE.Color(0x00CCCC);      // Cyan for positive changes
-		var darkBlue = new THREE.Color(0x000080);  // Dark blue for negative changes
-		var magenta = new THREE.Color(0xFF00FF);   // Magenta for both high
-
-/* 		if (bothHigh) {
-			// High in both directions - lerp toward magenta
-			var intensity = Math.min((positiveScore + negativeScore) / 2, 1);
-			return darkGray.clone().lerp(magenta, intensity * 0.8);
-		} else if (highPositive) {
-			// High positive changes - lerp toward cyan
-			return darkGray.clone().lerp(cyan, positiveScore * 0.8);
-		} else if (highNegative) {
-			// High negative changes - lerp toward dark blue
-			return darkGray.clone().lerp(darkBlue, negativeScore * 0.8);
-		} else {
-			// Low sensitivity - return dark gray baseline
-			return darkGray;
-		} */
-		return new THREE.Color(0x404040).lerp(cyan,positiveScore).lerp(magenta,negativeScore)
-	}
-}, "basic");
-
-// Generate dynamic shore overlays based on shoreN arrays
-function generateDynamicShoreOverlays(tiles) {
-	console.log("Generating dynamic shore overlays...");
-
-	// Collect all unique N values from shoreN arrays
-	var uniqueNValues = new Set();
-	for (var i = 0; i < tiles.length; i++) {
-		var tile = tiles[i];
-		if (tile.shoreN && Array.isArray(tile.shoreN)) {
-			for (var j = 0; j < tile.shoreN.length; j++) {
-				uniqueNValues.add(tile.shoreN[j][0]);
-			}
-		}
-	}
-
-	// Convert set to sorted array
-	var nValues = Array.from(uniqueNValues).sort(function(a, b) { return a - b; });
-	console.log("Found N values:", nValues);
-
-	// Register a color overlay for each N value
-	for (var i = 0; i < nValues.length; i++) {
-		var N = nValues[i];
-		var overlayId = N >= 0 ? "shoreN" + N : "shoreNMinus" + Math.abs(N);
-		var overlayName = "Shore N=" + N + " (Dynamic)";
-		var overlayDescription = "Shows recalculated shore values when shore moves " + (N > 0 ? "OUT" : "IN") + " by " + Math.abs(N) + " tiles";
-
-		// Create closure to capture N value and pre-calculate min/max for performance
-		(function(capturedN) {
-			// Pre-calculate min and max values for this N to avoid recalculating on every tile render
-			var valuesForN = [];
-			for (var t = 0; t < tiles.length; t++) {
-				var tile = tiles[t];
-				if (tile.shoreN && Array.isArray(tile.shoreN)) {
-					for (var j = 0; j < tile.shoreN.length; j++) {
-						if (tile.shoreN[j][0] === capturedN) {
-							valuesForN.push(tile.shoreN[j][1]);
-							break;
-						}
-					}
-				}
-			}
-
-			var maxNegative = Math.min(...valuesForN.filter(v => v < 0));
-			var maxPositive = Math.max(...valuesForN.filter(v => v > 0));
-
-			registerColorOverlay(overlayId, overlayName, overlayDescription, function(tile) {
-				// Find the shore value for this N (fast lookup)
-				var shoreValue = null;
-				if (tile.shoreN && Array.isArray(tile.shoreN)) {
-					for (var j = 0; j < tile.shoreN.length; j++) {
-						if (tile.shoreN[j][0] === capturedN) {
-							shoreValue = tile.shoreN[j][1];
-							break;
-						}
-					}
-				}
-
-				if (shoreValue === null) {
-					return new THREE.Color(0x888888); // Gray fallback if value not found
-				}
-
-				if (shoreValue === 0) {
-					return new THREE.Color(0x888888); // Gray for uncategorized tiles
-				}
-
-				if (shoreValue < 0) {
-					// Ocean tiles: negative values
-					// Light blue (-1) to dark blue (very negative)
-					var normalizedValue = Math.abs(shoreValue) / Math.abs(maxNegative);
-
-					// Lerp from light blue to dark blue
-					var lightBlue = new THREE.Color(0x87CEEB); // Light blue
-					var darkBlue = new THREE.Color(0x000080);  // Dark blue
-					return lightBlue.clone().lerp(darkBlue, normalizedValue);
-				} else {
-					// Land tiles: positive values
-					// Bright yellow (1) to dark green (very positive)
-					var normalizedValue = shoreValue / maxPositive;
-
-					// Lerp from bright yellow to dark green
-					var brightYellow = new THREE.Color(0xFFFF00); // Bright yellow
-					var darkGreen = new THREE.Color(0x006400);    // Dark green
-					return brightYellow.clone().lerp(darkGreen, normalizedValue);
-				}
-			}, "basic");
-		})(N);
-	}
-
-	console.log("Generated " + nValues.length + " dynamic shore overlays");
-
-	// Pre-calculate percentile values for shore N ratio overlay
-	console.log("Pre-calculating shore N ratio values...");
-
-	// First pass: collect all min/max differences
-	var landDiffs = [];
-	var oceanDiffs = [];
-
-	for (var i = 0; i < tiles.length; i++) {
-		var t = tiles[i];
-		if (t.shoreN && Array.isArray(t.shoreN) && t.shoreN.length >= 2) {
-			var tShoreNValues = t.shoreN.map(function(entry) { return entry[1]; });
-			var tOriginalShore = t.shore || 0;
-			var tMinDiff = Math.min(...tShoreNValues) - tOriginalShore;
-			var tMaxDiff = Math.max(...tShoreNValues) - tOriginalShore;
-
-			if (t.elevation > 0) {
-				landDiffs.push({tile: t, minDiff: tMinDiff, maxDiff: tMaxDiff});
-			} else {
-				oceanDiffs.push({tile: t, minDiff: tMinDiff, maxDiff: tMaxDiff});
-			}
-		}
-	}
-
-	// Sort arrays for percentile calculation
-	var landMinDiffs = landDiffs.map(d => d.minDiff).sort((a, b) => a - b);
-	var landMaxDiffs = landDiffs.map(d => d.maxDiff).sort((a, b) => a - b);
-	var oceanMinDiffs = oceanDiffs.map(d => d.minDiff).sort((a, b) => a - b);
-	var oceanMaxDiffs = oceanDiffs.map(d => d.maxDiff).sort((a, b) => a - b);
-
-	// Second pass: calculate and store percentiles for each tile
-	landDiffs.forEach(function(entry) {
-		var minPercentile = landMinDiffs.findIndex(v => v >= entry.minDiff) / landMinDiffs.length;
-		var maxPercentile = landMaxDiffs.findIndex(v => v >= entry.maxDiff) / landMaxDiffs.length;
-		if (minPercentile < 0) minPercentile = 1;
-		if (maxPercentile < 0) maxPercentile = 1;
-
-		// Use higher percentile and boost by 0.05 (max 1)
-		var boostedPercentile = Math.min(1, Math.max(minPercentile, maxPercentile) + 0.05);
-		entry.tile.shoreNRatioValue = boostedPercentile;
-	});
-
-	oceanDiffs.forEach(function(entry) {
-		var minPercentile = oceanMinDiffs.findIndex(v => v >= entry.minDiff) / oceanMinDiffs.length;
-		var maxPercentile = oceanMaxDiffs.findIndex(v => v >= entry.maxDiff) / oceanMaxDiffs.length;
-		if (minPercentile < 0) minPercentile = 1;
-		if (maxPercentile < 0) maxPercentile = 1;
-
-		// Use higher percentile and boost by 0.05 (max 1)
-		var boostedPercentile = Math.min(1, Math.max(minPercentile, maxPercentile) + 0.05);
-		entry.tile.shoreNRatioValue = boostedPercentile;
-	});
-
-	// Add shore N ratio overlay with pre-calculated values
-	registerColorOverlay("shoreNRatio", "Shore N Range Ratio", "Shows percentile-based changes in shoreN values using single-direction lerp with boosted percentiles", function(tile) {
-		if (typeof tile.shoreNRatioValue === 'undefined') {
-			return new THREE.Color(0x888888); // Gray for tiles without calculated values
-		}
-
-		var lerpAmount = tile.shoreNRatioValue;
-
-		if (tile.elevation > 0) {
-			// LAND TILES: Green to red lerp
-			var green = new THREE.Color(0x00AA00);
-			var red = new THREE.Color(0xFF0000);
-			return green.clone().lerp(red, lerpAmount);
-		} else {
-			// OCEAN TILES: Blue to cyan lerp
-			var blue = new THREE.Color(0x0000AA);
-			var cyan = new THREE.Color(0x00FFFF);
-			return blue.clone().lerp(cyan, lerpAmount);
-		}
-	}, "basic");
-
-	// Refresh the UI dropdown to include the new overlays
-	if (typeof populateColorOverlayDropdown === 'function') {
-		populateColorOverlayDropdown();
-		console.log("Color overlay dropdown refreshed with dynamic overlays");
-	}
+function generateDynamicShoreOverlays(tiles) { // legacy stub kept so existing call sites continue to work
+	if (typeof populateColorOverlayDropdown === 'function') populateColorOverlayDropdown();
 }
 
-// Land Regions color overlay - shows K-means clustered land regions
-registerColorOverlay("landRegions", "Land Regions", "Shows clustered land regions in different colors", function(tile) {
-	// Ocean tiles get flat blue-gray
-	if (tile.elevation <= 0) {
-		return new THREE.Color(0x6699CC);
-	}
-
-	// Land tiles get colored by their region using graph coloring
-	if (tile.landRegion && tile.landRegion > 0) {
-		// Use graph-based color if available
-		if (tile.landRegionGraphColor) {
-			return new THREE.Color(tile.landRegionGraphColor);
-		}
-
-		// Fallback to original hue-based coloring
-		var hue = ((tile.landRegion - 1) * 137.5) % 360; // Golden angle for good distribution
-		var saturation = 0.7;
-		var lightness = 0.6;
-
-		// Convert HSL to RGB
-		var color = new THREE.Color();
-		color.setHSL(hue / 360, saturation, lightness);
-		return color;
-	}
-
-	// Fallback for land tiles without region assignment
-	return new THREE.Color(0x888888); // Gray for unassigned land
-}, "basic");
 
 // Watershed Regions color overlay - shows watersheds after coastal absorption
 registerColorOverlay("watershedRegions", "Watershed Regions", "Shows watersheds with coastal absorption based on O:L ratios", function(tile) {
@@ -2361,7 +2275,7 @@ registerColorOverlay("watershedRegions", "Watershed Regions", "Shows watersheds 
 	// Default color for land tiles without watershed assignment
 	console.warn("Land tile without watershed assignment found");
 	return new THREE.Color(0x888888);
-}, "basic");
+}, "basic", "lazy", "geography");
 
 // Color palette arrays for different region types
 var WATERSHED_COLORS = ["#606c38","#283618","#fefae0","#dda15e","#bc6c25"];
@@ -2570,311 +2484,37 @@ function applyGraphColoring(regions, getAdjacencies, colorProperty, regionType) 
 	var avgUsage = usageCounts.reduce(function(a, b) { return a + b; }, 0) / usageCounts.length;
 }
 
-// Path Density color overlay - shows density of paths between boundary tiles within land/sea bodies
-registerColorOverlay("pathDensity", "Path Density", "Shows density of paths between boundary tiles within land/sea bodies using bright colors", function(tile) {
-	// Check if path density calculation is enabled
-	if (typeof enablePathDensityCalculation !== 'undefined' && !enablePathDensityCalculation) {
-		return new THREE.Color(0x666666); // Dark gray when disabled
+
+// Thickness Field visualization - shows the granulometric thickness used in Feature E detection
+registerColorOverlay("thickness", "Granulometric Thickness", "Width-based thickness measure: pale (thin features) to vivid (thick/wide features).", function(tile) {
+	if (!tile.hasOwnProperty('_thick')) {
+		return new THREE.Color(0x888888); // Gray fallback if thickness not calculated
 	}
 
-	if (!tile.hasOwnProperty('pathDensity')) {
-		return new THREE.Color(0x888888); // Gray fallback if not pre-calculated
-	}
+	// Get the thickness value and normalize it
+	var thickness = tile._thick || 0;
+	var maxThickness = 8; // matches CONFIG.thicknessMax in feature-detection.js
 
-	if (tile.pathDensity === 0) {
-		// Show zero-density tiles in base terrain colors
-		if (tile.elevation >= 0) {
-			// Land: use minimum land color (bright orange)
-			return new THREE.Color(0xFF8000);  // Bright orange
-		} else {
-			// Ocean: use minimum ocean color (bright cyan)
-			return new THREE.Color(0x00FFFF);  // Bright cyan
-		}
-	}
+	// Normalize to 0-1 range
+	var normalized = Math.min(thickness / maxThickness, 1.0);
 
-	// Use the same color scheme as reverseShore
-	// Land tiles get positive values, ocean tiles get negative values
-	var isLand = tile.elevation >= 0;
-	var densityValue = isLand ? tile.pathDensity : -tile.pathDensity;
-
-	if (densityValue < 0) {
-		// Ocean tiles: negative values
-		// Bright cyan (low density) to deep blue (high density) - more vibrant
-		var allOceanDensities = planet.topology.tiles
-			.filter(t => t.elevation < 0 && t.hasOwnProperty('pathDensity'))
-			.map(t => t.pathDensity);
-		if (allOceanDensities.length === 0) return new THREE.Color(0x888888);
-
-		var maxOceanDensity = Math.max(...allOceanDensities);
-		if (maxOceanDensity === 0) return new THREE.Color(0x888888);
-
-		var normalizedValue = tile.pathDensity / maxOceanDensity;
-		var brightCyan = new THREE.Color(0x00FFFF);   // Bright cyan
-		var deepBlue = new THREE.Color(0x000080);     // Deep blue
-		return brightCyan.clone().lerp(deepBlue, normalizedValue);
+	// Separate color schemes for ocean and land
+	if (tile.elevation <= 0) {
+		// Ocean: pale cyan (thin) to vivid blue (thick)
+		var paleCyan = new THREE.Color(0xB0E0E6);   // Pale cyan
+		var vividBlue = new THREE.Color(0x0047AB);  // Vivid blue
+		return paleCyan.clone().lerp(vividBlue, normalized);
 	} else {
-		// Land tiles: positive values
-		// Bright orange (low density) to deep red (high density) - more vibrant
-		var allLandDensities = planet.topology.tiles
-			.filter(t => t.elevation >= 0 && t.hasOwnProperty('pathDensity'))
-			.map(t => t.pathDensity);
-		if (allLandDensities.length === 0) return new THREE.Color(0x888888);
-
-		var maxLandDensity = Math.max(...allLandDensities);
-		if (maxLandDensity === 0) return new THREE.Color(0x888888);
-
-		var normalizedValue = tile.pathDensity / maxLandDensity;
-		var brightOrange = new THREE.Color(0xFF8000);  // Bright orange
-		var deepRed = new THREE.Color(0x800000);       // Deep red
-		return brightOrange.clone().lerp(deepRed, normalizedValue);
+		// Land: pale yellow (thin) to vivid green (thick)
+		var paleYellow = new THREE.Color(0xFFFFCC); // Pale yellow
+		var vividGreen = new THREE.Color(0x228B22); // Vivid green
+		return paleYellow.clone().lerp(vividGreen, normalized);
 	}
-}, "basic", "precompute");
+}, "basic", "lazy", "geography");
 
-// Function to calculate path density for all tiles - incremental version
-function calculatePathDensityIncremental(action) {
-	// Only prevent if starting fresh calculation (no existing state)
-	if (window.pathDensityCalculating && !action.pathDensityState) {
-		console.log("Path density calculation already in progress, skipping");
-		return;
-	}
-	if (!action.pathDensityState) {
-		window.pathDensityCalculating = true;
-	}
 
-	// Only show debug info on first run
-	if (!action.pathDensityState) {
-		ctime("calculatePathDensity");
-
-		console.log("=== Path Density Calculation Starting ===");
-		console.log(`Total tiles: ${planet.topology.tiles.length}`);
-		console.log(`Total bodies: ${planet.topology.bodies.length}`);
-
-		// Count city tiles for debugging
-		var cityCount = 0;
-		for (var i = 0; i < planet.topology.tiles.length; i++) {
-			if (planet.topology.tiles[i].isCity === true) {
-				cityCount++;
-			}
-		}
-		console.log(`Found ${cityCount} city locations`);
-
-		// Initialize path density for all tiles
-		for (var i = 0; i < planet.topology.tiles.length; i++) {
-			planet.topology.tiles[i].pathDensity = 0;
-		}
-	}
-
-	// Collect all city locations globally (land cities only)
-	var allCities = [];
-	if (!action.pathDensityState) {
-		for (var i = 0; i < planet.topology.tiles.length; i++) {
-			var tile = planet.topology.tiles[i];
-			if (tile.isCity === true && tile.elevation >= 0) {
-				allCities.push(tile);
-			}
-		}
-
-		// Limit to prevent computational explosion
-		if (allCities.length > 50) {
-			var step = Math.floor(allCities.length / 50);
-			var sampledCities = [];
-			for (var i = 0; i < allCities.length; i += step) {
-				sampledCities.push(allCities[i]);
-			}
-			allCities = sampledCities;
-		}
-
-		console.log(`Found ${allCities.length} land cities for global trade network`);
-	}
-
-	// State variables for incremental processing
-	if (!action.pathDensityState) {
-		action.pathDensityState = {
-			currentPairIndex: 0,
-			cities: allCities,
-			totalPairs: (allCities.length * (allCities.length - 1)) / 2,
-			processedPairs: 0
-		};
-	}
-
-	var state = action.pathDensityState;
-	var batchSize = 5; // Smaller batch size for global pathfinding
-
-	// Process all city-to-city pairs globally
-	var processedInBatch = 0;
-	for (var i = 0; i < state.cities.length && processedInBatch < batchSize; i++) {
-		for (var j = i + 1; j < state.cities.length && processedInBatch < batchSize; j++) {
-			// Skip pairs we've already processed
-			var pairIndex = i * (state.cities.length - 1) - (i * (i - 1)) / 2 + (j - i - 1);
-			if (pairIndex < state.currentPairIndex) continue;
-
-			var startTile = state.cities[i];
-			var endTile = state.cities[j];
-
-			// Use A* pathfinding for global city-to-city routes
-			var path = aStarPathfinding(startTile, endTile, planet);
-			if (path && path.length > 0) {
-				// Count usage for each tile in the path
-				for (var k = 0; k < path.length; k++) {
-					path[k].pathDensity += 1;
-				}
-			}
-
-			state.currentPairIndex++;
-			state.processedPairs++;
-			processedInBatch++;
-
-			// Progress feedback
-			if (state.processedPairs % 50 === 0) {
-				console.log(`Computed ${state.processedPairs}/${state.totalPairs} global city trade routes`);
-			}
-		}
-	}
-
-	// Check if all pairs are complete
-	if (state.currentPairIndex >= state.totalPairs) {
-		// All city-to-city paths computed
-		console.log("Global city trade network complete");
-	} else {
-		// Yield control after each batch
-		var overallProgress = state.currentPairIndex / state.totalPairs;
-		action.loop(overallProgress);
-		return; // Exit to yield control
-	}
-
-	// Final debug summary
-	var totalDensity = 0;
-	var nonZeroTiles = 0;
-	for (var i = 0; i < planet.topology.tiles.length; i++) {
-		if (planet.topology.tiles[i].pathDensity > 0) {
-			totalDensity += planet.topology.tiles[i].pathDensity;
-			nonZeroTiles++;
-		}
-	}
-
-	console.log("=== Path Density Calculation Complete ===");
-	console.log(`Total density: ${totalDensity}`);
-	console.log(`Non-zero tiles: ${nonZeroTiles} out of ${planet.topology.tiles.length}`);
-	console.log(`Max density: ${Math.max(...planet.topology.tiles.map(t => t.pathDensity || 0))}`);
-
-	// Cleanup and finish
-	delete action.pathDensityState;
-	window.pathDensityCalculating = false;
-	ctimeEnd("calculatePathDensity");
-}
-
-// Legacy function for backward compatibility
-function calculatePathDensity() {
-	// Create a minimal action object for the incremental version
-	var mockAction = {
-		loop: function() {} // No-op for synchronous version
-	};
-	calculatePathDensityIncremental(mockAction);
-}
-
-// Resource overlay color functions
-function calculateCornColor(tile) {
-	var terrainColor = calculateTerrainColor(tile);
-	var magenta = new THREE.Color(0xFF00FF);
-	var cornValue = Math.min(1, Math.max(0, tile.corn || 0));
-	return terrainColor.clone().lerp(magenta, cornValue);
-}
-
-function calculateWheatColor(tile) {
-	var terrainColor = calculateTerrainColor(tile);
-	var magenta = new THREE.Color(0xFF00FF);
-	var wheatValue = Math.min(1, Math.max(0, tile.wheat || 0));
-	return terrainColor.clone().lerp(magenta, wheatValue);
-}
-
-function calculateRiceColor(tile) {
-	var terrainColor = calculateTerrainColor(tile);
-	var magenta = new THREE.Color(0xFF00FF);
-	var riceValue = Math.min(1, Math.max(0, tile.rice || 0));
-	return terrainColor.clone().lerp(magenta, riceValue);
-}
-
-function calculateFishColor(tile) {
-	var terrainColor = calculateTerrainColor(tile);
-	var magenta = new THREE.Color(0xFF00FF);
-	var fishValue = Math.min(1, Math.max(0, tile.fish || 0));
-	return terrainColor.clone().lerp(magenta, fishValue);
-}
-
-function calculatePastureColor(tile) {
-	var terrainColor = calculateTerrainColor(tile);
-	var magenta = new THREE.Color(0xFF00FF);
-	var pastureValue = Math.min(1, Math.max(0, tile.pasture || 0));
-	return terrainColor.clone().lerp(magenta, pastureValue);
-}
-
-function calculateCaloriesColor(tile) {
-	// Find the maximum calories value across all tiles for normalization
-	var maxCalories = 0;
-	for (var i = 0; i < planet.topology.tiles.length; i++) {
-		var tileCalories = planet.topology.tiles[i].calories || 0;
-		if (tileCalories > maxCalories) {
-			maxCalories = tileCalories;
-		}
-	}
-
-	// Normalize the current tile's calories value (0-1)
-	var normalizedCalories = maxCalories > 0 ? (tile.calories || 0) / maxCalories : 0;
-	normalizedCalories = Math.min(1, Math.max(0, normalizedCalories));
-
-	// Lerp terrain color toward magenta based on normalized calories
-	var terrainColor = calculateTerrainColor(tile);
-	var magenta = new THREE.Color(0xFF00FF);
-	return terrainColor.clone().lerp(magenta, normalizedCalories);
-}
-
-function calculateUpstreamCaloriesColor(tile) {
-	// Find the maximum city priority score across all tiles for normalization
-	var maxCityPriorityScore = 0;
-	for (var i = 0; i < planet.topology.tiles.length; i++) {
-		var tilePriorityScore = planet.topology.tiles[i].cityPriorityScore || 0;
-		if (tilePriorityScore > maxCityPriorityScore) {
-			maxCityPriorityScore = tilePriorityScore;
-		}
-	}
-
-	// Normalize the current tile's city priority score (0-1)
-	var normalizedPriorityScore = maxCityPriorityScore > 0 ? (tile.cityPriorityScore || 0) / maxCityPriorityScore : 0;
-	normalizedPriorityScore = Math.min(1, Math.max(0, normalizedPriorityScore));
-
-	// Lerp terrain color toward magenta based on normalized city priority score
-	var terrainColor = calculateTerrainColor(tile);
-	var magenta = new THREE.Color(0xFF00FF);
-	return terrainColor.clone().lerp(magenta, normalizedPriorityScore);
-}
-
-// Register resource overlays
-registerColorOverlay("corn", "Corn Resources", "Terrain colored toward magenta based on corn resource values", calculateCornColor, "lambert");
-registerColorOverlay("wheat", "Wheat Resources", "Terrain colored toward magenta based on wheat resource values", calculateWheatColor, "lambert");
-registerColorOverlay("rice", "Rice Resources", "Terrain colored toward magenta based on rice resource values", calculateRiceColor, "lambert");
-registerColorOverlay("fish", "Fish Resources", "Terrain colored toward magenta based on fish resource values", calculateFishColor, "lambert");
-registerColorOverlay("pasture", "Pasture Resources", "Terrain colored toward magenta based on pasture resource values", calculatePastureColor, "lambert");
-registerColorOverlay("calories", "Calories (Normalized)", "Terrain colored toward magenta based on normalized calories values (max = 1)", calculateCaloriesColor, "lambert");
-registerColorOverlay("upstreamCalories", "City Priority Score", "Terrain colored toward magenta based on city priority score (calorie flux + bonuses)", calculateUpstreamCaloriesColor, "lambert");
-
-// ============================================================================
-// GLOBAL STRIPE SYSTEM FOR RESOURCES
-// ============================================================================
-
-// Configurable stripe system for displaying resource overlays with horizontal bands
-var stripeConfig = {
-	coverage: 0.5,        // 50% of tile area covered by stripes (0.0 to 1.0)
-	stripeCount: 7,       // Number of stripes per average tile
-	colors: {
-		oil: '#000000',   // Black stripes for oil
-		gold: '#FFD700',  // Gold stripes for gold
-		iron: '#8B4513',  // Brown stripes for iron
-		coal: '#2F2F2F',  // Dark gray stripes for coal
-		copper: '#B87333', // Copper color stripes
-		silver: '#C0C0C0', // Silver stripes
-		uranium: '#00FF00' // Green stripes for uranium
-	}
-};
+// NOTE: Resource & Food overlays (crops, calories, minerals, strategic resources,
+// stripeConfig) were extracted to resource-overlays.js (loaded after this file).
 
 // Convert Cartesian coordinates to spherical coordinates
 function cartesianToSpherical(position) {
@@ -2898,102 +2538,5 @@ function cartesianToSpherical(position) {
 	return { r: r, theta: theta, phi: phi };
 }
 
-// Calculate if a position is within a stripe based on global coordinates
-function isPositionInStripe(position, stripeConfig) {
-	var spherical = cartesianToSpherical(position);
-
-	// Use latitude (phi) for horizontal stripes around the planet
-	// phi ranges from 0 (north pole) to π (south pole)
-	var normalizedLatitude = spherical.phi / Math.PI; // 0 to 1 from north to south
-
-	// Calculate stripe boundaries
-	// Each stripe covers (coverage / stripeCount) of the total latitude range
-	var stripeWidth = stripeConfig.coverage / stripeConfig.stripeCount;
-	var totalStripedArea = stripeConfig.coverage;
-	var nonStripedArea = 1.0 - totalStripedArea;
-	var stripeStart = nonStripedArea / 2.0; // Center the striped area
-
-	// Check if we're within the overall striped region
-	if (normalizedLatitude < stripeStart || normalizedLatitude > (stripeStart + totalStripedArea)) {
-		return false;
-	}
-
-	// Calculate position within the striped area
-	var positionInStripedArea = (normalizedLatitude - stripeStart) / totalStripedArea;
-
-	// Determine which stripe band we're in
-	var scaledPosition = positionInStripedArea * stripeConfig.stripeCount;
-	var stripeIndex = Math.floor(scaledPosition);
-
-	// Alternate between stripe and non-stripe bands
-	return (stripeIndex % 2) === 0;
-}
-
-// Generic resource solid color calculation function
-function calculateResourceStripesColor(tile, resourceType) {
-	var resourceValue = tile[resourceType] || 0;
-
-	// Only show resource color if the resource is present
-	if (resourceValue <= 0) {
-		return calculateTerrainColor(tile);
-	}
-
-	// Return solid color for this resource type
-	var resourceColor = stripeConfig.colors[resourceType] || '#FF00FF'; // Fallback to magenta
-	return new THREE.Color(resourceColor);
-}
-
-// Specific resource stripe functions
-function calculateOilStripesColor(tile) {
-	return calculateResourceStripesColor(tile, 'oil');
-}
-
-function calculateGoldStripesColor(tile) {
-	return calculateResourceStripesColor(tile, 'gold');
-}
-
-function calculateIronStripesColor(tile) {
-	return calculateResourceStripesColor(tile, 'iron');
-}
-
-function calculateCoalStripesColor(tile) {
-	return calculateResourceStripesColor(tile, 'coal');
-}
-
-function calculateCopperStripesColor(tile) {
-	return calculateResourceStripesColor(tile, 'copper');
-}
-
-function calculateSilverStripesColor(tile) {
-	return calculateResourceStripesColor(tile, 'silver');
-}
-
-function calculateUraniumStripesColor(tile) {
-	return calculateResourceStripesColor(tile, 'uranium');
-}
-
-// Function to update stripe configuration at runtime
-function updateStripeConfig(newConfig) {
-	if (newConfig.coverage !== undefined) stripeConfig.coverage = Math.max(0.0, Math.min(1.0, newConfig.coverage));
-	if (newConfig.stripeCount !== undefined) stripeConfig.stripeCount = Math.max(1, Math.floor(newConfig.stripeCount));
-	if (newConfig.colors !== undefined) {
-		for (var resource in newConfig.colors) {
-			stripeConfig.colors[resource] = newConfig.colors[resource];
-		}
-	}
-
-	// If planet is loaded, trigger a re-render to show changes
-	if (planet && planet.renderData && planet.renderData.surface) {
-		// The active overlay will automatically pick up the new config on next render
-		console.log("Stripe configuration updated:", stripeConfig);
-	}
-}
-
-// Register resource overlays in the color system
-registerColorOverlay("oilStripes", "Oil Resources", "Shows oil resources with solid black coloring", calculateOilStripesColor, "lambert");
-registerColorOverlay("goldStripes", "Gold Resources", "Shows gold resources with solid gold coloring", calculateGoldStripesColor, "lambert");
-registerColorOverlay("ironStripes", "Iron Resources", "Shows iron resources with solid brown coloring", calculateIronStripesColor, "lambert");
-registerColorOverlay("coalStripes", "Coal Resources", "Shows coal resources with solid dark gray coloring", calculateCoalStripesColor, "lambert");
-registerColorOverlay("copperStripes", "Copper Resources", "Shows copper resources with solid copper coloring", calculateCopperStripesColor, "lambert");
-registerColorOverlay("silverStripes", "Silver Resources", "Shows silver resources with solid silver coloring", calculateSilverStripesColor, "lambert");
-registerColorOverlay("uraniumStripes", "Uranium Resources", "Shows uranium resources with solid green coloring", calculateUraniumStripesColor, "lambert");
+// (Resource & Food overlay color functions and registrations now live in
+// resource-overlays.js, loaded immediately after this file.)

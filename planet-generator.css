@@ -1,3 +1,22 @@
+/* ============================================================================
+   PlanGen UI theme — modern dark "glass" styling.
+   Structural rules (positions, widths, the absolute-positioned modal headers)
+   are preserved; the look (panels, buttons, sliders, inputs) is modernised.
+   ============================================================================ */
+
+:root
+{
+	--ui-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+	--accent: #4c8dff;
+	--accent-strong: #2f6df0;
+	--panel-bg: rgba(17, 24, 39, 0.82);
+	--panel-border: rgba(255, 255, 255, 0.12);
+	--control-bg: rgba(255, 255, 255, 0.06);
+	--control-bg-hover: rgba(255, 255, 255, 0.12);
+	--text: #e8edf5;
+	--text-dim: rgba(232, 237, 245, 0.65);
+}
+
 *
 {
 	margin: 0;
@@ -9,7 +28,8 @@ html, body
 {
 	width: 100%;
 	height: 100%;
-	font-family: serif;
+	font-family: var(--ui-font);
+	color: var(--text);
 }
 
 #viewportFrame
@@ -28,130 +48,186 @@ html, body
 
 div.panel
 {
-	border: 1px solid #FFFFFF;
-	border-radius: 0.5em;
-	background-color: rgba(32, 64, 128, 0.75);
-	box-shadow: inset 0 0 2px 1px rgba(0, 0, 0, 1), 0 0 2px 2px rgba(255, 255, 255, 0.25);
-	padding: 0.5em;
-	color: rgba(255, 255, 255, 1);
-	text-shadow: 1px 1px 2px rgba(0, 0, 0, 1), 1px 1px 3px rgba(0, 0, 0, 1);
+	border: 1px solid var(--panel-border);
+	border-radius: 0.85em;
+	background-color: var(--panel-bg);
+	-webkit-backdrop-filter: blur(14px) saturate(140%);
+	backdrop-filter: blur(14px) saturate(140%);
+	box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+	padding: 0.85em;
+	color: var(--text);
+	text-shadow: none;
+}
+
+div.panel h2,
+div.panel h3
+{
+	font-weight: 600;
+	letter-spacing: 0.01em;
 }
 
 button
 {
 	text-align: center;
-	border: none;
-	border-radius: 0.25em;
-	box-shadow: inset 1px 1px 1px 0 rgba(255, 255, 255, 0.5), inset -1px -1px 1px 0 rgba(0, 0, 0, 0.5);
-	background-color: rgba(16, 32, 64, 1);
-	color: #FFFFFF;
-	padding: 0.25em 0.25em;
-	margin: 0.25em;
+	border: 1px solid var(--panel-border);
+	border-radius: 0.45em;
+	box-shadow: none;
+	background-color: var(--control-bg);
+	color: var(--text);
+	padding: 0.4em 0.6em;
+	margin: 0.2em;
 	font-size: 80%;
-	font-family: sans-serif;
+	font-family: var(--ui-font);
+	cursor: pointer;
+	transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
 }
 
 button.toggled
 {
-	background-color: rgba(12, 24, 48, 1);
+	background-color: var(--accent-strong);
+	border-color: var(--accent);
+	color: #ffffff;
+	box-shadow: 0 0 0 1px rgba(76, 141, 255, 0.4), 0 2px 8px rgba(47, 109, 240, 0.4);
 }
 
 button:hover
 {
-	background-color: rgba(20, 40, 80, 1);
+	background-color: var(--control-bg-hover);
+	border-color: rgba(255, 255, 255, 0.22);
+}
+
+button.toggled:hover
+{
+	background-color: var(--accent);
 }
 
 button:active
 {
-	background-color: rgba(12, 24, 48, 1);
+	background-color: rgba(255, 255, 255, 0.04);
+	transform: translateY(1px);
 }
 
 button:focus
 {
 	outline: none;
-	box-shadow: inset 1px 1px 1px 0 rgba(255, 255, 255, 0.5), inset -1px -1px 1px 0 rgba(0, 0, 0, 0.5), 0 0 3px 3px rgba(255, 255, 255, 0.25);
+	box-shadow: 0 0 0 2px rgba(76, 141, 255, 0.55);
 }
 
 div.toggleButtonList
 {
+	display: flex;
 	margin: 0.5em 0;
+	gap: 1px;
 }
 
 div.toggleButtonList>button
 {
+	flex: 1;
 	border-radius: 0;
-	box-shadow: inset 2px 3px 1px -2px rgba(255, 255, 255, 0.5), inset -2px -3px 1px -2px rgba(0, 0, 0, 0.5);
-	height: calc(1.5em / 0.8);
+	box-shadow: none;
+	border-left-width: 0;
+	height: calc(1.6em / 0.8);
 	margin: 0;
 }
 
 div.toggleButtonList>button:focus
 {
-	box-shadow: inset 2px 3px 1px -2px rgba(255, 255, 255, 0.5), inset -2px -3px 1px -2px rgba(0, 0, 0, 0.5), 0 0 3px 3px rgba(255, 255, 255, 0.25);
+	box-shadow: 0 0 0 2px rgba(76, 141, 255, 0.55);
+	z-index: 1;
 }
 
 div.toggleButtonList>button:first-child
 {
-	border-top-left-radius: 0.25em;
-	border-bottom-left-radius: 0.25em;
-	box-shadow: inset 1px 1px 1px 0 rgba(255, 255, 255, 0.5), inset -2px -3px 1px -2px rgba(0, 0, 0, 0.5);
-}
-
-div.toggleButtonList>button:first-child:focus
-{
-	box-shadow: inset 1px 1px 1px 0 rgba(255, 255, 255, 0.5), inset -2px -3px 1px -2px rgba(0, 0, 0, 0.5), 0 0 3px 3px rgba(255, 255, 255, 0.25);
+	border-left-width: 1px;
+	border-top-left-radius: 0.45em;
+	border-bottom-left-radius: 0.45em;
 }
 
 div.toggleButtonList>button:last-child
 {
-	border-top-right-radius: 0.25em;
-	border-bottom-right-radius: 0.25em;
-	box-shadow: inset 2px 3px 1px -2px rgba(255, 255, 255, 0.5), inset -1px -1px 1px 0 rgba(0, 0, 0, 0.5);
-}
-
-div.toggleButtonList>button:last-child:focus
-{
-	box-shadow: inset 2px 3px 1px -2px rgba(255, 255, 255, 0.5), inset -1px -1px 1px 0 rgba(0, 0, 0, 0.5), 0 0 3px 3px rgba(255, 255, 255, 0.25);
+	border-top-right-radius: 0.45em;
+	border-bottom-right-radius: 0.45em;
 }
 
 div.toggleButtonList>button:first-child:last-child
 {
-	border-radius: 0.25em;
-	box-shadow: inset 1px 1px 1px 0 rgba(255, 255, 255, 0.5), inset -1px -1px 1px 0 rgba(0, 0, 0, 0.5);
+	border-radius: 0.45em;
 }
 
-div.toggleButtonList>button:first-child:last-child:focus
-{
-	box-shadow: inset 1px 1px 1px 0 rgba(255, 255, 255, 0.5), inset -1px -1px 1px 0 rgba(0, 0, 0, 0.5), 0 0 3px 3px rgba(255, 255, 255, 0.25);
-}
-
+/* Direct-child headers in the modal/legacy panels are absolutely positioned. */
 div.panel>h2
 {
 	position: absolute;
 	left: 0.5em;
 	right: 0.5em;
 	height: 1.25em;
-	border-bottom: 1px solid #89B;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.18);
 	font-size: 100%;
-	font-weight: normal;
+	font-weight: 600;
 }
+
+select
+{
+	font-family: var(--ui-font);
+	-webkit-appearance: none;
+	appearance: none;
+	background-color: var(--control-bg);
+	color: var(--text);
+	border: 1px solid var(--panel-border);
+	border-radius: 0.45em;
+	background-image: linear-gradient(45deg, transparent 50%, var(--text-dim) 50%), linear-gradient(135deg, var(--text-dim) 50%, transparent 50%);
+	background-position: calc(100% - 1.1em) center, calc(100% - 0.65em) center;
+	background-size: 0.45em 0.45em, 0.45em 0.45em;
+	background-repeat: no-repeat;
+}
+
+select:focus
+{
+	outline: none;
+	border-color: var(--accent);
+	box-shadow: 0 0 0 2px rgba(76, 141, 255, 0.4);
+}
+
+input[type=text]
+{
+	font-family: var(--ui-font);
+}
+
+input[type=color]
+{
+	-webkit-appearance: none;
+	appearance: none;
+	border: 1px solid var(--panel-border);
+	border-radius: 0.4em;
+	padding: 0;
+	background: none;
+	cursor: pointer;
+}
+input[type=color]::-webkit-color-swatch-wrapper { padding: 2px; }
+input[type=color]::-webkit-color-swatch { border: none; border-radius: 0.28em; }
+input[type=color]::-moz-color-swatch { border: none; border-radius: 0.28em; }
 
 div.panel input[type=range]
 {
 	-webkit-appearance: none;
-	box-shadow: inset 1px 1px 1px 0 rgba(255, 255, 255, 0.5), inset -1px -1px 1px 0 rgba(0, 0, 0, 0.5);
-	background-color: rgba(255, 255, 255, 0.25);
-	border-radius: 0.25em;
+	appearance: none;
+	box-shadow: none;
+	background-color: rgba(255, 255, 255, 0.14);
+	border-radius: 0.4em;
+	height: 0.5em;
 }
 
 div.panel input[type="range"]::-webkit-slider-thumb
 {
 	-webkit-appearance: none;
-	border-radius: 0.25em;
-	box-shadow: inset 1px 1px 1px 0 rgba(255, 255, 255, 0.5), inset -1px -1px 1px 0 rgba(0, 0, 0, 0.5);
-	background-color: rgba(16, 32, 64, 1);
-	width: 1.5em;
-	height: 1.5em;
+	appearance: none;
+	border-radius: 50%;
+	box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+	background-color: var(--accent);
+	border: 2px solid #ffffff;
+	width: 1.1em;
+	height: 1.1em;
+	cursor: pointer;
 }
 
 div.panel input[type="range"]::-moz-range-track
@@ -161,18 +237,22 @@ div.panel input[type="range"]::-moz-range-track
 }
 div.panel input[type="range"]::-moz-range-thumb
 {
-	border: none;
-	border-radius: 0.25em;
-	box-shadow: inset 1px 1px 1px 0 rgba(255, 255, 255, 0.5), inset -1px -1px 1px 0 rgba(0, 0, 0, 0.5);
-	background: rgba(16, 32, 64, 1);
-	width: 1.5em;
-	height: 1.5em;
+	border: 2px solid #ffffff;
+	border-radius: 50%;
+	box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+	background: var(--accent);
+	width: 1.1em;
+	height: 1.1em;
+	cursor: pointer;
 }
 
 div.panel input[type=range]:focus
 {
 	outline: none;
-	box-shadow: inset 1px 1px 1px 0 rgba(255, 255, 255, 0.5), inset -1px -1px 1px 0 rgba(0, 0, 0, 0.5), 0 0 3px 3px rgba(255, 255, 255, 0.25);
+}
+div.panel input[type=range]:focus::-webkit-slider-thumb
+{
+	box-shadow: 0 0 0 4px rgba(76, 141, 255, 0.35);
 }
 
 div.key,
@@ -181,12 +261,12 @@ div.big-key
 	display: inline-block;
 	height: calc(1.5em / 1);
 	text-align: center;
-	border: none;
-	border-radius: 0.25em;
+	border: 1px solid rgba(255, 255, 255, 0.18);
+	border-radius: 0.4em;
 	min-height: 1.5em;
-	box-shadow: inset 2px 2px 1px 1px rgba(255, 255, 255, 0.5), inset -2px -2px 1px 1px rgba(0, 0, 0, 0.5);
-	background-color: rgba(80, 96, 112, 1);
-	color: #FFFFFF;
+	box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.35);
+	background-color: rgba(255, 255, 255, 0.08);
+	color: var(--text);
 	margin: 0.25em;
 }
 
@@ -199,7 +279,7 @@ div.key
 div.big-key
 {
 	min-width: 6em;
-	padding: 0.2em 0.5em;"
+	padding: 0.2em 0.5em;
 }
 
 div.key-desc
@@ -208,11 +288,12 @@ div.key-desc
 	text-align: center;
 	font-size: 75%;
 	margin: calc(0.25em / 0.75);
+	color: var(--text-dim);
 }
 
 #projectionDisplayList>button
 {
-	width: calc(100% / 3);
+	width: calc(100% / 4);
 }
 
 #surfaceDisplayList>button
@@ -222,7 +303,7 @@ div.key-desc
 
 #extrasDisplayList>button
 {
-	width: calc(100% / 3);
+	width: calc(100% / 5);
 }
 
 #dataPanel table
@@ -263,8 +344,9 @@ div.key-desc
 	width: calc(100% - 1em);
 	top: 2.5em;
 	height: 1.5em;
-	border-radius: 0.25em;
-	background-color: rgba(255, 255, 255, 0.25);
+	border-radius: 0.5em;
+	background-color: rgba(255, 255, 255, 0.14);
+	overflow: hidden;
 }
 
 #progressBar
@@ -274,8 +356,9 @@ div.key-desc
 	width: 0%;
 	top: 0;
 	height: 100%;
-	background-color: rgba(16, 32, 64, 1);
-	border-radius: 0.25em;
+	background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+	border-radius: 0.5em;
+	transition: width 0.2s ease;
 }
 
 #progressBarLabel
@@ -286,10 +369,9 @@ div.key-desc
 	top: 00;
 	height: 100%;
 	padding: 0.25em 0.25em;
-	box-shadow: inset 1px 1px 1px 0 rgba(255, 255, 255, 0.5), inset -1px -1px 1px 0 rgba(0, 0, 0, 0.5);
-	border-radius: 0.25em;
+	border-radius: 0.5em;
 	text-align: center;
-	font-family: sans-serif;
+	font-family: var(--ui-font);
 }
 
 #progressCancelButton
@@ -308,9 +390,12 @@ div.key-desc
 	width: 20em;
 	top: 1em;
 	height: 5em;
-	background-color: rgba(0, 0, 0, 0.8);
-	border-radius: 0.5em;
-	border: 2px solid rgba(255, 255, 255, 0.3);
+	background-color: var(--panel-bg);
+	-webkit-backdrop-filter: blur(14px) saturate(140%);
+	backdrop-filter: blur(14px) saturate(140%);
+	border-radius: 0.85em;
+	border: 1px solid var(--panel-border);
+	box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
 }
 
 #backgroundProgressActionLabel
@@ -322,7 +407,7 @@ div.key-desc
 	height: calc(1.2em / 1.2);
 	text-align: center;
 	font-size: 120%;
-	color: rgba(255, 255, 255, 0.9);
+	color: var(--text);
 }
 
 #backgroundProgressBarFrame
@@ -332,8 +417,9 @@ div.key-desc
 	width: calc(100% - 1em);
 	top: 2.2em;
 	height: 1.2em;
-	border-radius: 0.25em;
-	background-color: rgba(255, 255, 255, 0.2);
+	border-radius: 0.5em;
+	background-color: rgba(255, 255, 255, 0.14);
+	overflow: hidden;
 }
 
 #backgroundProgressBar
@@ -343,7 +429,7 @@ div.key-desc
 	width: 0%;
 	top: 0;
 	height: 100%;
-	border-radius: 0.25em;
+	border-radius: 0.5em;
 	background: linear-gradient(90deg, #4CAF50, #45a049);
 	transition: width 0.3s ease;
 }
@@ -358,5 +444,5 @@ div.key-desc
 	text-align: center;
 	line-height: 1.2em;
 	font-size: 80%;
-	color: rgba(255, 255, 255, 0.9);
+	color: var(--text);
 }
