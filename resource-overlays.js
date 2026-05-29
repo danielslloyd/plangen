@@ -7,40 +7,38 @@
 // only load-time requirement is that registerColorOverlay already exists.
 
 // ---- Food overlays (crops + calories) ------------------------------------
+//
+// Each food overlay lerps the terrain colour toward an editable "highlight"
+// colour (default magenta) as the resource value rises. The highlight is a
+// dynamic Layer-Colors slot (overlay-colors.js).
+
+function _foodHighlight(overlayId) {
+	return new THREE.Color(getOverlayColor(overlayId, "highlight", "#ff00ff"));
+}
 
 function calculateCornColor(tile) {
-	var terrainColor = calculateTerrainColor(tile);
-	var magenta = new THREE.Color(0xFF00FF);
 	var cornValue = Math.min(1, Math.max(0, tile.corn || 0));
-	return terrainColor.clone().lerp(magenta, cornValue);
+	return calculateTerrainColor(tile).lerp(_foodHighlight("corn"), cornValue);
 }
 
 function calculateWheatColor(tile) {
-	var terrainColor = calculateTerrainColor(tile);
-	var magenta = new THREE.Color(0xFF00FF);
 	var wheatValue = Math.min(1, Math.max(0, tile.wheat || 0));
-	return terrainColor.clone().lerp(magenta, wheatValue);
+	return calculateTerrainColor(tile).lerp(_foodHighlight("wheat"), wheatValue);
 }
 
 function calculateRiceColor(tile) {
-	var terrainColor = calculateTerrainColor(tile);
-	var magenta = new THREE.Color(0xFF00FF);
 	var riceValue = Math.min(1, Math.max(0, tile.rice || 0));
-	return terrainColor.clone().lerp(magenta, riceValue);
+	return calculateTerrainColor(tile).lerp(_foodHighlight("rice"), riceValue);
 }
 
 function calculateFishColor(tile) {
-	var terrainColor = calculateTerrainColor(tile);
-	var magenta = new THREE.Color(0xFF00FF);
 	var fishValue = Math.min(1, Math.max(0, tile.fish || 0));
-	return terrainColor.clone().lerp(magenta, fishValue);
+	return calculateTerrainColor(tile).lerp(_foodHighlight("fish"), fishValue);
 }
 
 function calculatePastureColor(tile) {
-	var terrainColor = calculateTerrainColor(tile);
-	var magenta = new THREE.Color(0xFF00FF);
 	var pastureValue = Math.min(1, Math.max(0, tile.pasture || 0));
-	return terrainColor.clone().lerp(magenta, pastureValue);
+	return calculateTerrainColor(tile).lerp(_foodHighlight("pasture"), pastureValue);
 }
 
 function calculateCaloriesColor(tile) {
@@ -55,10 +53,8 @@ function calculateCaloriesColor(tile) {
 	var normalizedCalories = maxCalories > 0 ? (tile.calories || 0) / maxCalories : 0;
 	normalizedCalories = Math.min(1, Math.max(0, normalizedCalories));
 
-	// Lerp terrain color toward magenta based on normalized calories
-	var terrainColor = calculateTerrainColor(tile);
-	var magenta = new THREE.Color(0xFF00FF);
-	return terrainColor.clone().lerp(magenta, normalizedCalories);
+	// Lerp terrain color toward the editable highlight based on normalized calories
+	return calculateTerrainColor(tile).lerp(_foodHighlight("calories"), normalizedCalories);
 }
 
 function calculateUpstreamCaloriesColor(tile) {
@@ -73,13 +69,20 @@ function calculateUpstreamCaloriesColor(tile) {
 	var normalizedPriorityScore = maxCityPriorityScore > 0 ? (tile.cityPriorityScore || 0) / maxCityPriorityScore : 0;
 	normalizedPriorityScore = Math.min(1, Math.max(0, normalizedPriorityScore));
 
-	// Lerp terrain color toward magenta based on normalized city priority score
-	var terrainColor = calculateTerrainColor(tile);
-	var magenta = new THREE.Color(0xFF00FF);
-	return terrainColor.clone().lerp(magenta, normalizedPriorityScore);
+	// Lerp terrain color toward the editable highlight based on city priority score
+	return calculateTerrainColor(tile).lerp(_foodHighlight("upstreamCalories"), normalizedPriorityScore);
 }
 
-registerColorOverlay("corn", "Corn Resources", "Terrain colored toward magenta based on corn resource values", calculateCornColor, "lambert", "lazy", "food");
+// Editable highlight colour per food overlay (lerp target).
+defineOverlayColors("corn",             [{ key: "highlight", label: "Highlight", def: "#ff00ff" }]);
+defineOverlayColors("wheat",            [{ key: "highlight", label: "Highlight", def: "#ff00ff" }]);
+defineOverlayColors("rice",             [{ key: "highlight", label: "Highlight", def: "#ff00ff" }]);
+defineOverlayColors("fish",             [{ key: "highlight", label: "Highlight", def: "#ff00ff" }]);
+defineOverlayColors("pasture",          [{ key: "highlight", label: "Highlight", def: "#ff00ff" }]);
+defineOverlayColors("calories",         [{ key: "highlight", label: "Highlight", def: "#ff00ff" }]);
+defineOverlayColors("upstreamCalories", [{ key: "highlight", label: "Highlight", def: "#ff00ff" }]);
+
+registerColorOverlay("corn", "Corn Resources", "Terrain colored toward highlight based on corn resource values", calculateCornColor, "lambert", "lazy", "food");
 registerColorOverlay("wheat", "Wheat Resources", "Terrain colored toward magenta based on wheat resource values", calculateWheatColor, "lambert", "lazy", "food");
 registerColorOverlay("rice", "Rice Resources", "Terrain colored toward magenta based on rice resource values", calculateRiceColor, "lambert", "lazy", "food");
 registerColorOverlay("fish", "Fish Resources", "Terrain colored toward magenta based on fish resource values", calculateFishColor, "lambert", "lazy", "food");
@@ -104,14 +107,16 @@ var stripeConfig = {
 	}
 };
 
-// Generic resource solid color: terrain unless the resource is present, then its color.
+// Generic resource solid color: terrain unless the resource is present, then its
+// (editable) colour. Each mineral overlay is named "<resource>Stripes" with a
+// dynamic "color" slot, falling back to stripeConfig.
 function calculateResourceStripesColor(tile, resourceType) {
 	var resourceValue = tile[resourceType] || 0;
 	if (resourceValue <= 0) {
 		return calculateTerrainColor(tile);
 	}
-	var resourceColor = stripeConfig.colors[resourceType] || '#FF00FF'; // Fallback to magenta
-	return new THREE.Color(resourceColor);
+	var fallback = stripeConfig.colors[resourceType] || '#FF00FF';
+	return new THREE.Color(getOverlayColor(resourceType + "Stripes", "color", fallback));
 }
 
 function calculateOilStripesColor(tile)     { return calculateResourceStripesColor(tile, 'oil'); }
@@ -133,6 +138,15 @@ function updateStripeConfig(newConfig) {
 	}
 }
 
+// Editable solid colour per mineral overlay (defaults mirror stripeConfig).
+defineOverlayColors("oilStripes",     [{ key: "color", label: "Oil",     def: stripeConfig.colors.oil }]);
+defineOverlayColors("goldStripes",    [{ key: "color", label: "Gold",    def: stripeConfig.colors.gold }]);
+defineOverlayColors("ironStripes",    [{ key: "color", label: "Iron",    def: stripeConfig.colors.iron }]);
+defineOverlayColors("coalStripes",    [{ key: "color", label: "Coal",    def: stripeConfig.colors.coal }]);
+defineOverlayColors("copperStripes",  [{ key: "color", label: "Copper",  def: stripeConfig.colors.copper }]);
+defineOverlayColors("silverStripes",  [{ key: "color", label: "Silver",  def: stripeConfig.colors.silver }]);
+defineOverlayColors("uraniumStripes", [{ key: "color", label: "Uranium", def: stripeConfig.colors.uranium }]);
+
 registerColorOverlay("oilStripes", "Oil Resources", "Shows oil resources with solid black coloring", calculateOilStripesColor, "lambert", "lazy", "resources");
 registerColorOverlay("goldStripes", "Gold Resources", "Shows gold resources with solid gold coloring", calculateGoldStripesColor, "lambert", "lazy", "resources");
 registerColorOverlay("ironStripes", "Iron Resources", "Shows iron resources with solid brown coloring", calculateIronStripesColor, "lambert", "lazy", "resources");
@@ -145,7 +159,7 @@ registerColorOverlay("uraniumStripes", "Uranium Resources", "Shows uranium resou
 function calculateCombinedStrategicResourcesColor(tile) {
 	// Ocean tiles get flat blue-gray
 	if (tile.elevation <= 0) {
-		return new THREE.Color(0x6699CC);
+		return new THREE.Color(getOverlayColor("strategicResources", "ocean", "#6699cc"));
 	}
 
 	// Count which resources this tile has
@@ -164,14 +178,27 @@ function calculateCombinedStrategicResourcesColor(tile) {
 		return calculateTerrainColor(tile);
 	}
 
-	// Single resource: use its specific color
+	// Single resource: use its specific (editable) color
 	if (resourceCount === 1) {
-		return new THREE.Color(stripeConfig.colors[resourceTypes[0]] || '#FF00FF');
+		return new THREE.Color(getOverlayColor("strategicResources", resourceTypes[0],
+			stripeConfig.colors[resourceTypes[0]] || '#FF00FF'));
 	}
 
 	// Multiple resources: brighten the terrain proportionally to how many.
 	var terrainColor = calculateTerrainColor(tile);
 	return terrainColor.clone().multiplyScalar(Math.max(0.8, 1 + (resourceCount - 1) * 0.15));
 }
+
+// Ocean fill + an editable colour per mineral for the combined view.
+defineOverlayColors("strategicResources", [
+	{ key: "ocean",   label: "Ocean",   def: "#6699cc" },
+	{ key: "oil",     label: "Oil",     def: stripeConfig.colors.oil },
+	{ key: "gold",    label: "Gold",    def: stripeConfig.colors.gold },
+	{ key: "iron",    label: "Iron",    def: stripeConfig.colors.iron },
+	{ key: "coal",    label: "Coal",    def: stripeConfig.colors.coal },
+	{ key: "copper",  label: "Copper",  def: stripeConfig.colors.copper },
+	{ key: "silver",  label: "Silver",  def: stripeConfig.colors.silver },
+	{ key: "uranium", label: "Uranium", def: stripeConfig.colors.uranium }
+]);
 
 registerColorOverlay("strategicResources", "All Strategic Resources", "Combined view of all mineral resources (oil, gold, iron, coal, copper, silver, uranium)", calculateCombinedStrategicResourcesColor, "lambert", "lazy", "resources");

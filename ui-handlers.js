@@ -192,7 +192,7 @@ function keyUpHandler(event) {
 			event.preventDefault();
 			break;
 		case KEY["6"]:
-			setSurfaceRenderMode("plates");
+			showHidePlateOutline();
 			event.preventDefault();
 			break;
 		case KEY["7"]:

@@ -83,15 +83,46 @@ function render() {
 	// Update FPS counter
 	updateFPS();
 
-	requestAnimationFrame(render);
 	renderer.render(scene, camera);
-
 	lastRenderFrameTime = currentRenderFrameTime;
+
+	// Inactivity-based render pause: keep the rAF loop running while something is
+	// actually happening - the camera moving/animating, a planet generating, or
+	// the sun orbiting - and refresh the activity timestamp while it is. Once the
+	// scene has been still for renderIdleTimeoutMs, stop scheduling frames to save
+	// CPU/GPU (markRenderActivity restarts the loop on the next user input).
+	var renderActive = cameraNeedsUpdated || zoomAnimationStartTime !== null ||
+		(typeof activeAction !== "undefined" && activeAction) ||
+		(typeof window !== "undefined" && window.orbitingSunLight);
+	if (renderActive) lastRenderActivityTime = currentRenderFrameTime;
+
+	if (currentRenderFrameTime - lastRenderActivityTime <= renderIdleTimeoutMs) {
+		requestAnimationFrame(render);
+	} else {
+		renderLoopRunning = false; // idle: pause until markRenderActivity()
+	}
+}
+
+// Inactivity render-pause state. The loop stops after renderIdleTimeoutMs of no
+// activity; any user input (or a programmatic scene change) calls
+// markRenderActivity() to resume it.
+var renderIdleTimeoutMs = 15000;
+var lastRenderActivityTime = Date.now();
+var renderLoopRunning = true;
+
+function markRenderActivity() {
+	lastRenderActivityTime = Date.now();
+	if (!renderLoopRunning) {
+		renderLoopRunning = true;
+		lastRenderFrameTime = null; // avoid a huge frameDuration after the pause
+		requestAnimationFrame(render);
+	}
 }
 
 function resizeHandler() {
 	updateCamera();
 	renderer.setSize(window.innerWidth, window.innerHeight);
+	if (typeof markRenderActivity === "function") markRenderActivity();
 }
 
 function resetCamera() {
@@ -470,14 +501,15 @@ function buildPlateOutlineObject() {
 	if (!positions.length) return null;
 	var geo = new THREE.BufferGeometry();
 	geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-	var mat = new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.9 });
+	var mat = new THREE.LineBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.9 });
 	var obj = new THREE.LineSegments(geo, mat);
 	obj.renderOrder = 998;
 	return obj;
 }
 
-// Show the black plate outline only while the "plates" overlay is active; rebuild
-// it for the current projection (it is projection-specific, like feature roots).
+// Show the red plate-boundary outline when the independent `renderPlateOutline`
+// toggle is on (an Overlay Display Option, like the coastline). Projection-specific,
+// so it is rebuilt for the current view on toggle, projection switch and planet load.
 function rebuildPlateOutline() {
 	if (plateOutlineObject) {
 		if (plateOutlineObject.parent) plateOutlineObject.parent.remove(plateOutlineObject);
@@ -485,7 +517,7 @@ function rebuildPlateOutline() {
 		if (plateOutlineObject.material) plateOutlineObject.material.dispose();
 		plateOutlineObject = null;
 	}
-	if (typeof surfaceRenderMode === "undefined" || surfaceRenderMode !== "plates") return;
+	if (typeof renderPlateOutline === "undefined" || !renderPlateOutline) return;
 	if (typeof scene === "undefined" || !scene) return;
 	var obj = buildPlateOutlineObject();
 	if (obj) { scene.add(obj); plateOutlineObject = obj; }
@@ -991,6 +1023,7 @@ function reapplyOverlayVisibility() {
 	showHideRiverLines(renderRiverLines);
 	showHideMoon(renderMoon);
 	rebuildCoastlineOutline(); // projection-specific; rebuild for the new view
+	rebuildPlateOutline(); // projection-specific; rebuild for the new view
 }
 
 // Restore a cached render-data entry as the active render data.

@@ -208,6 +208,19 @@
 						</div>
 					</div>
 				</details>
+
+				<!-- Merged-watershed merge tuning (applies live to "Watershed Regions (Merged)") -->
+				<details id="mergedWatershedPanel" style="margin-top: 0.5em; font-size: 85%; display: none;">
+					<summary style="cursor: pointer; user-select: none; opacity: 0.85;">Merged watershed tuning</summary>
+					<div style="margin-top: 0.4em;">
+						<div class="mwSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Reward for the fraction of the smaller basin's border that the merge removes.">Border reward</span><input type="range" id="mwBorderWeight" min="0" max="300" step="5" value="150" style="flex:1.5;"><span id="mwBorderWeightVal" style="width:2.6em; text-align:right;">1.50</span></div>
+						<div class="mwSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Penalty proportional to the smaller basin's size (dislike merging large basins).">Size penalty</span><input type="range" id="mwSizeWeight" min="0" max="200" step="5" value="35" style="flex:1.5;"><span id="mwSizeWeightVal" style="width:2.6em; text-align:right;">0.35</span></div>
+						<div class="mwSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Penalty proportional to mean boundary elevation (dislike high-elevation divides).">Elevation penalty</span><input type="range" id="mwElevWeight" min="0" max="300" step="5" value="80" style="flex:1.5;"><span id="mwElevWeightVal" style="width:2.6em; text-align:right;">0.80</span></div>
+						<div class="mwSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Basins with this many tiles or fewer are almost always merged.">Tiny basin size</span><input type="range" id="mwTinySize" min="0" max="80" step="1" value="16" style="flex:1.5;"><span id="mwTinySizeVal" style="width:2.6em; text-align:right;">16</span></div>
+						<div class="mwSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Desirability bonus added when the smaller side is tiny.">Tiny bonus</span><input type="range" id="mwTinyBonus" min="0" max="1500" step="25" value="500" style="flex:1.5;"><span id="mwTinyBonusVal" style="width:2.6em; text-align:right;">5.00</span></div>
+						<div class="mwSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Keep merging while the best pair's desirability stays at/above this.">Merge threshold</span><input type="range" id="mwThreshold" min="0" max="100" step="1" value="15" style="flex:1.5;"><span id="mwThresholdVal" style="width:2.6em; text-align:right;">0.15</span></div>
+					</div>
+				</details>
 			</div>
 
 			<!-- Overlay Display Options -->
@@ -219,6 +232,7 @@
 					<button id="showRiverLinesButton" title="Show curvy river lines (width scales with flow)" style="font-size: 75%;">River Lines</button>
 					<button id="showAirCurrentsButton" title="Show Air Currents" style="font-size: 75%;">Air Currents (P)</button>
 					<button id="showCoastlineButton" title="Show a thin black outline along coastlines (land/water boundary)" style="font-size: 75%;">Coastline</button>
+					<button id="showPlateOutlineButton" title="Show a red outline along tectonic plate boundaries" style="font-size: 75%;">Plate Boundaries (6)</button>
 				</div>
 			</div>
 

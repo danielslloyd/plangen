@@ -58,6 +58,7 @@ var renderRivers = true;
 var renderRiverLines = false; // alternate curvy ribbon river visualization
 var renderMoon = false;
 var renderCoastline = false; // thin black outline along land/water boundary edges
+var renderPlateOutline = false; // red outline along tectonic plate boundaries
 var renderLabels = false;
 var renderWireframe = false;
 var elevationMultiplier = 80; // Controls how exaggerated the 3D terrain elevation appears
@@ -152,6 +153,7 @@ for (var k = 0; k < 10; ++k) KEY[String.fromCharCode(k + 48)] = k + 48;
 for (var k = 0; k < 26; ++k) KEY[String.fromCharCode(k + 65)] = k + 65;
 
 function generatePlanetAsynchronous() {
+	if (typeof markRenderActivity === "function") markRenderActivity(); // wake the render loop if idle-paused
 	var planet;
 
 	var subdivisions = generationSettings.subdivisions;
@@ -196,9 +198,10 @@ function generatePlanetAsynchronous() {
 			ui.progressPanel.hide();
 			ui.backgroundProgressPanel.show();
 		}, 0)
-        .executeSubaction(function (action) {
-            setDistances(planet, action, sailingCostConstant); // Build the graph here
-        }, 0, "Building pathfinding graph")
+		// NOTE: setDistances (shore distances + full A* graph) already ran in the
+		// terrain pipeline (step 4g) and its results are consumed by displayPlanet
+		// (buildEdgeCostsRenderObject) above, so the previous duplicate rebuild here
+		// was redundant work and has been removed.
 		.executeSubaction(function (action) {
 			// Pre-calculate heavy overlays in background
 			calculateBackgroundOverlays(planet, action);
@@ -386,13 +389,12 @@ function generatePlanetTerrain(planet, plateCount, oceanicRate, heatLevel, moist
 			ctimeEnd('4h. Post-Generation Analysis');
 			ctime('4i. Dynamic Overlays');
 			generateDynamicShoreOverlays(planet.topology.tiles);
-			// Hierarchical nested feature detection (continents>peninsulas, oceans>bays...).
-			if (typeof generateFeatureOverlays === "function") {
-				generateFeatureOverlays(planet);
-			}
-			if (typeof generateStrategicOverlays === "function") {
-				generateStrategicOverlays(planet);
-			}
+			// NOTE: feature detection + strategic analyses are the heaviest passes
+			// and are NOT needed to render the default (terrain) globe. They are
+			// deferred to the background phase (calculateBackgroundOverlays) so the
+			// globe paints as soon as render data is ready. Mark their overlays
+			// pending now so the dropdown shows a spinner until they fill in.
+			if (typeof markDeferredOverlaysPending === "function") markDeferredOverlaysPending();
 			ctimeEnd('4i. Dynamic Overlays');
 			ctime('4j. Render Data Generation');
 			generatePlanetRenderData(planet.topology, random, action);
@@ -872,6 +874,7 @@ function displayPlanet(newPlanet) {
     showHideRiverLines(renderRiverLines);
     showHideMoon(renderMoon);
     showHideCoastline(renderCoastline);
+    showHidePlateOutline(renderPlateOutline);
     showHideLabels(renderLabels);
     updateCamera();
     updateUI();
@@ -1006,21 +1009,40 @@ function updateBackgroundProgressUI(action) {
 	ui.backgroundProgressActionLabel.text(detailText);
 }
 
-// Calculate heavy overlays in background
+// Calculate heavy overlays in the background, AFTER the globe is already shown.
+// Feature detection and strategic analyses are the heaviest passes and are not
+// needed to render the default terrain globe, so they run here. As each group
+// finishes we mark its overlays ready (clears the dropdown spinner) and, if the
+// user is currently viewing one, recolour the surface live.
 function calculateBackgroundOverlays(planet, action) {
+	var FEATURE_IDS = ["featPlatesA", "featNestedB", "featLobesC", "featThicknessE", "featBioH"];
+	var STRATEGIC_IDS = ["strategicA", "strategicC", "shoreTree", "mergedWatersheds",
+		"mountainRanges", "terrainBasinRelief", "terrainMassif"];
+
+	function finishGroup(ids) {
+		if (typeof setOverlaysReady === "function") setOverlaysReady(ids, true);
+		if (typeof populateColorOverlayDropdown === "function") populateColorOverlayDropdown();
+		// If the active overlay just became ready, recolour the visible surface.
+		if (typeof surfaceRenderMode !== "undefined" && ids.indexOf(surfaceRenderMode) !== -1 &&
+			typeof recalculateBufferGeometryColors === "function" &&
+			planet.renderData && planet.renderData.surface && planet.renderData.surface.geometry) {
+			recalculateBufferGeometryColors(planet.topology.tiles, planet.renderData.surface.geometry, surfaceRenderMode);
+		}
+	}
+
 	action
 		.executeSubaction(function (action) {
-			ctime('Background: Land Regions');
-			// Land regions calculation will be implemented here
-			// For now, just mark as completed
-			ctimeEnd('Background: Land Regions');
-		}, 25, "Computing land regions")
+			ctime('Background: Feature Detection');
+			if (typeof generateFeatureOverlays === "function") generateFeatureOverlays(planet);
+			ctimeEnd('Background: Feature Detection');
+			finishGroup(FEATURE_IDS);
+		}, 50, "Detecting geographic features")
 		.executeSubaction(function (action) {
-			ctime('Background: Watershed Regions');
-			// Watershed regions calculation will be implemented here
-			// For now, just mark as completed
-			ctimeEnd('Background: Watershed Regions');
-		}, 25, "Computing watershed regions");
+			ctime('Background: Strategic Overlays');
+			if (typeof generateStrategicOverlays === "function") generateStrategicOverlays(planet);
+			ctimeEnd('Background: Strategic Overlays');
+			finishGroup(STRATEGIC_IDS);
+		}, 50, "Computing strategic overlays");
 }
 
 function Plate(color, driftAxis, driftRate, spinRate, elevation, oceanic, root) {

@@ -562,12 +562,20 @@ registerColorOverlay(
 		// Combine domain-restricted and cross-domain scores; same hue per domain.
 		var intensity = Math.min(1, Math.max(tile._strategicA, tile._strategicA_cross || 0));
 		if (tile.elevation > 0)
-			return new THREE.Color(0x3C3C14).lerp(new THREE.Color(0xFFD700), intensity); // warm-brown → gold
+			return new THREE.Color(getOverlayColor('strategicA', 'landLow', '#3c3c14'))
+				.lerp(new THREE.Color(getOverlayColor('strategicA', 'landHigh', '#ffd700')), intensity); // warm-brown → gold
 		else
-			return new THREE.Color(0x1E2850).lerp(new THREE.Color(0x00FFD0), intensity); // dark-blue → cyan
+			return new THREE.Color(getOverlayColor('strategicA', 'oceanLow', '#1e2850'))
+				.lerp(new THREE.Color(getOverlayColor('strategicA', 'oceanHigh', '#00ffd0')), intensity); // dark-blue → cyan
 	},
 	"basic", "lazy", "geography"
 );
+defineOverlayColors("strategicA", [
+	{ key: "landLow",   label: "Land low",   def: "#3c3c14" },
+	{ key: "landHigh",  label: "Land high",  def: "#ffd700" },
+	{ key: "oceanLow",  label: "Ocean low",  def: "#1e2850" },
+	{ key: "oceanHigh", label: "Ocean high", def: "#00ffd0" }
+]);
 
 
 registerColorOverlay(
@@ -635,21 +643,34 @@ registerColorOverlay(
 	function(tile) {
 		if (!tile.hasOwnProperty('_shoreTreeNodeDist')) return new THREE.Color(0x888888);
 		var isLand = tile.elevation > 0;
-		var palette = isLand ? SHORE_TREE_LAND_PALETTE : SHORE_TREE_OCEAN_PALETTE;
+		var paletteKey = isLand ? "landChain" : "oceanChain";
+		var fallback = isLand ? SHORE_TREE_LAND_PALETTE : SHORE_TREE_OCEAN_PALETTE;
 
 		if (tile._shoreTreeIsRoot) {
-			return new THREE.Color(isLand ? SHORE_TREE_LAND_ROOT_ACCENT : SHORE_TREE_OCEAN_ROOT_ACCENT);
+			return new THREE.Color(getOverlayColor("shoreTree", isLand ? "landRoot" : "oceanRoot",
+				isLand ? SHORE_TREE_LAND_ROOT_ACCENT : SHORE_TREE_OCEAN_ROOT_ACCENT));
 		}
 		if (tile._shoreTreeIsNode) {
-			return new THREE.Color(isLand ? SHORE_TREE_LAND_NODE_ACCENT : SHORE_TREE_OCEAN_NODE_ACCENT);
+			return new THREE.Color(getOverlayColor("shoreTree", isLand ? "landNode" : "oceanNode",
+				isLand ? SHORE_TREE_LAND_NODE_ACCENT : SHORE_TREE_OCEAN_NODE_ACCENT));
 		}
 
+		// Clamp (not cycle) by node-distance so deeper tiles stay at the palette end.
+		var palette = getOverlayPaletteColors("shoreTree", paletteKey, fallback);
 		var dist = tile._shoreTreeNodeDist || 1;
 		var idx = Math.min(palette.length - 1, Math.max(0, dist - 1));
 		return new THREE.Color(palette[idx]);
 	},
 	"basic", "lazy", "geography"
 );
+defineOverlayPalette("shoreTree", "landChain",  "Land chain",  SHORE_TREE_LAND_PALETTE);
+defineOverlayPalette("shoreTree", "oceanChain", "Ocean chain", SHORE_TREE_OCEAN_PALETTE);
+defineOverlayColors("shoreTree", [
+	{ key: "landRoot",  label: "Land root",  def: SHORE_TREE_LAND_ROOT_ACCENT },
+	{ key: "landNode",  label: "Land node",  def: SHORE_TREE_LAND_NODE_ACCENT },
+	{ key: "oceanRoot", label: "Ocean root", def: SHORE_TREE_OCEAN_ROOT_ACCENT },
+	{ key: "oceanNode", label: "Ocean node", def: SHORE_TREE_OCEAN_NODE_ACCENT }
+]);
 
 // ============================================================================
 // SHARED HELPERS FOR REGION / TERRAIN-FEATURE OVERLAYS
@@ -712,6 +733,11 @@ function _landComponents(landTiles, includeFn, sameFn) {
 	}
 	return comps;
 }
+
+// Default editable palettes for the id-indexed region overlays (mountain ranges,
+// terrain features). Warm set for highlands/massifs, green set for lowlands.
+var MOUNTAIN_PALETTE_DEFAULT = ["#6b4f2a", "#8a5a2b", "#a9743b", "#c2925a", "#7a5230", "#9c6b3f", "#b07d4a", "#5e421f"];
+var LAND_PALETTE_DEFAULT     = ["#3a6b35", "#4e8c3f", "#6aa84f", "#8bbf66", "#2f5e2c", "#5b9748", "#79b85e", "#46813c"];
 
 // Stable distinct colour per integer id. family: 'land' (green), 'mountain'
 // (warm/brown), 'water' (blue).
@@ -925,11 +951,12 @@ registerColorOverlay(
 	"hills darkened. Lowlands keep their terrain colour.",
 	function (tile) {
 		if (!tile._rangeId) return calculateTerrainColor(tile);
-		var base = _hueColor(tile._rangeId, 'mountain');
+		var base = getOverlayPaletteColor("mountainRanges", "ranges", tile._rangeId - 1, MOUNTAIN_PALETTE_DEFAULT);
 		return tile._rangeKind === 2 ? base.offsetHSL(0, 0, 0.12) : base.offsetHSL(0, 0, -0.07);
 	},
 	"basic", "lazy", "geography"
 );
+defineOverlayPalette("mountainRanges", "ranges", "Ranges", MOUNTAIN_PALETTE_DEFAULT);
 
 // ============================================================================
 // TERRAIN FEATURES (watersheds + granulometry) — two approaches
@@ -970,12 +997,15 @@ registerColorOverlay(
 	"highland-interiorness granulometry.",
 	function (tile) {
 		if (!_isLand(tile) || !tile._tfBId) return calculateTerrainColor(tile);
-		if (tile._tfBTier === 2) return _hueColor(tile._tfBId, 'mountain');
-		if (tile._tfBTier === 1) return _hueColor(tile._tfBId, 'land').offsetHSL(0, 0, -0.08);
-		return _hueColor(tile._tfBId, 'land').offsetHSL(0, 0, 0.05);
+		var i = tile._tfBId - 1;
+		if (tile._tfBTier === 2) return getOverlayPaletteColor("terrainBasinRelief", "core", i, MOUNTAIN_PALETTE_DEFAULT);
+		if (tile._tfBTier === 1) return getOverlayPaletteColor("terrainBasinRelief", "valley", i, LAND_PALETTE_DEFAULT).offsetHSL(0, 0, -0.08);
+		return getOverlayPaletteColor("terrainBasinRelief", "valley", i, LAND_PALETTE_DEFAULT).offsetHSL(0, 0, 0.05);
 	},
 	"basic", "lazy", "geography"
 );
+defineOverlayPalette("terrainBasinRelief", "core",   "Core (high)", MOUNTAIN_PALETTE_DEFAULT);
+defineOverlayPalette("terrainBasinRelief", "valley", "Valley",      LAND_PALETTE_DEFAULT);
 
 function computeTerrainFeaturesMassif(tiles) {
 	for (var i = 0; i < tiles.length; i++) { tiles[i]._tfMId = 0; tiles[i]._tfMKind = 0; }
@@ -1009,10 +1039,15 @@ registerColorOverlay(
 	"watersheds with granulometry to separate ranges from plains.",
 	function (tile) {
 		if (!_isLand(tile) || !tile._tfMId) return calculateTerrainColor(tile);
-		return tile._tfMKind === 2 ? _hueColor(tile._tfMId, 'mountain') : _hueColor(tile._tfMId, 'land');
+		var i = tile._tfMId - 1;
+		return tile._tfMKind === 2
+			? getOverlayPaletteColor("terrainMassif", "massif",  i, MOUNTAIN_PALETTE_DEFAULT)
+			: getOverlayPaletteColor("terrainMassif", "lowland", i, LAND_PALETTE_DEFAULT);
 	},
 	"basic", "lazy", "geography"
 );
+defineOverlayPalette("terrainMassif", "massif",  "Massif",  MOUNTAIN_PALETTE_DEFAULT);
+defineOverlayPalette("terrainMassif", "lowland", "Lowland", LAND_PALETTE_DEFAULT);
 
 // ============================================================================
 // ENTRY POINT (called from planet generation pipeline)

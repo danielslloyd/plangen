@@ -65,6 +65,10 @@
 		                      // merge, adjacent same-domain provinces are joined when they
 		                      // share a wide border AND the union is more compact
 		                      // (area/perimeter²). Higher = more aggressive joining.
+		plateWaterCost: 1.0,  // ocean boundary "search": how strongly open-water edges
+		                      // resist being cut (scaled by local water width) so ocean
+		                      // province boundaries snap onto the narrowest channels.
+		                      // 0 = off (raw plate boundaries through open water).
 		// Approach B (erosion split)
 		maxErosion: 6,        // deepest erosion level to attempt.
 		// Approach C (inscribed-disk lobes)
@@ -595,6 +599,66 @@
 			else if (!isLand(mt) && plateMajLand(mp)) { var nq = waterOwner.get(mt); if (nq !== undefined) assign.set(mt, nq); }
 		}
 
+		// Cost-aware ocean boundary search: relocate ocean province boundaries onto
+		// the NARROWEST water channels. The donated plates already fix WHICH plate
+		// owns the open ocean; this step only re-decides the shallow/coastal water
+		// between two ocean plates so the seam falls at a strait rather than wandering
+		// through open water.
+		//
+		// Method: a multi-source cost-distance partition (Dijkstra). Open-ocean
+		// "core" tiles (|shore| >= plateWaterCore) are the sources, each carrying its
+		// donated plate. Traversing a water tile costs MORE the NARROWER the water
+		// (cap - width), so a plate's influence flows freely across its own open ocean
+		// but a narrow channel is an expensive barrier - the two plates' regions meet
+		// at that barrier, i.e. the boundary snaps to the channel. Cores keep their
+		// plate (open-ocean plate divisions are preserved); only water is touched, so
+		// provinces stay single-domain.
+		if (CONFIG.plateWaterCost > 0) {
+			var CORE_DEPTH = CONFIG.plateWaterCore || 3;   // |shore| >= this = open-ocean source
+			var WIDTH_CAP = 8;
+			var nodeCost = function (t) {
+				var width = Math.abs(t.shore || 0);
+				if (width > WIDTH_CAP) width = WIDTH_CAP;
+				return 1 + CONFIG.plateWaterCost * (WIDTH_CAP - width); // narrow water = high barrier
+			};
+			// Binary min-heap keyed by cost-distance.
+			var heap = [];
+			function hPush(d, t) {
+				heap.push({ d: d, t: t });
+				var i = heap.length - 1;
+				while (i > 0) { var p = (i - 1) >> 1; if (heap[p].d <= heap[i].d) break; var tmp = heap[p]; heap[p] = heap[i]; heap[i] = tmp; i = p; }
+			}
+			function hPop() {
+				var top = heap[0], last = heap.pop();
+				if (heap.length) { heap[0] = last; var i = 0, n = heap.length; for (;;) { var l = 2 * i + 1, r = l + 1, s = i; if (l < n && heap[l].d < heap[s].d) s = l; if (r < n && heap[r].d < heap[s].d) s = r; if (s === i) break; var tmp2 = heap[s]; heap[s] = heap[i]; heap[i] = tmp2; i = s; } }
+				return top;
+			}
+			var dist = new Map(), lab = new Map();
+			for (var ci = 0; ci < tiles.length; ci++) {
+				var ct = tiles[ci];
+				if (isLand(ct)) continue;
+				if (Math.abs(ct.shore || 0) >= CORE_DEPTH) { dist.set(ct, 0); lab.set(ct, assign.get(ct)); hPush(0, ct); }
+			}
+			while (heap.length) {
+				var top2 = hPop(), cur2 = top2.t;
+				if (top2.d > (dist.get(cur2) || 0)) continue;       // stale entry
+				var cnb = cur2.tiles;
+				for (var ck = 0; ck < cnb.length; ck++) {
+					var cn = cnb[ck];
+					if (isLand(cn)) continue;
+					var nd = top2.d + nodeCost(cn);
+					if (!dist.has(cn) || nd < dist.get(cn)) { dist.set(cn, nd); lab.set(cn, lab.get(cur2)); hPush(nd, cn); }
+				}
+			}
+			// Apply the cost-distance labels; water not reached by any core (a sea with
+			// no open-ocean tile) keeps its donated assignment.
+			for (var ai = 0; ai < tiles.length; ai++) {
+				var at = tiles[ai];
+				if (isLand(at)) continue;
+				if (lab.has(at)) assign.set(at, lab.get(at));
+			}
+		}
+
 		// Contiguous same-plate regions = provinces.
 		var visited = new Set(), regions = [], owner = new Map();
 		for (var a = 0; a < tiles.length; a++) {
@@ -791,6 +855,13 @@
 		assignFeatureMarkers(featuresH);
 		classifySimple(featuresH, "Bioregion");
 
+		// 5-colour-map graph colouring for every approach (land + ocean independently).
+		assignFeatureGraphColors(tiles, "hierarchyA");
+		assignFeatureGraphColors(tiles, "hierarchyB");
+		assignFeatureGraphColors(tiles, "hierarchyC");
+		assignFeatureGraphColors(tiles, "hierarchyE");
+		assignFeatureGraphColors(tiles, "hierarchyH");
+
 		DATA = {
 			totals: totals,
 			featuresByApproach: { A: featuresA, B: featuresB, C: featuresC, E: featuresE, H: featuresH },
@@ -802,42 +873,97 @@
 	// ==================================================================
 	// COLOR OVERLAYS
 	// ==================================================================
-	function makeNestedColorFn(prop) {
-		return function (tile) {
-			var arr = tile[prop];
-			var base = isLand(tile) ? LAND_BASE : WATER_BASE;
-			if (!arr || arr.length === 0) {
-				if (fieldValue(tile) === 0) return GRAY();
-				return base.clone();
-			}
-			var factor = Math.pow(CONFIG.darkenPerLevel, arr.length - 1);
-			return base.clone().multiplyScalar(factor);
-		};
+	// Every feature overlay is drawn as a 5-COLOUR MAP: a greedy graph colouring
+	// (assignFeatureGraphColors) gives each finest feature a palette index 0..4 so
+	// adjacent same-domain features never share a colour. Land and ocean use
+	// separate 5-colour schemes. All swatches are editable in the Layer Colors panel.
+	var FEATURE_LAND_PALETTE_DEFAULT  = ["#8bc34a", "#cddc39", "#4caf50", "#c5a35a", "#9e9d24"];
+	var FEATURE_WATER_PALETTE_DEFAULT = ["#42a5f5", "#26c6da", "#5c6bc0", "#4dd0e1", "#1e88e5"];
+
+	function _featBase(tile, overlayId) {
+		return isLand(tile)
+			? new THREE.Color(getOverlayColor(overlayId, "landBase", "#74ad5a"))
+			: new THREE.Color(getOverlayColor(overlayId, "waterBase", "#4f86c6"));
+	}
+	function _featPalette(feature, land, overlayId) {
+		var idx = (feature.colorIndex != null) ? feature.colorIndex : (feature.id || 0);
+		return getOverlayPaletteColor(overlayId, land ? "land" : "water", idx,
+			land ? FEATURE_LAND_PALETTE_DEFAULT : FEATURE_WATER_PALETTE_DEFAULT);
 	}
 
-	function hashHue(id) {
-		var x = (id || 0) * 0.6180339887498949;
-		return x - Math.floor(x);
-	}
-
-	function featureHueColor(feature, land) {
-		var h = hashHue(feature.id);
-		var hue = land ? (0.18 + 0.22 * h) : (0.50 + 0.22 * h);
-		var light = 0.58 - Math.min(0.26, 0.07 * ((feature.level || 1) - 1));
-		var c = new THREE.Color();
-		c.setHSL(hue, 0.55, light);
-		return c;
-	}
-
-	function makeHueColorFn(prop) {
+	// Flat 5-colour-map colour for a tile's finest feature (shared by every overlay).
+	function makeFeatureColorFn(prop, overlayId) {
 		return function (tile) {
 			var arr = tile[prop];
 			if (!arr || arr.length === 0) {
-				if (fieldValue(tile) === 0) return GRAY();
-				return (isLand(tile) ? LAND_BASE : WATER_BASE).clone();
+				if (fieldValue(tile) === 0) return new THREE.Color(getOverlayColor(overlayId, "unassigned", "#888888"));
+				return _featBase(tile, overlayId);
 			}
-			return featureHueColor(arr[arr.length - 1], isLand(tile));
+			return _featPalette(arr[arr.length - 1], isLand(tile), overlayId);
 		};
+	}
+
+	// Root-marker colour: the feature's 5-colour-map colour (overlayId omitted so it
+	// falls back to the default palette).
+	function featureHueColor(feature, land, overlayId) {
+		return _featPalette(feature, land, overlayId);
+	}
+
+	// Greedy graph colouring: give each finest feature a palette index 0..4 such
+	// that adjacent same-domain features differ. Planar region adjacency is
+	// 4-colourable, so 5 colours leave comfortable slack. Land and ocean are
+	// coloured independently (their adjacency graphs never connect across a coast).
+	function assignFeatureGraphColors(tiles, prop) {
+		var K = 5;
+		var adj = new Map(), feats = [];
+		function ensure(f) { if (!adj.has(f)) { adj.set(f, new Set()); feats.push(f); f.colorIndex = null; } }
+		for (var i = 0; i < tiles.length; i++) {
+			var t = tiles[i], arr = t[prop];
+			if (!arr || !arr.length) continue;
+			var f = arr[arr.length - 1];
+			if (!f) continue;
+			ensure(f);
+			var nb = t.tiles;
+			for (var k = 0; k < nb.length; k++) {
+				var n = nb[k];
+				if (isLand(n) !== isLand(t)) continue;          // separate land/ocean schemes
+				var arr2 = n[prop];
+				if (!arr2 || !arr2.length) continue;
+				var g = arr2[arr2.length - 1];
+				if (!g || g === f) continue;
+				ensure(g); adj.get(f).add(g); adj.get(g).add(f);
+			}
+		}
+		// Colour high-degree (then large) features first to minimise conflicts.
+		feats.sort(function (a, b) {
+			var da = adj.get(a).size, db = adj.get(b).size;
+			if (db !== da) return db - da;
+			return (b.regionTiles ? b.regionTiles.length : 0) - (a.regionTiles ? a.regionTiles.length : 0);
+		});
+		for (var fi = 0; fi < feats.length; fi++) {
+			var ff = feats[fi], neigh = adj.get(ff);
+			var used = [], chosen = -1;
+			neigh.forEach(function (g2) { if (g2.colorIndex != null) used[g2.colorIndex] = true; });
+			for (var c = 0; c < K; c++) if (!used[c]) { chosen = c; break; }
+			if (chosen < 0) {                                   // >K neighbours coloured: least-used colour
+				var cnt = [0, 0, 0, 0, 0];
+				neigh.forEach(function (g3) { if (g3.colorIndex != null) cnt[g3.colorIndex]++; });
+				chosen = 0; for (var c2 = 1; c2 < K; c2++) if (cnt[c2] < cnt[chosen]) chosen = c2;
+			}
+			ff.colorIndex = chosen;
+		}
+	}
+
+	// Register the editable palette + base slots for a feature overlay id.
+	function defineFeatureColorSlots(overlayId) {
+		if (typeof defineOverlayPalette !== "function") return;
+		defineOverlayPalette(overlayId, "land",  "Land features",  FEATURE_LAND_PALETTE_DEFAULT);
+		defineOverlayPalette(overlayId, "water", "Water features", FEATURE_WATER_PALETTE_DEFAULT);
+		defineOverlayColors(overlayId, [
+			{ key: "landBase",   label: "Land base",  def: "#74ad5a" },
+			{ key: "waterBase",  label: "Water base", def: "#4f86c6" },
+			{ key: "unassigned", label: "Unassigned", def: "#888888" }
+		]);
 	}
 
 	function unregisterFeatureOverlays() {
@@ -848,20 +974,21 @@
 	function registerFeatureOverlays() {
 		if (typeof registerColorOverlay !== "function") return;
 		registerColorOverlay("featPlatesA", "Features A: Plate provinces",
-			"Approach A. Tectonic plates as large features with smoothed (smart) boundaries.",
-			makeHueColorFn("hierarchyA"), "basic");
+			"Approach A. Tectonic plates as large features with smoothed (smart) boundaries. 5-colour map.",
+			makeFeatureColorFn("hierarchyA", "featPlatesA"), "basic");
 		registerColorOverlay("featNestedB", "Features B: Nested (erosion)",
-			"Approach B. Color darkens with nesting depth. Hover for outlines + names.",
-			makeNestedColorFn("hierarchyB"), "basic");
+			"Approach B. Recursive erosion split. 5-colour map; hover for outlines + names.",
+			makeFeatureColorFn("hierarchyB", "featNestedB"), "basic");
 		registerColorOverlay("featLobesC", "Features C: Lobes (inscribed disk)",
-			"Approach C. Greedy core+appendage lobes; distinct hue per lobe.",
-			makeHueColorFn("hierarchyC"), "basic");
+			"Approach C. Greedy core+appendage lobes. 5-colour map.",
+			makeFeatureColorFn("hierarchyC", "featLobesC"), "basic");
 		registerColorOverlay("featThicknessE", "Features E: Thickness (granulometry)",
-			"Approach E. Width-based nesting; cuts narrow necks; optional basin mode.",
-			makeHueColorFn("hierarchyE"), "basic");
+			"Approach E. Width-based nesting; cuts narrow necks; optional basin mode. 5-colour map.",
+			makeFeatureColorFn("hierarchyE", "featThicknessE"), "basic");
 		registerColorOverlay("featBioH", "Features H: Bioregions (climate)",
-			"Approach H. Contiguous regions of similar temperature & moisture.",
-			makeHueColorFn("hierarchyH"), "basic");
+			"Approach H. Contiguous regions of similar temperature & moisture. 5-colour map.",
+			makeFeatureColorFn("hierarchyH", "featBioH"), "basic");
+		for (var i = 0; i < REGISTERED_IDS.length; i++) defineFeatureColorSlots(REGISTERED_IDS[i]);
 	}
 
 	// ==================================================================

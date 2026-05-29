@@ -919,6 +919,9 @@ function erodeElevation(planet, action) {
 						}
 					}
 					watershed.color = availableColors[0];
+					// Record the palette index so the "Watersheds" overlay can recolour
+					// live through the editable Regions palette (overlay-colors.js).
+					watershed.graphColorIndex = colors.indexOf(availableColors[0]);
 					assignedColors[watershed.id] = watershed.color;
 				}
 			}

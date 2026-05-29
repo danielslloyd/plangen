@@ -48,6 +48,13 @@ $(document).ready(function onDocumentReady() {
 	ui.body.on("keyup", keyUpHandler);
 	ui.body.focus();
 
+	// Resume the render loop on any user interaction (it idle-pauses after 15s of
+	// no activity - see markRenderActivity in rendering-3d.js). Document-level so
+	// it also catches control-panel clicks, dropdowns and sliders.
+	if (typeof markRenderActivity === "function") {
+		$(document).on("mousemove mousedown wheel keydown touchstart touchmove", markRenderActivity);
+	}
+
 	ui.helpPanel = $("#helpPanel");
 
 	ui.controlPanel = $("#controlPanel");
@@ -79,6 +86,8 @@ $(document).ready(function onDocumentReady() {
 
 	// Feature-detection tuning sliders -> regenerateFeatureOverlays (live).
 	setupFeatureDetectionControls();
+	// Merged-watershed merge tuning sliders -> regenerateMergedWatersheds (live).
+	setupMergedWatershedControls();
 
 	// Projection buttons
 	ui.projectGlobe = $("#projectGlobe");
@@ -113,6 +122,7 @@ $(document).ready(function onDocumentReady() {
 	ui.showRiverLinesButton = $("#showRiverLinesButton");
 	ui.showAirCurrentsButton = $("#showAirCurrentsButton");
 	ui.showCoastlineButton = $("#showCoastlineButton");
+	ui.showPlateOutlineButton = $("#showPlateOutlineButton");
 
 
 	ui.showSunlightButton.click(showHideSunlight);
@@ -121,6 +131,7 @@ $(document).ready(function onDocumentReady() {
 	ui.showRiverLinesButton.click(showHideRiverLines);
 	ui.showAirCurrentsButton.click(showHideAirCurrents);
 	ui.showCoastlineButton.click(showHideCoastline);
+	ui.showPlateOutlineButton.click(showHidePlateOutline);
 
 	// Removed detail level and generate buttons
 	ui.advancedSettingsButton = $("#advancedSettingsButton");
@@ -609,10 +620,10 @@ function setSurfaceRenderMode(mode, force) {
 
 	// Rebuild feature root/node markers for the (possibly new) active overlay.
 	if (typeof rebuildFeatureRoots === "function") rebuildFeatureRoots();
-	// Show/hide the black plate outline depending on whether "plates" is active.
-	if (typeof rebuildPlateOutline === "function") rebuildPlateOutline();
 	// Show only the active feature overlay's tuning knobs.
 	if (typeof updateFeatureControlsVisibility === "function") updateFeatureControlsVisibility();
+	// Show the merged-watershed tuning knobs only for that overlay.
+	if (typeof updateMergedWatershedControlsVisibility === "function") updateMergedWatershedControlsVisibility();
 }
 
 // Wire the feature-detection tuning sliders + "Show Feature Roots" toggle.
@@ -675,6 +686,61 @@ function setupFeatureDetectionControls() {
 	});
 
 	updateFeatureControlsVisibility();
+}
+
+// Wire the merged-watershed merge-tuning sliders. Mirrors
+// setupFeatureDetectionControls: labels update live while dragging; the
+// (heavier) re-merge fires on release via regenerateMergedWatersheds().
+function setupMergedWatershedControls() {
+	var pct2 = {
+		toValue: function(v) { return v / 100; },
+		fromValue: function(v) { return Math.round(v * 100); },
+		format: function(v) { return (v / 100).toFixed(2); }
+	};
+	var sliders = [
+		{ id: "mwBorderWeight", key: "borderWeight", map: pct2 },
+		{ id: "mwSizeWeight",   key: "sizeWeight",   map: pct2 },
+		{ id: "mwElevWeight",   key: "elevWeight",   map: pct2 },
+		{ id: "mwTinySize",     key: "tinySize" },
+		{ id: "mwTinyBonus",    key: "tinyBonus",    map: pct2 },
+		{ id: "mwThreshold",    key: "threshold",    map: pct2 }
+	];
+
+	sliders.forEach(function(s) {
+		var el = document.getElementById(s.id);
+		if (!el) return;
+		var label = document.getElementById(s.id + "Val");
+		var fmt = function(v) { return s.map && s.map.format ? s.map.format(v) : String(v); };
+
+		// Initialize slider position from the live config when available.
+		if (typeof mergedWatershedConfig !== "undefined" && mergedWatershedConfig) {
+			var cfgVal = mergedWatershedConfig[s.key];
+			if (cfgVal !== undefined) {
+				el.value = (s.map && s.map.fromValue) ? s.map.fromValue(cfgVal) : cfgVal;
+			}
+		}
+		if (label) label.textContent = fmt(+el.value);
+
+		el.addEventListener("input", function() {
+			if (label) label.textContent = fmt(+el.value);
+		});
+		el.addEventListener("change", function() {
+			if (typeof regenerateMergedWatersheds !== "function") return;
+			var overrides = {};
+			overrides[s.key] = (s.map && s.map.toValue) ? s.map.toValue(+el.value) : +el.value;
+			regenerateMergedWatersheds(overrides);
+		});
+	});
+
+	updateMergedWatershedControlsVisibility();
+}
+
+// Show the merged-watershed tuning panel only when that overlay is active.
+function updateMergedWatershedControlsVisibility() {
+	var panel = document.getElementById("mergedWatershedPanel");
+	if (!panel) return;
+	var mode = (typeof surfaceRenderMode !== "undefined") ? surfaceRenderMode : null;
+	panel.style.display = (mode === "mergedWatersheds") ? "" : "none";
 }
 
 // Show the tuning panel (and only the active overlay's knob group) when a feature
@@ -774,6 +840,19 @@ function showHideCoastline(show) {
 		else ui.showCoastlineButton.removeClass("toggled");
 	}
 	if (typeof rebuildCoastlineOutline === "function") rebuildCoastlineOutline();
+}
+
+// Toggle the red tectonic plate-boundary outline. Projection-specific geometry is
+// built by rebuildPlateOutline (rendering-3d.js); it is also re-run on projection
+// switches and planet load.
+function showHidePlateOutline(show) {
+	if (typeof (show) === "boolean") renderPlateOutline = show;
+	else renderPlateOutline = !renderPlateOutline;
+	if (ui.showPlateOutlineButton) {
+		if (renderPlateOutline) ui.showPlateOutlineButton.addClass("toggled");
+		else ui.showPlateOutlineButton.removeClass("toggled");
+	}
+	if (typeof rebuildPlateOutline === "function") rebuildPlateOutline();
 }
 
 function showHidePlateMovements(show) {
@@ -918,7 +997,11 @@ function populateColorOverlayDropdown() {
 	for (var i = 0; i < overlays.length; i++) {
 		var overlay = overlays[i];
 		if (overlay.category !== selectedCategory) continue;
-		dropdown.append($('<option>', { value: overlay.id, text: overlay.name, title: overlay.description }));
+		// Pending (deferred) overlays get a spinner suffix; still selectable so the
+		// user can watch them fill in (they show gray until their data is ready).
+		var pending = (overlay.ready === false);
+		var text = pending ? (overlay.name + " ⏳") : overlay.name;
+		dropdown.append($('<option>', { value: overlay.id, text: text, title: overlay.description }));
 		if (!defaultOverlay) defaultOverlay = overlay.id;
 		if (overlay.id === current) currentInCategory = true;
 	}

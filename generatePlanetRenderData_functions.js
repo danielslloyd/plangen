@@ -1940,6 +1940,28 @@ function getColorOverlays() {
 	return Object.values(colorOverlayRegistry);
 }
 
+// Overlays whose tile data is computed AFTER the globe is first displayed
+// (feature detection + strategic analyses run in the background). While their
+// data is pending they are marked not-ready, so the dropdown shows a spinner
+// and their colour functions return gray until the background pass finishes.
+var DEFERRED_OVERLAY_IDS = [
+	"featPlatesA", "featNestedB", "featLobesC", "featThicknessE", "featBioH",
+	"strategicA", "strategicC", "shoreTree", "mergedWatersheds",
+	"mountainRanges", "terrainBasinRelief", "terrainMassif"
+];
+
+function setOverlaysReady(ids, ready) {
+	for (var i = 0; i < ids.length; i++) {
+		var o = colorOverlayRegistry[ids[i]];
+		if (o) o.ready = ready;
+	}
+}
+
+// Mark all deferred overlays pending (called at the start of a generation's
+// background phase). Missing ids (e.g. feature overlays before first register)
+// are simply skipped.
+function markDeferredOverlaysPending() { setOverlaysReady(DEFERRED_OVERLAY_IDS, false); }
+
 // Get specific overlay by ID
 function getColorOverlay(id) {
 	return colorOverlayRegistry[id];
@@ -2015,19 +2037,29 @@ registerColorOverlay("terrain", "Realistic Terrain", "Realistic biome-based terr
 registerColorOverlay("elevation", "Elevation Map", "Height-based visualization from brown (low) to white (high)", calculateElevationColor, "lambert", "lazy", "geography");
 registerColorOverlay("temperature", "Temperature Map", "Thermal visualization from blue (cold) to red (hot)", calculateTemperatureColor, "lambert", "lazy", "geography");
 registerColorOverlay("moisture", "Moisture Map", "Precipitation visualization from brown (dry) to green (wet)", calculateMoistureColor, "lambert", "lazy", "geography");
-registerColorOverlay("plates", "Tectonic Plates", "Tectonic plate boundaries and colors", calculatePlatesColor, "basic", "lazy", "geography");
+// Tectonic plates are no longer a full-surface color overlay; the plate boundaries
+// are now drawn as a red outline via the "Plate Boundaries" Overlay Display Option
+// (renderPlateOutline / rebuildPlateOutline). calculatePlatesColor is retained for
+// reference but intentionally unregistered.
 
 registerColorOverlay("simple", "Simple Land/Water", "Basic land (green) vs water (blue) visualization", function(tile) {
-	return tile.elevation <= 0 ? new THREE.Color(0x0066CC) : new THREE.Color(0x00AA44);
+	return tile.elevation <= 0
+		? new THREE.Color(getOverlayColor("simple", "water", "#0066cc"))
+		: new THREE.Color(getOverlayColor("simple", "land", "#00aa44"));
 }, "basic", "lazy", "geography");
 
 // Watersheds color overlay - shows drainage basins in different colors
 registerColorOverlay("watersheds", "Watersheds", "Shows drainage basins with distinct colors", function(tile) {
 	// Ocean tiles get flat blue-gray
 	if (tile.elevation <= 0) {
-		return new THREE.Color(0x6699CC);
+		return new THREE.Color(getOverlayColor("watersheds", "ocean", "#6699cc"));
 	}
 
+	// Resolve the watershed's graph-colour palette index through the editable
+	// "regions" palette (graphColorIndex set in applyGraphColoring).
+	if (tile.watershed && tile.watershed.graphColorIndex != null) {
+		return getOverlayPaletteColor("watersheds", "regions", tile.watershed.graphColorIndex, WATERSHED_COLORS);
+	}
 	if (tile.watershed && tile.watershed.graphColor) {
 		return new THREE.Color(tile.watershed.graphColor);
 	}
@@ -2039,14 +2071,46 @@ registerColorOverlay("watersheds", "Watersheds", "Shows drainage basins with dis
 	return new THREE.Color(0x888888);
 }, "basic", "lazy", "geography");
 
+// Shore "nodes" are local extremes of the shore-distance field: land/water tiles
+// with one or zero neighbours that are equal-or-more-extreme in the inland (land)
+// or deep-ocean (water) direction. These are the tips/endpoints of the shore
+// skeleton. Returns a Set of tile ids. O(N) over the mesh.
+function computeShoreNodeSet(tiles) {
+	var nodes = {};
+	for (var i = 0; i < tiles.length; i++) {
+		var tile = tiles[i];
+		if (!tile.hasOwnProperty('shore') || tile.shore === 0) continue;
+		var land = tile.shore > 0;
+		var nb = tile.tiles, count = 0;
+		for (var k = 0; k < nb.length; k++) {
+			var n = nb[k];
+			if (!n.hasOwnProperty('shore')) continue;
+			// Land: neighbour with equal-or-higher shore. Water: equal-or-lower.
+			if (land ? (n.shore >= tile.shore) : (n.shore <= tile.shore)) count++;
+		}
+		if (count <= 1) nodes[tile.id] = true;
+	}
+	return nodes;
+}
+
 // Shore distance color overlay - shows distance from shoreline
-registerColorOverlay("shore", "Shore Distance", "Distance from shore: light blue (ocean edge) to dark blue (deep ocean), bright yellow (land edge) to dark green (inland)", function(tile) {
+registerColorOverlay("shore", "Shore Distance", "Distance from shore: light blue (ocean edge) to dark blue (deep ocean), bright yellow (land edge) to dark green (inland). Local extremes ('nodes') get distinct colors.", function(tile) {
 	if (!tile.hasOwnProperty('shore')) {
 		return new THREE.Color(0x888888); // Gray fallback if shore not calculated
 	}
 
 	if (tile.shore === 0) {
 		return new THREE.Color(0x888888); // Gray for uncategorized tiles
+	}
+
+	// Node tiles (shore-distance local extremes) get distinct, editable colors.
+	var shoreNodes = getOverlayAggregate("shoreNodes", function() {
+		return computeShoreNodeSet(planet.topology.tiles);
+	});
+	if (shoreNodes[tile.id]) {
+		return new THREE.Color(tile.shore > 0
+			? getOverlayColor("shore", "landNode", "#ff2d2d")
+			: getOverlayColor("shore", "oceanNode", "#ff00ff"));
 	}
 
 	var shoreExt = getOverlayAggregate("shore", function() {
@@ -2056,25 +2120,17 @@ registerColorOverlay("shore", "Shore Distance", "Distance from shore: light blue
 	});
 
 	if (tile.shore < 0) {
-		// Ocean tiles: negative values
-		// Light blue (-1) to dark blue (very negative)
+		// Ocean tiles: negative values (ocean edge → deep)
 		var maxNegative = shoreExt.min;
 		var normalizedValue = Math.abs(tile.shore) / Math.abs(maxNegative);
-
-		// Lerp from light blue to dark blue
-		var lightBlue = new THREE.Color(0x87CEEB); // Light blue
-		var darkBlue = new THREE.Color(0x000080);  // Dark blue
-		return lightBlue.clone().lerp(darkBlue, normalizedValue);
+		return new THREE.Color(getOverlayColor("shore", "oceanNear", "#87ceeb"))
+			.lerp(new THREE.Color(getOverlayColor("shore", "oceanFar", "#000080")), normalizedValue);
 	} else {
-		// Land tiles: positive values
-		// Bright yellow (1) to dark green (very positive)
+		// Land tiles: positive values (land edge → inland)
 		var maxPositive = shoreExt.max;
 		var normalizedValue = tile.shore / maxPositive;
-
-		// Lerp from bright yellow to dark green
-		var brightYellow = new THREE.Color(0xFFFF00); // Bright yellow
-		var darkGreen = new THREE.Color(0x006400);    // Dark green
-		return brightYellow.clone().lerp(darkGreen, normalizedValue);
+		return new THREE.Color(getOverlayColor("shore", "landNear", "#ffff00"))
+			.lerp(new THREE.Color(getOverlayColor("shore", "landFar", "#006400")), normalizedValue);
 	}
 }, "basic", "lazy", "geography");
 
@@ -2099,21 +2155,14 @@ registerColorOverlay("reverseShore", "Reverse Shore Distance", "Distance from ex
 		// Light blue (-1) to dark blue (very negative)
 		var maxNegative = revExt.min;
 		var normalizedValue = Math.abs(tile.reverseShore) / Math.abs(maxNegative);
-
-		// Lerp from light blue to dark blue
-		var lightBlue = new THREE.Color(0x87CEEB); // Light blue
-		var darkBlue = new THREE.Color(0x000080);  // Dark blue
-		return lightBlue.clone().lerp(darkBlue, normalizedValue);
+		return new THREE.Color(getOverlayColor("reverseShore", "oceanNear", "#87ceeb"))
+			.lerp(new THREE.Color(getOverlayColor("reverseShore", "oceanFar", "#000080")), normalizedValue);
 	} else {
-		// Land tiles: positive values
-		// Bright yellow (1) to dark green (very positive)
+		// Land tiles: positive values (land edge → inland)
 		var maxPositive = revExt.max;
 		var normalizedValue = tile.reverseShore / maxPositive;
-
-		// Lerp from bright yellow to dark green
-		var brightYellow = new THREE.Color(0xFFFF00); // Bright yellow
-		var darkGreen = new THREE.Color(0x006400);    // Dark green
-		return brightYellow.clone().lerp(darkGreen, normalizedValue);
+		return new THREE.Color(getOverlayColor("reverseShore", "landNear", "#ffff00"))
+			.lerp(new THREE.Color(getOverlayColor("reverseShore", "landFar", "#006400")), normalizedValue);
 	}
 }, "basic", "lazy", "geography");
 
@@ -2154,20 +2203,19 @@ registerColorOverlay("shoreRatio", "Net Shore", "Net shore distance (reverseShor
 		var minLandNet = netExt.lMin;
 		var maxLandNet = netExt.lMax;
 
+		var landMid = getOverlayColor("shoreRatio", "landMid", "#ffff00");
 		if (netShore < 0) {
-			// Negative: interpolate from yellow (0) to red (most negative)
+			// Negative: interpolate from mid (0) to negative colour
 			var normalizedValue = Math.abs(netShore) / Math.abs(minLandNet);
-			var yellow = new THREE.Color(0xFFFF00);   // Yellow at 0
-			var red = new THREE.Color(0xFF0000);      // Red at most negative
-			return yellow.clone().lerp(red, normalizedValue);
+			return new THREE.Color(landMid)
+				.lerp(new THREE.Color(getOverlayColor("shoreRatio", "landNeg", "#ff0000")), normalizedValue);
 		} else if (netShore === 0) {
-			return new THREE.Color(0xFFFF00); // Yellow at exactly 0
+			return new THREE.Color(landMid);
 		} else {
-			// Positive: interpolate from yellow (0) to dark green (most positive)
+			// Positive: interpolate from mid (0) to positive colour
 			var normalizedValue = netShore / maxLandNet;
-			var yellow = new THREE.Color(0xFFFF00);   // Yellow at 0
-			var darkGreen = new THREE.Color(0x006400); // Dark green at most positive
-			return yellow.clone().lerp(darkGreen, normalizedValue);
+			return new THREE.Color(landMid)
+				.lerp(new THREE.Color(getOverlayColor("shoreRatio", "landPos", "#006400")), normalizedValue);
 		}
 	} else {
 		// Ocean tiles: dark blue (negative) -> blue (0) -> magenta (positive)
@@ -2178,20 +2226,19 @@ registerColorOverlay("shoreRatio", "Net Shore", "Net shore distance (reverseShor
 		var minOceanNet = netExt.oMin;
 		var maxOceanNet = netExt.oMax;
 
+		var oceanMid = getOverlayColor("shoreRatio", "oceanMid", "#0000ff");
 		if (netShore < 0) {
-			// Negative: interpolate from blue (0) to dark blue (most negative)
+			// Negative: interpolate from mid (0) to negative colour
 			var normalizedValue = Math.abs(netShore) / Math.abs(minOceanNet);
-			var blue = new THREE.Color(0x0000FF);     // Blue at 0
-			var darkBlue = new THREE.Color(0x000080); // Dark blue at most negative
-			return blue.clone().lerp(darkBlue, normalizedValue);
+			return new THREE.Color(oceanMid)
+				.lerp(new THREE.Color(getOverlayColor("shoreRatio", "oceanNeg", "#000080")), normalizedValue);
 		} else if (netShore === 0) {
-			return new THREE.Color(0x0000FF); // Blue at exactly 0
+			return new THREE.Color(oceanMid);
 		} else {
-			// Positive: interpolate from blue (0) to magenta (most positive)
+			// Positive: interpolate from mid (0) to positive colour
 			var normalizedValue = netShore / maxOceanNet;
-			var blue = new THREE.Color(0x0000FF);     // Blue at 0
-			var magenta = new THREE.Color(0xFF00FF);  // Magenta at most positive
-			return blue.clone().lerp(magenta, normalizedValue);
+			return new THREE.Color(oceanMid)
+				.lerp(new THREE.Color(getOverlayColor("shoreRatio", "oceanPos", "#ff00ff")), normalizedValue);
 		}
 	}
 }, "basic", "lazy", "geography");
@@ -2213,27 +2260,166 @@ registerColorOverlay("neighborShore", "Neighbor Shore Comparison", "For each lan
 	}
 
 	if (adjustedValue < 0) {
-		// Ocean tiles: negative values (percentages)
-		// Light blue (low %) to dark blue (high %)
-		// Range is roughly -1% to -101% (shifted from 0% to 100%)
+		// Ocean tiles: ocean edge → deep (same anchors as shore distance)
 		var normalizedValue = Math.abs(adjustedValue) / 101.0; // Normalize to 0-1
-
-		// Lerp from light blue to dark blue (same as shore distance)
-		var lightBlue = new THREE.Color(0x87CEEB); // Light blue
-		var darkBlue = new THREE.Color(0x000080);  // Dark blue
-		return lightBlue.clone().lerp(darkBlue, normalizedValue);
+		return new THREE.Color(getOverlayColor("neighborShore", "oceanNear", "#87ceeb"))
+			.lerp(new THREE.Color(getOverlayColor("neighborShore", "oceanFar", "#000080")), normalizedValue);
 	} else {
-		// Land tiles: positive values (percentages)
-		// Bright yellow (low %) to dark green (high %)
-		// Range is roughly 1% to 101% (shifted from 0% to 100%)
+		// Land tiles: land edge → inland (same anchors as shore distance)
 		var normalizedValue = adjustedValue / 101.0; // Normalize to 0-1
-
-		// Lerp from bright yellow to dark green (same as shore distance)
-		var brightYellow = new THREE.Color(0xFFFF00); // Bright yellow
-		var darkGreen = new THREE.Color(0x006400);    // Dark green
-		return brightYellow.clone().lerp(darkGreen, normalizedValue);
+		return new THREE.Color(getOverlayColor("neighborShore", "landNear", "#ffff00"))
+			.lerp(new THREE.Color(getOverlayColor("neighborShore", "landFar", "#006400")), normalizedValue);
 	}
 }, "basic", "lazy", "geography");
+
+// ---------------------------------------------------------------------------
+// Narrow connector detection (isthmuses + straits)
+// ---------------------------------------------------------------------------
+// Finds narrow strips of land that bridge larger landmasses (isthmuses, e.g.
+// Panama) and narrow ocean passages between larger water bodies (straits, e.g.
+// Gibraltar). Built on the shore-distance field: a tile's |shore| is its ring
+// distance to the nearest opposite-domain (coast) tile, so a small |shore|
+// means the tile sits in a thin sliver of its own domain.
+//
+// This uses a morphological "bottleneck" test rather than a purely local one,
+// because narrowness must be judged RELATIVE to the masses being connected:
+//
+//   1. ERODE  - peel `scale` rings of coast off each domain (drop tiles whose
+//      shore depth <= scale). Necks thinner than ~2*scale vanish; the surviving
+//      interiors are the "cores". Flood-fill same-domain cores and label them,
+//      keeping cores of at least `minCore` tiles ("larger masses").
+//   2. BRIDGE - a thin tile (depth <= scale) is a connector when its own domain,
+//      searched outward, reaches TWO DIFFERENT large cores lying in roughly
+//      OPPOSITE directions. Opposite directions localise the hit to the neck
+//      axis (so the whole pinch cross-section lights up, not a whole coastline)
+//      and guarantee the tile genuinely sits BETWEEN the two masses.
+//
+// This naturally rejects: broad coasts and bays (one core on the inner side),
+// peninsula tips / fingers and small islands (reach at most one large core), and
+// coastline-roughness notches (a notch lies inside a single core, so it sees
+// only one label). It keeps isthmuses (two land cores) and straits (two water
+// cores), and is resolution-aware via `scale` / `minCore`.
+//
+// Returns a map { tileId: { land:bool, strength:0..1 } } (narrower => stronger).
+// Cost: one O(N) core-labelling pass + a bounded same-domain BFS per thin tile.
+// Memoized once per planet by the overlay.
+function computeNarrowConnectors(tiles, opts) {
+	opts = opts || (typeof window !== "undefined" && window.narrowConnectorOpts) || {};
+	// `scale` (neck half-width) and `minCore` ("large mass" size) are tuned to the
+	// mesh resolution so "narrow" stays relative to the bodies being connected.
+	var scale   = opts.scale   || Math.max(2, Math.round(4 * Math.sqrt(tiles.length / 36000)));
+	var minCore = opts.minCore || Math.max(8, Math.round(tiles.length * 0.0012)); // "large mass" size
+	var oppCos  = (opts.oppCos != null) ? opts.oppCos : -0.30;             // "opposite sides" gate
+	var radius  = 2 * scale + 2;                                           // BFS reach (full cross-section)
+
+	// 1. Label same-domain cores (depth > scale) and record their sizes.
+	var label = {}, sizes = {}, lid = 0;
+	for (var i = 0; i < tiles.length; i++) {
+		var ti = tiles[i];
+		if (label[ti.id] != null) continue;
+		if (!ti.hasOwnProperty('shore')) continue;
+		var d0 = ti.shore < 0 ? -ti.shore : ti.shore;
+		if (d0 <= scale) continue;
+		var coreLand = ti.shore > 0;
+		lid++;
+		var stack = [ti]; label[ti.id] = lid; var size = 0;
+		while (stack.length) {
+			var cur = stack.pop(); size++;
+			var cn = cur.tiles;
+			for (var k = 0; k < cn.length; k++) {
+				var nb = cn[k];
+				if (label[nb.id] != null) continue;
+				if (!nb.hasOwnProperty('shore')) continue;
+				var dn = nb.shore < 0 ? -nb.shore : nb.shore;
+				if (dn <= scale) continue;
+				if ((nb.shore > 0) !== coreLand) continue;
+				label[nb.id] = lid; stack.push(nb);
+			}
+		}
+		sizes[lid] = size;
+	}
+
+	// 2. Flag thin tiles that bridge two large cores in opposite directions.
+	var result = {};
+	for (var i2 = 0; i2 < tiles.length; i2++) {
+		var t = tiles[i2];
+		if (!t.hasOwnProperty('shore')) continue;
+		var depth = t.shore < 0 ? -t.shore : t.shore;
+		if (depth === 0 || depth > scale) continue;
+		var land = t.shore > 0;
+
+		// Tangent frame at t.
+		var nrm = t.normal || t.averagePosition.clone().normalize();
+		var nx = nrm.x, ny = nrm.y, nz = nrm.z;
+		var ox = t.averagePosition.x, oy = t.averagePosition.y, oz = t.averagePosition.z;
+
+		// BFS over SAME-domain tiles; record the first-contact direction to each
+		// large core reached.
+		var dirs = {}, nLabels = 0;
+		var visited = {}; visited[t.id] = true;
+		var frontier = [t], ring = 0;
+		while (ring < radius && frontier.length) {
+			var next = [];
+			for (var f = 0; f < frontier.length; f++) {
+				var fn = frontier[f].tiles;
+				for (var k2 = 0; k2 < fn.length; k2++) {
+					var c = fn[k2];
+					if (visited[c.id]) continue;
+					visited[c.id] = true;
+					if (!c.hasOwnProperty('shore')) continue;
+					if ((c.shore > 0) !== land) continue;          // stay within our domain
+					next.push(c);
+					var lb = label[c.id];
+					if (lb != null && sizes[lb] >= minCore && !dirs[lb]) {
+						var dx = c.averagePosition.x - ox, dy = c.averagePosition.y - oy, dz = c.averagePosition.z - oz;
+						var dnp = dx * nx + dy * ny + dz * nz;
+						dx -= nx * dnp; dy -= ny * dnp; dz -= nz * dnp;
+						var len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+						dirs[lb] = { x: dx / len, y: dy / len, z: dz / len };
+						nLabels++;
+					}
+				}
+			}
+			frontier = next; ring++;
+		}
+		if (nLabels < 2) continue;
+
+		// Require two reached cores in ~opposite directions (a true between-ness).
+		var labs = [], opposed = false;
+		for (var key in dirs) labs.push(key);
+		for (var a = 0; a < labs.length && !opposed; a++) {
+			for (var b2 = a + 1; b2 < labs.length; b2++) {
+				var d1 = dirs[labs[a]], d2 = dirs[labs[b2]];
+				if (d1.x * d2.x + d1.y * d2.y + d1.z * d2.z <= oppCos) { opposed = true; break; }
+			}
+		}
+		if (!opposed) continue;
+
+		result[t.id] = { land: land, strength: (scale - depth + 1) / scale };
+	}
+	return result;
+}
+
+// Narrow Connectors overlay - isthmuses (orange) and straits (blue) over a dim base.
+registerColorOverlay("narrowConnectors", "Narrow Connectors",
+	"Highlights isthmuses (narrow land bridges between landmasses) and straits (narrow ocean channels) detected from the shore-distance field",
+	function(tile) {
+		var conn = getOverlayAggregate("narrowConnectors", function() {
+			return computeNarrowConnectors(planet.topology.tiles);
+		});
+		var hit = conn[tile.id];
+		if (hit) {
+			if (hit.land) {
+				return new THREE.Color(getOverlayColor("narrowConnectors", "isthmusWeak", "#ffd9a0"))
+					.lerp(new THREE.Color(getOverlayColor("narrowConnectors", "isthmusStrong", "#ff6a00")), hit.strength);
+			}
+			return new THREE.Color(getOverlayColor("narrowConnectors", "straitWeak", "#bff7ff"))
+				.lerp(new THREE.Color(getOverlayColor("narrowConnectors", "straitStrong", "#00b3ff")), hit.strength);
+		}
+		// Dim land/water context so the connectors stand out.
+		if (tile.elevation > 0) return new THREE.Color(getOverlayColor("narrowConnectors", "land", "#3a4a32"));
+		return new THREE.Color(getOverlayColor("narrowConnectors", "water", "#1b2a3a"));
+	}, "basic", "lazy", "geography");
 
 function generateDynamicShoreOverlays(tiles) { // legacy stub kept so existing call sites continue to work
 	if (typeof populateColorOverlayDropdown === 'function') populateColorOverlayDropdown();
@@ -2244,7 +2430,7 @@ function generateDynamicShoreOverlays(tiles) { // legacy stub kept so existing c
 registerColorOverlay("watershedRegions", "Watershed Regions", "Shows watersheds with coastal absorption based on O:L ratios", function(tile) {
 	// Ocean tiles get flat blue-gray
 	if (tile.elevation <= 0) {
-		return new THREE.Color(0x6699CC);
+		return new THREE.Color(getOverlayColor("watershedRegions", "ocean", "#6699cc"));
 	}
 
 	// Direct lookup using simple final region structure
@@ -2252,15 +2438,18 @@ registerColorOverlay("watershedRegions", "Watershed Regions", "Shows watersheds 
 		// Direct array access since IDs are now sequential 1, 2, 3...
 		var finalRegion = window.watershedFinalRegions[tile.finalRegionId - 1];
 
+		// Resolve through the editable Regions palette using the graph-colour
+		// index (colorIndex set in applyGraphColoring); fall back to baked color.
+		if (finalRegion && finalRegion.colorIndex != null) {
+			return getOverlayPaletteColor("watershedRegions", "regions", finalRegion.colorIndex);
+		}
 		if (finalRegion && finalRegion.color) {
 			return new THREE.Color(finalRegion.color);
 		}
 
 		// Fallback: Use constrained palette if region exists but missing color
 		if (finalRegion) {
-			var paletteColors = ["#606c38","#283618","#fefae0","#dda15e","#bc6c25"];
-			var paletteIndex = (tile.finalRegionId - 1) % 5;
-			return new THREE.Color(paletteColors[paletteIndex]);
+			return getOverlayPaletteColor("watershedRegions", "regions", tile.finalRegionId - 1);
 		}
 	}
 
@@ -2474,6 +2663,9 @@ function applyGraphColoring(regions, getAdjacencies, colorProperty, regionType) 
 
 		if (colorIndex !== undefined && colorPalette[colorIndex]) {
 			region[colorProperty] = colorPalette[colorIndex];
+			// Also record the palette index so overlays can recolour live through
+			// an editable palette (overlay-colors.js) rather than the baked hex.
+			region[colorProperty + "Index"] = colorIndex;
 		}
 	}
 
@@ -2500,15 +2692,13 @@ registerColorOverlay("thickness", "Granulometric Thickness", "Width-based thickn
 
 	// Separate color schemes for ocean and land
 	if (tile.elevation <= 0) {
-		// Ocean: pale cyan (thin) to vivid blue (thick)
-		var paleCyan = new THREE.Color(0xB0E0E6);   // Pale cyan
-		var vividBlue = new THREE.Color(0x0047AB);  // Vivid blue
-		return paleCyan.clone().lerp(vividBlue, normalized);
+		// Ocean: thin → thick
+		return new THREE.Color(getOverlayColor("thickness", "oceanThin", "#b0e0e6"))
+			.lerp(new THREE.Color(getOverlayColor("thickness", "oceanThick", "#0047ab")), normalized);
 	} else {
-		// Land: pale yellow (thin) to vivid green (thick)
-		var paleYellow = new THREE.Color(0xFFFFCC); // Pale yellow
-		var vividGreen = new THREE.Color(0x228B22); // Vivid green
-		return paleYellow.clone().lerp(vividGreen, normalized);
+		// Land: thin → thick
+		return new THREE.Color(getOverlayColor("thickness", "landThin", "#ffffcc"))
+			.lerp(new THREE.Color(getOverlayColor("thickness", "landThick", "#228b22")), normalized);
 	}
 }, "basic", "lazy", "geography");
 
