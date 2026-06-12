@@ -88,6 +88,15 @@ $(document).ready(function onDocumentReady() {
 	setupFeatureDetectionControls();
 	// Merged-watershed merge tuning sliders -> regenerateMergedWatersheds (live).
 	setupMergedWatershedControls();
+	// Per-overlay tuning panels (Features K / City Priority / Mountain ranges).
+	setupWatershedPeninsulaControls();
+	setupCityPriorityControls();
+	setupMountainRangeControls();
+	updateOverlayTuningPanels();
+	// Feature-detection slider defaults -> clipboard snippet.
+	wireConfigSaveButton("fdSaveConfig", "CONFIG",
+		function() { return typeof featureDetectionConfig !== "undefined" ? featureDetectionConfig : null; },
+		"feature-detection.js (the CONFIG object)");
 
 	// Projection buttons
 	ui.projectGlobe = $("#projectGlobe");
@@ -624,6 +633,8 @@ function setSurfaceRenderMode(mode, force) {
 	if (typeof updateFeatureControlsVisibility === "function") updateFeatureControlsVisibility();
 	// Show the merged-watershed tuning knobs only for that overlay.
 	if (typeof updateMergedWatershedControlsVisibility === "function") updateMergedWatershedControlsVisibility();
+	// Show the K / city-priority / mountain-range tuning panels only for theirs.
+	if (typeof updateOverlayTuningPanels === "function") updateOverlayTuningPanels();
 }
 
 // Wire the feature-detection tuning sliders + "Show Feature Roots" toggle.
@@ -688,33 +699,19 @@ function setupFeatureDetectionControls() {
 	updateFeatureControlsVisibility();
 }
 
-// Wire the merged-watershed merge-tuning sliders. Mirrors
-// setupFeatureDetectionControls: labels update live while dragging; the
-// (heavier) re-merge fires on release via regenerateMergedWatersheds().
-function setupMergedWatershedControls() {
-	var pct2 = {
-		toValue: function(v) { return v / 100; },
-		fromValue: function(v) { return Math.round(v * 100); },
-		format: function(v) { return (v / 100).toFixed(2); }
-	};
-	var sliders = [
-		{ id: "mwBorderWeight", key: "borderWeight", map: pct2 },
-		{ id: "mwSizeWeight",   key: "sizeWeight",   map: pct2 },
-		{ id: "mwElevWeight",   key: "elevWeight",   map: pct2 },
-		{ id: "mwTinySize",     key: "tinySize" },
-		{ id: "mwTinyBonus",    key: "tinyBonus",    map: pct2 },
-		{ id: "mwThreshold",    key: "threshold",    map: pct2 }
-	];
-
+// Generic slider wiring shared by the per-overlay tuning panels. Each slider
+// def: { id, key, map? {toValue, fromValue, format} }. Labels update live while
+// dragging; the (heavier) regenerate fires on release.
+function wireConfigSliders(sliders, getConfig, regenerate) {
 	sliders.forEach(function(s) {
 		var el = document.getElementById(s.id);
 		if (!el) return;
 		var label = document.getElementById(s.id + "Val");
 		var fmt = function(v) { return s.map && s.map.format ? s.map.format(v) : String(v); };
 
-		// Initialize slider position from the live config when available.
-		if (typeof mergedWatershedConfig !== "undefined" && mergedWatershedConfig) {
-			var cfgVal = mergedWatershedConfig[s.key];
+		var cfg = getConfig();
+		if (cfg) {
+			var cfgVal = cfg[s.key];
 			if (cfgVal !== undefined) {
 				el.value = (s.map && s.map.fromValue) ? s.map.fromValue(cfgVal) : cfgVal;
 			}
@@ -725,14 +722,119 @@ function setupMergedWatershedControls() {
 			if (label) label.textContent = fmt(+el.value);
 		});
 		el.addEventListener("change", function() {
-			if (typeof regenerateMergedWatersheds !== "function") return;
 			var overrides = {};
 			overrides[s.key] = (s.map && s.map.toValue) ? s.map.toValue(+el.value) : +el.value;
-			regenerateMergedWatersheds(overrides);
+			regenerate(overrides);
 		});
 	});
+}
 
+// Slider value maps. pct2 = linear /100. quadLow = quadratic, so the LOW end of
+// the range gets fine steps (merge threshold). sqrtHigh = square-root, so the
+// HIGH end gets fine steps (border reward; slider 0..600 -> value 0..6).
+var _pct2Map = {
+	toValue: function(v) { return v / 100; },
+	fromValue: function(v) { return Math.round(v * 100); },
+	format: function(v) { return (v / 100).toFixed(2); }
+};
+var _quadLowMap = {
+	toValue: function(v) { return (v / 100) * (v / 100); },
+	fromValue: function(v) { return Math.round(Math.sqrt(Math.max(0, v)) * 100); },
+	format: function(v) { return ((v / 100) * (v / 100)).toFixed(3); }
+};
+var _sqrtHighMap = {
+	toValue: function(v) { return 6 * Math.sqrt(v / 600); },
+	fromValue: function(v) { return Math.round(600 * (v / 6) * (v / 6)); },
+	format: function(v) { return (6 * Math.sqrt(v / 600)).toFixed(2); }
+};
+
+// Build a paste-ready snippet of a config object's current values and copy it
+// to the clipboard (uses _copySnippetToClipboard from overlay-colors.js).
+function wireConfigSaveButton(buttonId, varName, getConfig, fileHint) {
+	var btn = document.getElementById(buttonId);
+	if (!btn) return;
+	btn.addEventListener("click", function() {
+		var cfg = getConfig();
+		if (!cfg) return;
+		var lines = [];
+		for (var k in cfg) lines.push("\t" + k + ": " + JSON.stringify(cfg[k]));
+		var out = "// Current " + varName + " saved as defaults.\n" +
+			"// Paste over the existing `var " + varName + " = {...};` declaration in " + fileHint + ".\n" +
+			"var " + varName + " = {\n" + lines.join(",\n") + "\n};\n";
+		if (typeof _copySnippetToClipboard === "function") _copySnippetToClipboard(out, btn);
+	});
+}
+
+// Wire the merged-watershed merge-tuning sliders.
+function setupMergedWatershedControls() {
+	wireConfigSliders([
+		{ id: "mwBorderWeight", key: "borderWeight", map: _sqrtHighMap },
+		{ id: "mwSizeWeight",   key: "sizeWeight",   map: _pct2Map },
+		{ id: "mwElevWeight",   key: "elevWeight",   map: _pct2Map },
+		{ id: "mwOceanPenalty", key: "oceanPenalty", map: _pct2Map },
+		{ id: "mwTinySize",     key: "tinySize" },
+		{ id: "mwThreshold",    key: "threshold",    map: _quadLowMap }
+	], function() { return typeof mergedWatershedConfig !== "undefined" ? mergedWatershedConfig : null; },
+	   function(o) { if (typeof regenerateMergedWatersheds === "function") regenerateMergedWatersheds(o); });
+	wireConfigSaveButton("mwSaveConfig", "mergedWatershedConfig",
+		function() { return typeof mergedWatershedConfig !== "undefined" ? mergedWatershedConfig : null; },
+		"strategic-overlays.js");
 	updateMergedWatershedControlsVisibility();
+}
+
+// Wire the Features K (Watershed Peninsulas) tuning sliders.
+function setupWatershedPeninsulaControls() {
+	wireConfigSliders([
+		{ id: "wpBorderWeight", key: "borderWeight", map: _sqrtHighMap },
+		{ id: "wpSizeWeight",   key: "sizeWeight",   map: _pct2Map },
+		{ id: "wpElevWeight",   key: "elevWeight",   map: _pct2Map },
+		{ id: "wpNeckMid",      key: "neckMid",      map: _pct2Map },
+		{ id: "wpTinySize",     key: "tinySize" },
+		{ id: "wpThreshold",    key: "threshold",    map: _quadLowMap }
+	], function() { return typeof watershedPeninsulaConfig !== "undefined" ? watershedPeninsulaConfig : null; },
+	   function(o) { if (typeof regenerateWatershedPeninsulas === "function") regenerateWatershedPeninsulas(o); });
+	wireConfigSaveButton("wpSaveConfig", "watershedPeninsulaConfig",
+		function() { return typeof watershedPeninsulaConfig !== "undefined" ? watershedPeninsulaConfig : null; },
+		"strategic-overlays.js");
+}
+
+// Wire the City Priority tuning sliders.
+function setupCityPriorityControls() {
+	wireConfigSliders([
+		{ id: "cpCoastalWeight",  key: "coastalWeight",  map: _pct2Map },
+		{ id: "cpJunctionWeight", key: "junctionWeight", map: _pct2Map }
+	], function() { return typeof cityPriorityConfig !== "undefined" ? cityPriorityConfig : null; },
+	   function(o) { if (typeof regenerateCityPriority === "function") regenerateCityPriority(o); });
+	wireConfigSaveButton("cpSaveConfig", "cityPriorityConfig",
+		function() { return typeof cityPriorityConfig !== "undefined" ? cityPriorityConfig : null; },
+		"post-generation.js");
+}
+
+// Wire the Mountain & Hill Ranges tuning sliders.
+function setupMountainRangeControls() {
+	wireConfigSliders([
+		{ id: "mrHillHeight",     key: "hillHeight",     map: _pct2Map },
+		{ id: "mrMountainHeight", key: "mountainHeight", map: _pct2Map },
+		{ id: "mrMinSize",        key: "minSize" }
+	], function() { return typeof mountainRangeConfig !== "undefined" ? mountainRangeConfig : null; },
+	   function(o) { if (typeof regenerateMountainRanges === "function") regenerateMountainRanges(o); });
+	wireConfigSaveButton("mrSaveConfig", "mountainRangeConfig",
+		function() { return typeof mountainRangeConfig !== "undefined" ? mountainRangeConfig : null; },
+		"strategic-overlays.js");
+}
+
+// Show each per-overlay tuning panel only when its overlay is active.
+function updateOverlayTuningPanels() {
+	var mode = (typeof surfaceRenderMode !== "undefined") ? surfaceRenderMode : null;
+	var panels = {
+		watershedPeninsulaPanel: "featBasinsK",
+		cityPriorityPanel: "upstreamCalories",
+		mountainRangePanel: "mountainRanges"
+	};
+	for (var id in panels) {
+		var el = document.getElementById(id);
+		if (el) el.style.display = (mode === panels[id]) ? "" : "none";
+	}
 }
 
 // Show the merged-watershed tuning panel only when that overlay is active.
@@ -997,6 +1099,7 @@ function populateColorOverlayDropdown() {
 	for (var i = 0; i < overlays.length; i++) {
 		var overlay = overlays[i];
 		if (overlay.category !== selectedCategory) continue;
+		if (overlay.hidden) continue; // hidden overlays: code kept, not listed
 		// Pending (deferred) overlays get a spinner suffix; still selectable so the
 		// user can watch them fill in (they show gray until their data is ready).
 		var pending = (overlay.ready === false);

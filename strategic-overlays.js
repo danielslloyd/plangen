@@ -10,14 +10,10 @@
 //                                tiles at exactly N hops away; highlights
 //                                cliffs, narrow straits and steep coastal
 //                                transitions)
-//   Shore Tree                  (per-body BFS tree rooted at the most-interior
-//                                tile via neighbour-shore comparison; root +
-//                                branching tiles get a distinct accent colour,
-//                                other tiles are coloured by how many such
-//                                "nodes" they sit behind on the way to root)
-//
-// All four are geography overlays (category="geography"). Entry point at the
+// All are geography overlays (category="geography"). Entry point at the
 // bottom of the file: generateStrategicOverlays(planet).
+// (The old "shoreTree" node-distance overlay was deleted — superseded by the
+// Shore Tree (Skeleton) / Shore Branch Depth pair.)
 
 // ============================================================================
 // SHARED HELPERS
@@ -444,107 +440,9 @@ function computeStrategicC(tiles) {
 	}
 }
 
-// ============================================================================
-// SHORE TREE
-//
-// Build a BFS tree per body (land or water mass), rooted at the tile with the
-// largest |shore| value — i.e. the most-interior tile of that body, identified
-// via the same "neighbour shore comparison" the geography overlay relies on
-// (root = local max of |shore| that beats every same-body neighbour).
-//
-// In the BFS tree:
-//   - parent[t] = the same-body neighbour with smallest BFS depth, tie-broken
-//     by the largest |shore| (so the chain naturally walks "up the gradient"
-//     toward the root)
-//   - the root and every tile with ≥ 2 children are flagged as "nodes"
-//   - tile._shoreTreeNodeDist = how many of those nodes you pass through on
-//     the way back to root (root itself counts as 1; the rest of an unbranched
-//     chain inherits the same value; each new branch increments)
-//
-// Coloured by node-distance, with separate palettes for land and ocean. Root
-// and branching nodes get a bright accent so the tree is visible.
-// ============================================================================
-
-function computeShoreTree(tiles) {
-	for (var i = 0; i < tiles.length; i++) {
-		tiles[i]._shoreTreeNodeDist = 0;
-		tiles[i]._shoreTreeIsNode = false;
-		tiles[i]._shoreTreeIsRoot = false;
-		tiles[i]._shoreTreeMaxDist = 1;
-	}
-
-	// Group tiles by body so each body gets its own tree.
-	var groups = new Map();
-	for (var i = 0; i < tiles.length; i++) {
-		var t = tiles[i];
-		if (!t.body) continue;
-		var arr = groups.get(t.body);
-		if (!arr) { arr = []; groups.set(t.body, arr); }
-		arr.push(t);
-	}
-
-	groups.forEach(function (bodyTiles, body) {
-		if (bodyTiles.length === 0) return;
-		var bodySet = new Set(bodyTiles);
-
-		// Pick root = tile with largest |shore| (ties broken by smallest id).
-		var root = bodyTiles[0], rootAbs = Math.abs(root.shore || 0);
-		for (var i = 1; i < bodyTiles.length; i++) {
-			var s = Math.abs(bodyTiles[i].shore || 0);
-			if (s > rootAbs || (s === rootAbs && (bodyTiles[i].id || 0) < (root.id || 0))) {
-				root = bodyTiles[i]; rootAbs = s;
-			}
-		}
-
-		// BFS from root, recording parent + depth.
-		var parent = new Map(), depth = new Map();
-		parent.set(root, null); depth.set(root, 0);
-		var queue = [root], qi = 0;
-		while (qi < queue.length) {
-			var cur = queue[qi++];
-			var nbs = cur.tiles;
-			for (var k = 0; k < nbs.length; k++) {
-				var nb = nbs[k];
-				if (!bodySet.has(nb) || depth.has(nb)) continue;
-				depth.set(nb, depth.get(cur) + 1);
-				parent.set(nb, cur);
-				queue.push(nb);
-			}
-		}
-
-		// Child counts → identify branching tiles.
-		var childCount = new Map();
-		for (var i = 0; i < bodyTiles.length; i++) childCount.set(bodyTiles[i], 0);
-		parent.forEach(function (p, child) {
-			if (p) childCount.set(p, (childCount.get(p) || 0) + 1);
-		});
-
-		var isNode = function (t) {
-			return t === root || (childCount.get(t) || 0) >= 2;
-		};
-
-		// node-distance: BFS order guarantees parents are processed first, so
-		// each tile just adds 1 to its parent's value when it is itself a node.
-		var nodeDist = new Map();
-		nodeDist.set(root, 1);
-		var maxDist = 1;
-		for (var i = 1; i < queue.length; i++) {
-			var t = queue[i];
-			var p = parent.get(t);
-			var d = (nodeDist.get(p) || 0) + (isNode(t) ? 1 : 0);
-			nodeDist.set(t, d);
-			if (d > maxDist) maxDist = d;
-		}
-
-		root._shoreTreeIsRoot = true;
-		for (var i = 0; i < bodyTiles.length; i++) {
-			var t = bodyTiles[i];
-			t._shoreTreeNodeDist = nodeDist.get(t) || 0;
-			t._shoreTreeIsNode = isNode(t);
-			t._shoreTreeMaxDist = maxDist;
-		}
-	});
-}
+// NOTE: the old SHORE TREE overlay ("shoreTree", node-distance BFS tree) was
+// deleted — superseded by the Shore Tree (Skeleton) / Shore Branch Depth pair
+// in generatePlanetRenderData_functions.js.
 
 // ============================================================================
 // OVERLAY REGISTRATION
@@ -568,7 +466,7 @@ registerColorOverlay(
 			return new THREE.Color(getOverlayColor('strategicA', 'oceanLow', '#1e2850'))
 				.lerp(new THREE.Color(getOverlayColor('strategicA', 'oceanHigh', '#00ffd0')), intensity); // dark-blue → cyan
 	},
-	"basic", "lazy", "geography"
+	"basic", "lazy", "strategic"
 );
 defineOverlayColors("strategicA", [
 	{ key: "landLow",   label: "Land low",   def: "#3c3c14" },
@@ -598,79 +496,9 @@ registerColorOverlay(
 		return new THREE.Color(getOverlayColor('strategicC', 'waterLow', '#15294a'))
 			.lerp(new THREE.Color(getOverlayColor('strategicC', 'waterHigh', '#3fffd4')), v);
 	},
-	"basic", "lazy", "geography"
+	"basic", "lazy", "strategic"
 );
 
-// Distinct palettes per domain for the shore-tree overlay. Each tile picks a
-// colour by its node-distance; root and branching tiles get an accent so the
-// tree is visible.
-var SHORE_TREE_LAND_PALETTE = [
-	"#0a3d0a", // 1 — root chain
-	"#1e5e1e",
-	"#3f8d2c",
-	"#7fbc41",
-	"#c7e58b",
-	"#fff5b8",
-	"#ffd86a",
-	"#ff9a3d",
-	"#d6521f",
-	"#7a1d09"
-];
-var SHORE_TREE_OCEAN_PALETTE = [
-	"#0a1a4a", // 1 — root chain
-	"#152a78",
-	"#2547a8",
-	"#3f76c8",
-	"#69a8da",
-	"#a7d3e8",
-	"#e3f4f8",
-	"#f9c9e0",
-	"#d066b0",
-	"#6a1e6a"
-];
-var SHORE_TREE_LAND_ROOT_ACCENT = "#ffffff";
-var SHORE_TREE_LAND_NODE_ACCENT = "#ffe680";
-var SHORE_TREE_OCEAN_ROOT_ACCENT = "#ffffff";
-var SHORE_TREE_OCEAN_NODE_ACCENT = "#a8f0ff";
-
-registerColorOverlay(
-	"shoreTree", "Shore Tree (Node Distance)",
-	"For each body, builds a BFS tree rooted at the highest/lowest shore " +
-	"value (most-interior tile) via neighbour-shore comparison. Tiles are " +
-	"coloured by how many branching 'nodes' lie between them and the root. " +
-	"The root and each branching node get a distinct accent colour. Land and " +
-	"ocean use different palettes.",
-	function(tile) {
-		if (!tile.hasOwnProperty('_shoreTreeNodeDist')) return new THREE.Color(0x888888);
-		var isLand = tile.elevation > 0;
-		var paletteKey = isLand ? "landChain" : "oceanChain";
-		var fallback = isLand ? SHORE_TREE_LAND_PALETTE : SHORE_TREE_OCEAN_PALETTE;
-
-		if (tile._shoreTreeIsRoot) {
-			return new THREE.Color(getOverlayColor("shoreTree", isLand ? "landRoot" : "oceanRoot",
-				isLand ? SHORE_TREE_LAND_ROOT_ACCENT : SHORE_TREE_OCEAN_ROOT_ACCENT));
-		}
-		if (tile._shoreTreeIsNode) {
-			return new THREE.Color(getOverlayColor("shoreTree", isLand ? "landNode" : "oceanNode",
-				isLand ? SHORE_TREE_LAND_NODE_ACCENT : SHORE_TREE_OCEAN_NODE_ACCENT));
-		}
-
-		// Clamp (not cycle) by node-distance so deeper tiles stay at the palette end.
-		var palette = getOverlayPaletteColors("shoreTree", paletteKey, fallback);
-		var dist = tile._shoreTreeNodeDist || 1;
-		var idx = Math.min(palette.length - 1, Math.max(0, dist - 1));
-		return new THREE.Color(palette[idx]);
-	},
-	"basic", "lazy", "geography"
-);
-defineOverlayPalette("shoreTree", "landChain",  "Land chain",  SHORE_TREE_LAND_PALETTE);
-defineOverlayPalette("shoreTree", "oceanChain", "Ocean chain", SHORE_TREE_OCEAN_PALETTE);
-defineOverlayColors("shoreTree", [
-	{ key: "landRoot",  label: "Land root",  def: SHORE_TREE_LAND_ROOT_ACCENT },
-	{ key: "landNode",  label: "Land node",  def: SHORE_TREE_LAND_NODE_ACCENT },
-	{ key: "oceanRoot", label: "Ocean root", def: SHORE_TREE_OCEAN_ROOT_ACCENT },
-	{ key: "oceanNode", label: "Ocean node", def: SHORE_TREE_OCEAN_NODE_ACCENT }
-]);
 
 // ============================================================================
 // SHARED HELPERS FOR REGION / TERRAIN-FEATURE OVERLAYS
@@ -760,22 +588,29 @@ function _hueColor(id, family) {
 // ============================================================================
 
 var mergedWatershedConfig = {
-	borderWeight: 1.5, // reward for the fraction of the smaller basin's border that the merge removes
-	sizeWeight: 0.35,  // penalty proportional to the smaller basin's size (dislike merging large basins)
+	borderWeight: 3.0, // reward for the fraction of the smaller basin's border that the merge removes
+	sizeWeight: 0.05,  // penalty proportional to the smaller basin's size (dislike merging large basins)
 	elevWeight: 0.8,   // penalty proportional to mean boundary elevation (dislike high-elevation divides)
-	tinySize: 16,      // basins with this many tiles or fewer are almost always merged
-	tinyBonus: 5.0,    // desirability bonus added when the smaller side is tiny
-	threshold: 0.15    // keep merging while the best pair's desirability stays at/above this
+	oceanPenalty: 0.5, // penalty when the shared divide terminates at the ocean (touches the coast)
+	tinySize: 40,      // basins with this many tiles or fewer ALWAYS merge into a neighbour
+	threshold: 0.05    // keep merging while the best pair's desirability stays at/above this
 };
 
 var MERGED_WATERSHED_PALETTE = [0xE2E8C6, 0xB7C779, 0x7D8A42, 0xA67B5B, 0x6F5A4D, 0x4D3B2E];
 
-function computeMergedWatersheds(planet) {
+// ---------------------------------------------------------------------------
+// Shared watershed-merge engine. Builds the basin-adjacency graph (with shared
+// border length, mean boundary elevation and mean boundary |shore| per pair),
+// then greedily merges the most desirable adjacent pair while
+// opts.keepMerging(bestD, regionCount) says to. Afterwards every region at or
+// below opts.tinySize is force-merged into its most desirable neighbour
+// (replaces the old "tiny bonus" term). Returns the union-find context.
+// ---------------------------------------------------------------------------
+function _watershedMergeEngine(planet, opts) {
 	var tiles = planet.topology.tiles;
-	for (var i = 0; i < tiles.length; i++) tiles[i]._mwColor = null;
 	var watersheds = (planet.topology && planet.topology.watersheds) || [];
 	var W = watersheds.length;
-	if (!W) return;
+	if (!W) return null;
 
 	var idx = new Map();
 	for (var i = 0; i < W; i++) idx.set(watersheds[i], i);
@@ -784,9 +619,15 @@ function computeMergedWatersheds(planet) {
 	for (var i = 0; i < W; i++) { parent[i] = i; size[i] = watersheds[i].tiles.length; perim[i] = 0; adj[i] = new Map(); }
 	function find(x) { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; }
 
+	// Max land |shore| for normalizing boundary interiorness.
+	var maxShore = 1;
+	for (i = 0; i < tiles.length; i++) {
+		if (tiles[i].shore > maxShore) maxShore = tiles[i].shore;
+	}
+
 	// Build the region-adjacency graph from land-tile neighbours. Each undirected
 	// boundary edge is seen twice (once from each side), keeping adj symmetric.
-	for (var i = 0; i < tiles.length; i++) {
+	for (i = 0; i < tiles.length; i++) {
 		var t = tiles[i];
 		if (!t.watershed) continue;
 		var a = idx.get(t.watershed); if (a === undefined) continue;
@@ -797,24 +638,27 @@ function computeMergedWatersheds(planet) {
 			var b = idx.get(n.watershed); if (b === undefined) continue;
 			perim[a]++;
 			var be = (t.elevation + n.elevation) * 0.5;
+			var bs = (Math.abs(t.shore || 0) + Math.abs(n.shore || 0)) * 0.5 / maxShore;
+			// the divide "terminates at the ocean" when one of its edges sits on
+			// the coast (either side of the boundary pair is a shore==1 tile)
+			var ct = (Math.abs(t.shore || 0) <= 1 || Math.abs(n.shore || 0) <= 1) ? 1 : 0;
 			var m = adj[a].get(b);
-			if (!m) adj[a].set(b, { shared: 1, elevSum: be });
-			else { m.shared++; m.elevSum += be; }
+			if (!m) adj[a].set(b, { shared: 1, elevSum: be, shoreSum: bs, coastTouch: ct });
+			else { m.shared++; m.elevSum += be; m.shoreSum += bs; m.coastTouch += ct; }
 		}
 	}
 
-	var cfg = mergedWatershedConfig;
-	var meanSize = 0; for (var i = 0; i < W; i++) meanSize += size[i]; meanSize /= W; if (meanSize < 1) meanSize = 1;
+	var meanSize = 0;
+	for (i = 0; i < W; i++) meanSize += size[i];
+	meanSize /= W; if (meanSize < 1) meanSize = 1;
+	var regionCount = W;
+
+	var ctx = { size: size, perim: perim, adj: adj, meanSize: meanSize, find: find, watersheds: watersheds, idx: idx };
 
 	function desirability(a, b) {
-		var m = adj[a].get(b); if (!m) return -Infinity;
-		var minPerim = Math.min(perim[a], perim[b]); if (minPerim < 1) minPerim = 1;
-		var borderFrac = m.shared / minPerim;
-		var minSize = Math.min(size[a], size[b]);
-		var avgElev = m.elevSum / m.shared;
-		var d = cfg.borderWeight * borderFrac - cfg.sizeWeight * (minSize / meanSize) - cfg.elevWeight * avgElev;
-		if (minSize <= cfg.tinySize) d += cfg.tinyBonus;
-		return d;
+		var m = adj[a].get(b);
+		if (!m) return -Infinity;
+		return opts.desirability(ctx, a, b, m);
 	}
 
 	function merge(a, b) {
@@ -828,13 +672,14 @@ function computeMergedWatersheds(planet) {
 			if (g === a) return;
 			adj[g].delete(b);
 			var ag = adj[a].get(g);
-			if (ag) { ag.shared += rec.shared; ag.elevSum += rec.elevSum; }
-			else adj[a].set(g, { shared: rec.shared, elevSum: rec.elevSum });
+			if (ag) { ag.shared += rec.shared; ag.elevSum += rec.elevSum; ag.shoreSum += rec.shoreSum; ag.coastTouch += rec.coastTouch; }
+			else adj[a].set(g, { shared: rec.shared, elevSum: rec.elevSum, shoreSum: rec.shoreSum, coastTouch: rec.coastTouch });
 			var ga = adj[g].get(a);
-			if (ga) { ga.shared += rec.shared; ga.elevSum += rec.elevSum; }
-			else adj[g].set(a, { shared: rec.shared, elevSum: rec.elevSum });
+			if (ga) { ga.shared += rec.shared; ga.elevSum += rec.elevSum; ga.shoreSum += rec.shoreSum; ga.coastTouch += rec.coastTouch; }
+			else adj[g].set(a, { shared: rec.shared, elevSum: rec.elevSum, shoreSum: rec.shoreSum, coastTouch: rec.coastTouch });
 		});
 		adj[b] = new Map();
+		regionCount--;
 	}
 
 	var safety = W * 4;
@@ -848,19 +693,66 @@ function computeMergedWatersheds(planet) {
 				if (d > bestD) { bestD = d; bestA = g; bestB = h; }
 			});
 		}
-		if (bestA < 0 || bestD < cfg.threshold) break;
+		if (bestA < 0 || !opts.keepMerging(bestD, regionCount)) break;
 		merge(bestA, bestB);
 	}
 
-	// Group tiles by final root.
-	var groupTiles = {};
-	for (var i = 0; i < tiles.length; i++) {
-		var t = tiles[i];
-		if (!t.watershed) continue;
-		var a = idx.get(t.watershed); if (a === undefined) continue;
-		var root = find(a);
-		(groupTiles[root] = groupTiles[root] || []).push(t);
+	// Forced tiny-basin absorption: every region at/below tinySize merges into
+	// its most desirable neighbour regardless of threshold.
+	var tinySize = opts.tinySize || 0;
+	if (tinySize > 0) {
+		var changed = true;
+		safety = W * 2;
+		while (changed && safety-- > 0) {
+			changed = false;
+			for (g = 0; g < W; g++) {
+				if (find(g) !== g || size[g] > tinySize || adj[g].size === 0) continue;
+				var bD = -Infinity, bH = -1;
+				adj[g].forEach(function (rec, h) {
+					if (find(h) !== h) return;
+					var d = desirability(g, h);
+					if (d > bD) { bD = d; bH = h; }
+				});
+				if (bH >= 0) { merge(g, bH); changed = true; }
+			}
+		}
 	}
+
+	ctx.regionCount = regionCount;
+	ctx.groupTilesByRoot = function() {
+		var groupTiles = {};
+		for (var i2 = 0; i2 < tiles.length; i2++) {
+			var t2 = tiles[i2];
+			if (!t2.watershed) continue;
+			var a2 = idx.get(t2.watershed); if (a2 === undefined) continue;
+			var root = find(a2);
+			(groupTiles[root] = groupTiles[root] || []).push(t2);
+		}
+		return groupTiles;
+	};
+	return ctx;
+}
+
+function computeMergedWatersheds(planet) {
+	var tiles = planet.topology.tiles;
+	for (var i = 0; i < tiles.length; i++) tiles[i]._mwColor = null;
+	var cfg = mergedWatershedConfig;
+
+	var ctx = _watershedMergeEngine(planet, {
+		desirability: function(c, a, b, m) {
+			var minPerim = Math.min(c.perim[a], c.perim[b]); if (minPerim < 1) minPerim = 1;
+			var borderFrac = m.shared / minPerim;
+			var minSize = Math.min(c.size[a], c.size[b]);
+			var avgElev = m.elevSum / m.shared;
+			return cfg.borderWeight * borderFrac - cfg.sizeWeight * (minSize / c.meanSize) - cfg.elevWeight * avgElev
+				- cfg.oceanPenalty * (m.coastTouch > 0 ? 1 : 0);
+		},
+		keepMerging: function(bestD) { return bestD >= cfg.threshold; },
+		tinySize: cfg.tinySize
+	});
+	if (!ctx) return;
+	var adj = ctx.adj, find = ctx.find;
+	var groupTiles = ctx.groupTilesByRoot();
 
 	// Adjacency-aware graph colouring with the watershed palette.
 	var roots = Object.keys(groupTiles).map(Number);
@@ -911,8 +803,104 @@ registerColorOverlay(
 		if (tile.watershed && tile.watershed.color) return new THREE.Color(tile.watershed.color);
 		return new THREE.Color(0x888888);
 	},
-	"basic", "lazy", "geography"
+	"basic", "lazy", "features"
 );
+
+// ---------------------------------------------------------------------------
+// WATERSHED-MERGE VARIANTS (used by Features K and M in
+// generatePlanetRenderData_functions.js — both return { tileId: regionId }).
+// ---------------------------------------------------------------------------
+
+// K — PENINSULA-AWARE MERGE: same greedy merge, but the boundary's mean
+// interiorness (|shore|, normalized) shifts desirability: merging across a
+// deep-interior divide is encouraged, merging across a coastal NECK (low
+// |shore| on both sides — exactly where a peninsula joins the mainland) is
+// strongly discouraged. Peninsulas, capes and other appendages therefore stay
+// their own groups while interior basins coalesce.
+var watershedPeninsulaConfig = {
+	borderWeight: 3.0,
+	sizeWeight: 0.05,
+	elevWeight: 0.3,
+	neckMid: 0.25,     // boundary interiorness below this BLOCKS the merge
+	tinySize: 40,
+	threshold: 0.05
+};
+
+function computeWatershedPeninsulas(planet) {
+	var cfg = watershedPeninsulaConfig;
+	var ctx = _watershedMergeEngine(planet, {
+		desirability: function(c, a, b, m) {
+			var minPerim = Math.min(c.perim[a], c.perim[b]); if (minPerim < 1) minPerim = 1;
+			var borderFrac = m.shared / minPerim;
+			var minSize = Math.min(c.size[a], c.size[b]);
+			var avgElev = m.elevSum / m.shared;
+			var avgShore = m.shoreSum / m.shared; // 0 coast .. 1 deepest interior
+			// The border reward is GATED by signed interiorness: a divide deep in
+			// the interior keeps its full reward, while one running along the coast
+			// (a peninsula neck) flips the score negative no matter how much border
+			// the merge would erase.
+			var gate = (avgShore - cfg.neckMid) / (1 - cfg.neckMid);
+			return cfg.borderWeight * borderFrac * gate
+				- cfg.sizeWeight * (minSize / c.meanSize)
+				- cfg.elevWeight * avgElev;
+		},
+		keepMerging: function(bestD) { return bestD >= cfg.threshold; },
+		tinySize: cfg.tinySize
+	});
+	if (!ctx) return {};
+	var out = {}, groups = ctx.groupTilesByRoot();
+	for (var r in groups) {
+		var ts = groups[r];
+		for (var j = 0; j < ts.length; j++) out[ts[j].id] = +r;
+	}
+	return out;
+}
+
+// Live retuning of Features K from the sliders / console.
+function regenerateWatershedPeninsulas(overrides) {
+	if (overrides) for (var k in overrides) watershedPeninsulaConfig[k] = overrides[k];
+	if (typeof planet === "undefined" || !planet || !planet.topology) return;
+	var agg = planet._overlayAggregates && planet._overlayAggregates.featureGroupings;
+	if (!agg) return; // background pass not finished yet
+	agg.basins = computeWatershedPeninsulas(planet);
+	if (typeof surfaceRenderMode !== "undefined" && surfaceRenderMode === "featBasinsK" &&
+		typeof recalculateBufferGeometryColors === "function" &&
+		planet.renderData && planet.renderData.surface && planet.renderData.surface.geometry) {
+		recalculateBufferGeometryColors(planet.topology.tiles, planet.renderData.surface.geometry, surfaceRenderMode);
+	}
+}
+
+// M — BALANCED MERGE: desirability is dominated by combined size (always fuse
+// the smallest adjacent pair, border fraction as tie-break) and merging
+// continues until a target region count, giving roughly equal-population
+// watershed provinces.
+var balancedWatershedConfig = {
+	basinsPerProvince: 10, // target = raw basin count / this (scales with resolution)
+	borderWeight: 0.6,     // tie-break toward border-erasing merges
+	tinySize: 40
+};
+
+function computeBalancedWatershedProvinces(planet) {
+	var cfg = balancedWatershedConfig;
+	var W = ((planet.topology && planet.topology.watersheds) || []).length;
+	var target = Math.max(6, Math.round(W / cfg.basinsPerProvince));
+	var ctx = _watershedMergeEngine(planet, {
+		desirability: function(c, a, b, m) {
+			var minPerim = Math.min(c.perim[a], c.perim[b]); if (minPerim < 1) minPerim = 1;
+			var borderFrac = m.shared / minPerim;
+			return -(c.size[a] + c.size[b]) / c.meanSize + cfg.borderWeight * borderFrac;
+		},
+		keepMerging: function(bestD, regionCount) { return regionCount > target; },
+		tinySize: cfg.tinySize
+	});
+	if (!ctx) return {};
+	var out = {}, groups = ctx.groupTilesByRoot();
+	for (var r in groups) {
+		var ts = groups[r];
+		for (var j = 0; j < ts.length; j++) out[ts[j].id] = +r;
+	}
+	return out;
+}
 
 // ============================================================================
 // MOUNTAIN / HILL RANGES  (Task: collect ranges as tile groups, coloured)
@@ -922,25 +910,49 @@ registerColorOverlay(
 // brightened, hills are darkened, so peaks read within their range.
 // ============================================================================
 
-var mountainRangeConfig = { hillPct: 0.55, mountainPct: 0.82, minSize: 3 };
+// Absolute elevation thresholds (not percentiles). A range is a connected set
+// of WATERSHED-BORDER tiles (land tiles with a neighbour in a different
+// drainage basin) above the hill height — drainage divides ARE the ridgelines,
+// so this traces the crest of each range. Tiles above the mountain height are
+// brightened within their range.
+var mountainRangeConfig = { hillHeight: 0.35, mountainHeight: 0.60, minSize: 3 };
 
 function computeMountainRanges(tiles) {
 	for (var i = 0; i < tiles.length; i++) { tiles[i]._rangeId = 0; tiles[i]._rangeKind = 0; }
 	var land = tiles.filter(_isLand);
 	if (!land.length) return;
-	var hill = _landElevationThreshold(land, mountainRangeConfig.hillPct);
-	var mtn = _landElevationThreshold(land, mountainRangeConfig.mountainPct);
-	var inRange = function (t) { return t.elevation >= hill; };
+	var cfg = mountainRangeConfig;
+	function onWatershedBorder(t) {
+		if (!t.watershed) return false;
+		var nb = t.tiles;
+		for (var k = 0; k < nb.length; k++) {
+			if (nb[k].watershed && nb[k].watershed !== t.watershed) return true;
+		}
+		return false;
+	}
+	var inRange = function (t) { return t.elevation >= cfg.hillHeight && onWatershedBorder(t); };
 	var comps = _landComponents(land, inRange, function () { return true; });
 	var rid = 0;
 	for (var c = 0; c < comps.length; c++) {
-		if (comps[c].length < mountainRangeConfig.minSize) continue;
+		if (comps[c].length < cfg.minSize) continue;
 		rid++;
 		for (var j = 0; j < comps[c].length; j++) {
 			var t = comps[c][j];
 			t._rangeId = rid;
-			t._rangeKind = t.elevation >= mtn ? 2 : 1;
+			t._rangeKind = t.elevation >= cfg.mountainHeight ? 2 : 1;
 		}
+	}
+}
+
+// Live retuning of the mountain-range thresholds from the sliders / console.
+function regenerateMountainRanges(overrides) {
+	if (overrides) for (var k in overrides) mountainRangeConfig[k] = overrides[k];
+	if (typeof planet === "undefined" || !planet || !planet.topology) return;
+	computeMountainRanges(planet.topology.tiles);
+	if (typeof surfaceRenderMode !== "undefined" && surfaceRenderMode === "mountainRanges" &&
+		typeof recalculateBufferGeometryColors === "function" &&
+		planet.renderData && planet.renderData.surface && planet.renderData.surface.geometry) {
+		recalculateBufferGeometryColors(planet.topology.tiles, planet.renderData.surface.geometry, surfaceRenderMode);
 	}
 }
 
@@ -954,7 +966,7 @@ registerColorOverlay(
 		var base = getOverlayPaletteColor("mountainRanges", "ranges", tile._rangeId - 1, MOUNTAIN_PALETTE_DEFAULT);
 		return tile._rangeKind === 2 ? base.offsetHSL(0, 0, 0.12) : base.offsetHSL(0, 0, -0.07);
 	},
-	"basic", "lazy", "geography"
+	"basic", "lazy", "features"
 );
 defineOverlayPalette("mountainRanges", "ranges", "Ranges", MOUNTAIN_PALETTE_DEFAULT);
 
@@ -1002,7 +1014,7 @@ registerColorOverlay(
 		if (tile._tfBTier === 1) return getOverlayPaletteColor("terrainBasinRelief", "valley", i, LAND_PALETTE_DEFAULT).offsetHSL(0, 0, -0.08);
 		return getOverlayPaletteColor("terrainBasinRelief", "valley", i, LAND_PALETTE_DEFAULT).offsetHSL(0, 0, 0.05);
 	},
-	"basic", "lazy", "geography"
+	"basic", "lazy", "features"
 );
 defineOverlayPalette("terrainBasinRelief", "core",   "Core (high)", MOUNTAIN_PALETTE_DEFAULT);
 defineOverlayPalette("terrainBasinRelief", "valley", "Valley",      LAND_PALETTE_DEFAULT);
@@ -1044,7 +1056,7 @@ registerColorOverlay(
 			? getOverlayPaletteColor("terrainMassif", "massif",  i, MOUNTAIN_PALETTE_DEFAULT)
 			: getOverlayPaletteColor("terrainMassif", "lowland", i, LAND_PALETTE_DEFAULT);
 	},
-	"basic", "lazy", "geography"
+	"basic", "lazy", "features"
 );
 defineOverlayPalette("terrainMassif", "massif",  "Massif",  MOUNTAIN_PALETTE_DEFAULT);
 defineOverlayPalette("terrainMassif", "lowland", "Lowland", LAND_PALETTE_DEFAULT);
@@ -1061,9 +1073,6 @@ function generateStrategicOverlays(planet) {
 	ctime('Strategic C: Shore Delta @ N');
 	computeStrategicC(tiles);
 	ctimeEnd('Strategic C: Shore Delta @ N');
-	ctime('Shore Tree');
-	computeShoreTree(tiles);
-	ctimeEnd('Shore Tree');
 	ctime('Merged Watersheds');
 	computeMergedWatersheds(planet);
 	ctimeEnd('Merged Watersheds');

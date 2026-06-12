@@ -160,17 +160,6 @@ var SHORE_NODE_SLOTS = SHORE_SLOTS.concat([
 ]);
 defineOverlayColors("shore", SHORE_NODE_SLOTS);
 defineOverlayColors("reverseShore", SHORE_SLOTS);
-defineOverlayColors("neighborShore", SHORE_SLOTS);
-
-// Net Shore: diverging gradients per domain (negative→mid→positive).
-defineOverlayColors("shoreRatio", [
-	{ key: "landMid", label: "Land zero",  def: "#ffff00" },
-	{ key: "landNeg", label: "Land neg",   def: "#ff0000" },
-	{ key: "landPos", label: "Land pos",   def: "#006400" },
-	{ key: "oceanMid", label: "Ocean zero", def: "#0000ff" },
-	{ key: "oceanNeg", label: "Ocean neg",  def: "#000080" },
-	{ key: "oceanPos", label: "Ocean pos",  def: "#ff00ff" }
-]);
 
 // Narrow Connectors: isthmus (land bridge) + strait (ocean channel) gradients,
 // over a dim land/water context.
@@ -181,13 +170,6 @@ defineOverlayColors("narrowConnectors", [
 	{ key: "isthmusStrong", label: "Isthmus thin", def: "#ff6a00" },
 	{ key: "straitWeak",    label: "Strait wide",  def: "#bff7ff" },
 	{ key: "straitStrong",  label: "Strait thin",  def: "#00b3ff" }
-]);
-
-defineOverlayColors("thickness", [
-	{ key: "oceanThin",  label: "Ocean thin",  def: "#b0e0e6" },
-	{ key: "oceanThick", label: "Ocean thick", def: "#0047ab" },
-	{ key: "landThin",   label: "Land thin",   def: "#ffffcc" },
-	{ key: "landThick",  label: "Land thick",  def: "#228b22" }
 ]);
 
 // Watersheds & Watershed Regions: ocean fill + an editable region palette.
@@ -286,7 +268,9 @@ function refreshLayerColorPanel(mode) {
 
 		var inputs = content.querySelectorAll("input[type=color]");
 		for (var k = 0; k < inputs.length; k++) {
-			inputs[k].addEventListener("input", function () {
+			// "change" (not "input") so the expensive full recolor runs only on the
+			// FINAL color when the picker closes, not on every hue the drag crosses.
+			inputs[k].addEventListener("change", function () {
 				var idx = this.getAttribute("data-index");
 				if (idx != null) {
 					setOverlayPaletteValue(this.getAttribute("data-mode"), this.getAttribute("data-key"), +idx, this.value);
@@ -301,4 +285,54 @@ function refreshLayerColorPanel(mode) {
 
 	var resetBtn = document.getElementById("resetLayerColorsButton");
 	if (resetBtn) resetBtn.onclick = function () { resetLayerColors(mode); };
+	var saveBtn = document.getElementById("saveLayerColorsButton");
+	if (saveBtn) saveBtn.onclick = function () { saveLayerColorsAsDefaults(mode); };
+}
+
+// Build a paste-ready code snippet of the overlay's CURRENT colours (as new
+// defaults) and copy it to the clipboard, mirroring the terrain panel's
+// "Export Colors" button. Paste it over the overlay's existing
+// defineOverlayColors / defineOverlayPalette calls.
+function saveLayerColorsAsDefaults(mode) {
+	var theme = overlayColorThemes[mode];
+	if (!theme || !theme.slots.length) return;
+	var colorSlots = [], lines = [];
+	for (var i = 0; i < theme.slots.length; i++) {
+		var s = theme.slots[i];
+		if (s.type === "palette") {
+			var cur = (s.colors || s.def).map(function (c) { return '"' + c + '"'; }).join(", ");
+			lines.push('defineOverlayPalette("' + mode + '", "' + s.key + '", "' + s.label + '", [' + cur + ']);');
+		} else {
+			var val = theme.map[s.key] || s.def;
+			colorSlots.push('\t{ key: "' + s.key + '", label: "' + s.label + '", def: "' + val + '" }');
+		}
+	}
+	var out = "// Current colours for overlay \"" + mode + "\" saved as defaults.\n" +
+		"// Paste over the existing defineOverlayColors/defineOverlayPalette calls for this overlay.\n";
+	if (colorSlots.length) out += 'defineOverlayColors("' + mode + '", [\n' + colorSlots.join(",\n") + "\n]);\n";
+	if (lines.length) out += lines.join("\n") + "\n";
+	_copySnippetToClipboard(out, document.getElementById("saveLayerColorsButton"));
+}
+
+// Clipboard helper shared by all the "Save as defaults" buttons. Flashes the
+// button label as feedback.
+function _copySnippetToClipboard(text, btn) {
+	function done(ok) {
+		if (!btn) return;
+		var orig = btn.textContent;
+		btn.textContent = ok ? "Copied!" : "Copy failed";
+		setTimeout(function () { btn.textContent = orig; }, 1200);
+	}
+	if (navigator.clipboard && navigator.clipboard.writeText) {
+		navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(false); });
+	} else {
+		var ta = document.createElement("textarea");
+		ta.value = text;
+		document.body.appendChild(ta);
+		ta.select();
+		var ok = false;
+		try { ok = document.execCommand("copy"); } catch (e) {}
+		document.body.removeChild(ta);
+		done(ok);
+	}
 }

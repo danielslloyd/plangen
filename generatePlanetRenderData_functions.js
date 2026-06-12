@@ -1924,15 +1924,23 @@ function createPlanetMaterial(materialType) {
 
 // Register a color overlay function
 function registerColorOverlay(id, name, description, colorFunction, materialType, computationType, category) {
-	colorOverlayRegistry[id] = {
+	var entry = {
 		id: id,
 		name: name,
 		description: description,
-		colorFunction: colorFunction,
 		materialType: materialType || 'basic', // Default to basic material if not specified
 		computationType: computationType || 'lazy', // 'precompute', 'lazy', or 'immediate'
 		category: category || 'geography' // 'resources', 'food', or 'geography'
 	};
+	// While an overlay's data is still being computed in the background
+	// (entry.ready === false) render flat gray instead of calling the real
+	// color function — some color functions would otherwise compute their
+	// aggregates synchronously and freeze the UI.
+	entry.colorFunction = function(tile) {
+		if (entry.ready === false) return new THREE.Color(0x999999);
+		return colorFunction(tile);
+	};
+	colorOverlayRegistry[id] = entry;
 }
 
 // Get all registered overlays
@@ -1946,8 +1954,13 @@ function getColorOverlays() {
 // and their colour functions return gray until the background pass finishes.
 var DEFERRED_OVERLAY_IDS = [
 	"featPlatesA", "featNestedB", "featLobesC", "featThicknessE", "featBioH",
-	"strategicA", "strategicC", "shoreTree", "mergedWatersheds",
-	"mountainRanges", "terrainBasinRelief", "terrainMassif"
+	"strategicA", "strategicC", "mergedWatersheds",
+	"mountainRanges", "terrainBasinRelief", "terrainMassif",
+	// shore-field tagging overlays: their aggregates are precomputed in the
+	// background phase so selecting them never blocks the UI.
+	"shoreSkeleton", "shoreBranchDepth", "localConvexity",
+	"narrowChannels", "localThickness", "chokepoints",
+	"featBasinsK", "featCommunitiesL", "featProvincesM"
 ];
 
 function setOverlaysReady(ids, ready) {
@@ -2069,7 +2082,7 @@ registerColorOverlay("watersheds", "Watersheds", "Shows drainage basins with dis
 	}
 	// Default color for land tiles without watershed assignment
 	return new THREE.Color(0x888888);
-}, "basic", "lazy", "geography");
+}, "basic", "lazy", "features");
 
 // Shore "nodes" are local extremes of the shore-distance field: land/water tiles
 // with one or zero neighbours that are equal-or-more-extreme in the inland (land)
@@ -2165,112 +2178,879 @@ registerColorOverlay("reverseShore", "Reverse Shore Distance", "Distance from ex
 			.lerp(new THREE.Color(getOverlayColor("reverseShore", "landFar", "#006400")), normalizedValue);
 	}
 }, "basic", "lazy", "geography");
+// Hidden from the dropdown (code kept); still selectable programmatically.
+colorOverlayRegistry["reverseShore"].hidden = true;
 
-// Net Shore color overlay - shows reverseShore minus shore
-registerColorOverlay("shoreRatio", "Net Shore", "Net shore distance (reverseShore - shore) with custom color schemes", function(tile) {
-	if (!tile.hasOwnProperty('shore') || !tile.hasOwnProperty('reverseShore')) {
-		return new THREE.Color(0x888888); // Gray fallback if data not calculated
-	}
-
-	if (tile.shore === 0 || tile.reverseShore === 0) {
-		return new THREE.Color(0x888888); // Gray for uncategorized tiles
-	}
-
-	// Calculate net shore: reverseShore - shore
-	var netShore = tile.reverseShore - tile.shore;
-
-	// Per-domain net-shore extremes, computed once per planet (was O(N) per tile).
-	var netExt = getOverlayAggregate("shoreRatio", function() {
-		var lMin = Infinity, lMax = -Infinity, lCount = 0;
-		var oMin = Infinity, oMax = -Infinity, oCount = 0;
-		var ts = planet.topology.tiles;
-		for (var i = 0; i < ts.length; i++) {
-			var t = ts[i];
-			if (!t.hasOwnProperty('reverseShore')) continue;
-			var net = t.reverseShore - t.shore;
-			if (t.shore > 0) { if (net < lMin) lMin = net; if (net > lMax) lMax = net; lCount++; }
-			else if (t.shore < 0) { if (net < oMin) oMin = net; if (net > oMax) oMax = net; oCount++; }
-		}
-		return { lMin: lMin, lMax: lMax, lCount: lCount, oMin: oMin, oMax: oMax, oCount: oCount };
+// ---------------------------------------------------------------------------
+// Shore tree (skeleton) of each land/water body
+// ---------------------------------------------------------------------------
+// Uses the shore-node tiles (the red/fuchsia local extremes of the Shore
+// Distance overlay) as the leaves of a tree per connected body:
+//   - ROOT = the node with the largest |shore| in the body (continent core /
+//     open-ocean centre).
+//   - A Dijkstra tree rooted there, with step cost biased toward high-|shore|
+//     tiles, so paths run along the interior "spine" rather than hugging coast.
+//   - Each node tip is traced back to the root; where traces merge, a JUNCTION
+//     becomes an internal vertex of the tree. Skeleton tiles are the union of
+//     all traces.
+//   - Every other tile in the body is then claimed by the nearest skeleton
+//     tile (multi-source BFS) and inherits its branch id and node depth
+//     (= number of tree vertices between that point and the root).
+// Tags peninsulas/bays etc.: a finger of land claimed by a deep branch is a
+// peninsula; the mirror case on water is a bay/gulf.
+// Results are memoized per planet via getOverlayAggregate("shoreTrees").
+function computeShoreTrees(tiles) {
+	var n = tiles.length;
+	var nodeSet = getOverlayAggregate("shoreNodes", function() {
+		return computeShoreNodeSet(tiles);
 	});
 
+	// Per-tile outputs, keyed by tile id.
+	var out = {
+		branchId: {},    // small int, unique per branch within a body (offset per body for hue variety)
+		nodeDepth: {},   // # of tree vertices between the tile's skeleton anchor and the root
+		onSkeleton: {},  // true for skeleton (trace) tiles
+		vertexKind: {},  // 'root' | 'tip' | 'junction' for tree vertices
+		maxDepth: { land: 1, water: 1 }
+	};
+
+	// --- identify connected bodies by shore sign -------------------------
+	// tile.id is the index into tiles[] in this engine, but be defensive:
+	var idToIndex = {};
+	for (var i = 0; i < n; i++) idToIndex[tiles[i].id] = i;
+
+	var bodyIndex = new Int32Array(n); for (i = 0; i < n; i++) bodyIndex[i] = -1;
+	var bodies = [];
+	for (i = 0; i < n; i++) {
+		if (bodyIndex[i] !== -1 || !tiles[i].shore) continue;
+		var isLand = tiles[i].shore > 0;
+		var members = [], queue = [i];
+		bodyIndex[i] = bodies.length;
+		while (queue.length) {
+			var ti = queue.pop();
+			members.push(ti);
+			var nb = tiles[ti].tiles;
+			for (var k = 0; k < nb.length; k++) {
+				var nj = idToIndex[nb[k].id];
+				if (nj === undefined || bodyIndex[nj] !== -1) continue;
+				if (!nb[k].shore || (nb[k].shore > 0) !== isLand) continue;
+				bodyIndex[nj] = bodies.length;
+				queue.push(nj);
+			}
+		}
+		bodies.push({ isLand: isLand, members: members });
+	}
+
+	// --- per-body Dijkstra tree + skeleton --------------------------------
+	var INF = Infinity;
+	var dist = new Float64Array(n);
+	var parent = new Int32Array(n);
+	var globalBranchCounter = 0;
+
+	// simple binary min-heap of tile indices keyed by dist[]
+	function Heap() {
+		this.a = [];
+	}
+	Heap.prototype.push = function(v) {
+		var a = this.a; a.push(v);
+		var c = a.length - 1;
+		while (c > 0) {
+			var p = (c - 1) >> 1;
+			if (dist[a[p]] <= dist[a[c]]) break;
+			var t = a[p]; a[p] = a[c]; a[c] = t; c = p;
+		}
+	};
+	Heap.prototype.pop = function() {
+		var a = this.a, top = a[0], last = a.pop();
+		if (a.length) {
+			a[0] = last;
+			var p = 0;
+			for (;;) {
+				var l = 2 * p + 1, r = l + 1, m = p;
+				if (l < a.length && dist[a[l]] < dist[a[m]]) m = l;
+				if (r < a.length && dist[a[r]] < dist[a[m]]) m = r;
+				if (m === p) break;
+				var t = a[p]; a[p] = a[m]; a[m] = t; p = m;
+			}
+		}
+		return top;
+	};
+
+	for (var b = 0; b < bodies.length; b++) {
+		var body = bodies[b];
+		var members = body.members;
+
+		// nodes (tips) in this body; root = node with max |shore|
+		var tips = [], rootIdx = -1, rootAbs = -1, maxAbs = 0;
+		for (i = 0; i < members.length; i++) {
+			var m = members[i], abs = Math.abs(tiles[m].shore);
+			if (abs > maxAbs) maxAbs = abs;
+			if (nodeSet[tiles[m].id]) {
+				tips.push(m);
+				if (abs > rootAbs) { rootAbs = abs; rootIdx = m; }
+			}
+		}
+		if (rootIdx === -1) {
+			// degenerate tiny body with no detected node: use its most interior tile
+			for (i = 0; i < members.length; i++) {
+				if (rootIdx === -1 || Math.abs(tiles[members[i]].shore) > rootAbs) {
+					rootIdx = members[i]; rootAbs = Math.abs(tiles[members[i]].shore);
+				}
+			}
+			tips.push(rootIdx);
+		}
+
+		// Dijkstra from root; cost prefers interior (high |shore|) tiles so the
+		// tree spine follows the medial axis of the body.
+		for (i = 0; i < members.length; i++) { dist[members[i]] = INF; parent[members[i]] = -1; }
+		dist[rootIdx] = 0;
+		var heap = new Heap();
+		heap.push(rootIdx);
+		while (heap.a.length) {
+			var u = heap.pop();
+			var du = dist[u];
+			nb = tiles[u].tiles;
+			for (k = 0; k < nb.length; k++) {
+				var v = idToIndex[nb[k].id];
+				if (v === undefined || bodyIndex[v] !== b) continue;
+				var step = 1 + 3 * (maxAbs - Math.abs(tiles[v].shore));
+				if (du + step < dist[v]) {
+					dist[v] = du + step;
+					parent[v] = u;
+					heap.push(v);
+				}
+			}
+		}
+
+		// Trace each tip back to the root, marking skeleton tiles. skelParent
+		// links each skeleton tile to the next skeleton tile toward the root.
+		var skelParent = {}; // tileIndex -> tileIndex
+		var skelChildCount = {};
+		out.vertexKind[tiles[rootIdx].id] = "root";
+		out.onSkeleton[tiles[rootIdx].id] = true;
+		for (i = 0; i < tips.length; i++) {
+			var cur = tips[i];
+			if (cur !== rootIdx) out.vertexKind[tiles[cur].id] = out.vertexKind[tiles[cur].id] || "tip";
+			while (cur !== rootIdx && !out.onSkeleton[tiles[cur].id]) {
+				out.onSkeleton[tiles[cur].id] = true;
+				var p = parent[cur];
+				if (p === -1) break; // disconnected safety
+				skelParent[cur] = p;
+				skelChildCount[p] = (skelChildCount[p] || 0) + 1;
+				cur = p;
+			}
+		}
+		// Junctions: skeleton tiles where >1 traced child paths merged.
+		for (var key in skelChildCount) {
+			if (skelChildCount[key] > 1 && out.vertexKind[tiles[key].id] === undefined) {
+				out.vertexKind[tiles[key].id] = "junction";
+			}
+		}
+
+		// Walk the skeleton from the root outward, assigning branch ids and node
+		// depths. A new branch starts after each tree vertex; depth increments
+		// when passing a junction or starting from the root.
+		var skelChildren = {}; // parent -> [children] (skeleton only)
+		for (key in skelParent) {
+			var pk = skelParent[key];
+			(skelChildren[pk] || (skelChildren[pk] = [])).push(+key);
+		}
+		var rootId = tiles[rootIdx].id;
+		out.branchId[rootId] = globalBranchCounter;
+		out.nodeDepth[rootId] = 0;
+		var stack = [rootIdx];
+		while (stack.length) {
+			u = stack.pop();
+			var uid = tiles[u].id;
+			var kids = skelChildren[u] || [];
+			var uIsVertex = out.vertexKind[uid] !== undefined;
+			for (k = 0; k < kids.length; k++) {
+				var c = kids[k];
+				var cid = tiles[c].id;
+				out.branchId[cid] = uIsVertex ? ++globalBranchCounter : out.branchId[uid];
+				out.nodeDepth[cid] = out.nodeDepth[uid] + (uIsVertex ? 1 : 0);
+				stack.push(c);
+			}
+		}
+
+		// Claim every remaining body tile from the nearest skeleton tile
+		// (multi-source BFS) so each tile belongs to a branch.
+		var frontier = [];
+		for (i = 0; i < members.length; i++) {
+			if (out.onSkeleton[tiles[members[i]].id]) frontier.push(members[i]);
+		}
+		while (frontier.length) {
+			var next = [];
+			for (i = 0; i < frontier.length; i++) {
+				u = frontier[i];
+				uid = tiles[u].id;
+				nb = tiles[u].tiles;
+				for (k = 0; k < nb.length; k++) {
+					v = idToIndex[nb[k].id];
+					if (v === undefined || bodyIndex[v] !== b) continue;
+					var vid = nb[k].id;
+					if (out.branchId[vid] !== undefined) continue;
+					out.branchId[vid] = out.branchId[uid];
+					out.nodeDepth[vid] = out.nodeDepth[uid];
+					next.push(v);
+				}
+			}
+			frontier = next;
+		}
+
+		// track max depth for normalization, per domain
+		var domain = body.isLand ? "land" : "water";
+		for (i = 0; i < members.length; i++) {
+			var d = out.nodeDepth[tiles[members[i]].id] || 0;
+			if (d > out.maxDepth[domain]) out.maxDepth[domain] = d;
+		}
+		globalBranchCounter++; // keep bodies' palettes from aligning
+	}
+
+	return out;
+}
+
+var SHORE_TREE_BRANCH_COLORS = [
+	"#e6194b","#3cb44b","#ffe119","#4363d8","#f58231","#911eb4","#46f0f0",
+	"#f032e6","#bcf60c","#fabebe","#008080","#e6beff","#9a6324","#fffac8",
+	"#800000","#aaffc3","#808000","#ffd8b1","#000075"
+];
+
+// A) Shore Tree overlay: draws the per-body skeleton in place. Skeleton tiles
+// get a distinct color per branch; root/tips/junctions are highlighted; all
+// other tiles show a dimmed land/water base so the tree reads clearly.
+registerColorOverlay("shoreSkeleton", "Shore Tree (Skeleton)", "Skeleton tree of each landmass/water body: branches traced from the body's root (deepest interior node) to every shore-node tip (the red/fuchsia tiles of Shore Distance). Root = white, tips = red (land) / fuchsia (water), junctions = black, branches colored distinctly.", function(tile) {
+	if (!tile.hasOwnProperty('shore') || tile.shore === 0) return new THREE.Color(0x888888);
+
+	var tree = getOverlayAggregate("shoreTrees", function() {
+		return computeShoreTrees(planet.topology.tiles);
+	});
+
+	var kind = tree.vertexKind[tile.id];
+	if (kind === "root") return new THREE.Color(getOverlayColor("shoreSkeleton", "root", "#ffffff"));
+	if (kind === "junction") return new THREE.Color(getOverlayColor("shoreSkeleton", "junction", "#000000"));
+	if (kind === "tip") {
+		return new THREE.Color(tile.shore > 0
+			? getOverlayColor("shoreSkeleton", "landTip", "#ff2d2d")
+			: getOverlayColor("shoreSkeleton", "waterTip", "#ff00ff"));
+	}
+	if (tree.onSkeleton[tile.id]) {
+		return getOverlayPaletteColor("shoreSkeleton", "branches", tree.branchId[tile.id], SHORE_TREE_BRANCH_COLORS);
+	}
+	// non-skeleton tiles: dim base so branches stand out
+	return new THREE.Color(tile.shore > 0
+		? getOverlayColor("shoreSkeleton", "landBase", "#3a4a32")
+		: getOverlayColor("shoreSkeleton", "waterBase", "#1c2a40"));
+}, "basic", "lazy", "features");
+
+// B) Shore Branch Depth overlay: every tile is claimed by its nearest skeleton
+// branch and colored by how many tree vertices (nodes) lie between it and the
+// body's root. Depth 0 = core; high depth = far out along fingers/inlets,
+// i.e. peninsulas (land) and bays/gulfs (water).
+registerColorOverlay("shoreBranchDepth", "Shore Branch Depth", "Tiles colored by tree depth: number of shore-tree nodes between the tile's branch and the body root. Land ramps yellow (core) to red (peninsula tips); water ramps light blue (open) to purple (deep bays).", function(tile) {
+	if (!tile.hasOwnProperty('shore') || tile.shore === 0) return new THREE.Color(0x888888);
+
+	var tree = getOverlayAggregate("shoreTrees", function() {
+		return computeShoreTrees(planet.topology.tiles);
+	});
+
+	var depth = tree.nodeDepth[tile.id];
+	if (depth === undefined) return new THREE.Color(0x888888);
+
 	if (tile.shore > 0) {
-		// Land tiles: red (negative) -> yellow (0) -> dark green (positive)
-		if (netExt.lCount === 0) {
-			return new THREE.Color(0x888888);
-		}
-
-		var minLandNet = netExt.lMin;
-		var maxLandNet = netExt.lMax;
-
-		var landMid = getOverlayColor("shoreRatio", "landMid", "#ffff00");
-		if (netShore < 0) {
-			// Negative: interpolate from mid (0) to negative colour
-			var normalizedValue = Math.abs(netShore) / Math.abs(minLandNet);
-			return new THREE.Color(landMid)
-				.lerp(new THREE.Color(getOverlayColor("shoreRatio", "landNeg", "#ff0000")), normalizedValue);
-		} else if (netShore === 0) {
-			return new THREE.Color(landMid);
-		} else {
-			// Positive: interpolate from mid (0) to positive colour
-			var normalizedValue = netShore / maxLandNet;
-			return new THREE.Color(landMid)
-				.lerp(new THREE.Color(getOverlayColor("shoreRatio", "landPos", "#006400")), normalizedValue);
-		}
+		var t = Math.min(1, depth / tree.maxDepth.land);
+		return new THREE.Color(getOverlayColor("shoreBranchDepth", "landCore", "#ffff66"))
+			.lerp(new THREE.Color(getOverlayColor("shoreBranchDepth", "landTip", "#cc0000")), t);
 	} else {
-		// Ocean tiles: dark blue (negative) -> blue (0) -> magenta (positive)
-		if (netExt.oCount === 0) {
-			return new THREE.Color(0x888888);
-		}
+		t = Math.min(1, depth / tree.maxDepth.water);
+		return new THREE.Color(getOverlayColor("shoreBranchDepth", "waterCore", "#9fd8f0"))
+			.lerp(new THREE.Color(getOverlayColor("shoreBranchDepth", "waterTip", "#5b0a91")), t);
+	}
+}, "basic", "lazy", "features");
 
-		var minOceanNet = netExt.oMin;
-		var maxOceanNet = netExt.oMax;
-
-		var oceanMid = getOverlayColor("shoreRatio", "oceanMid", "#0000ff");
-		if (netShore < 0) {
-			// Negative: interpolate from mid (0) to negative colour
-			var normalizedValue = Math.abs(netShore) / Math.abs(minOceanNet);
-			return new THREE.Color(oceanMid)
-				.lerp(new THREE.Color(getOverlayColor("shoreRatio", "oceanNeg", "#000080")), normalizedValue);
-		} else if (netShore === 0) {
-			return new THREE.Color(oceanMid);
-		} else {
-			// Positive: interpolate from mid (0) to positive colour
-			var normalizedValue = netShore / maxOceanNet;
-			return new THREE.Color(oceanMid)
-				.lerp(new THREE.Color(getOverlayColor("shoreRatio", "oceanPos", "#ff00ff")), normalizedValue);
+// ---------------------------------------------------------------------------
+// Shore-field tagging overlays (four approaches; see docs/feature-detection.md)
+// ---------------------------------------------------------------------------
+// Shared helper: connected bodies by shore sign + each body's root (max |shore|).
+// Returns { bodyIndex: Int32Array by tiles[] index, bodies: [{isLand, members[], rootIdx}] }.
+function computeShoreBodies(tiles) {
+	var n = tiles.length;
+	var idToIndex = {};
+	for (var i = 0; i < n; i++) idToIndex[tiles[i].id] = i;
+	var bodyIndex = new Int32Array(n);
+	for (i = 0; i < n; i++) bodyIndex[i] = -1;
+	var bodies = [];
+	for (i = 0; i < n; i++) {
+		if (bodyIndex[i] !== -1 || !tiles[i].shore) continue;
+		var isLand = tiles[i].shore > 0;
+		var members = [], queue = [i], rootIdx = i, rootAbs = Math.abs(tiles[i].shore);
+		bodyIndex[i] = bodies.length;
+		while (queue.length) {
+			var ti = queue.pop();
+			members.push(ti);
+			var abs = Math.abs(tiles[ti].shore);
+			if (abs > rootAbs) { rootAbs = abs; rootIdx = ti; }
+			var nb = tiles[ti].tiles;
+			for (var k = 0; k < nb.length; k++) {
+				var nj = idToIndex[nb[k].id];
+				if (nj === undefined || bodyIndex[nj] !== -1) continue;
+				if (!nb[k].shore || (nb[k].shore > 0) !== isLand) continue;
+				bodyIndex[nj] = bodies.length;
+				queue.push(nj);
+			}
 		}
+		bodies.push({ isLand: isLand, members: members, rootIdx: rootIdx, rootAbs: rootAbs });
+	}
+	return { bodyIndex: bodyIndex, bodies: bodies, idToIndex: idToIndex };
+}
+
+// APPROACH 1: LOCAL CONVEXITY (two-scale same-body fraction).
+// For each tile, BFS a disk (over all tiles, both domains) and measure the
+// fraction that belongs to the tile's own BODY — not just its domain, so a
+// nearby separate island doesn't count as "own side". Two scales are blended
+// 50/50: a 4-ring disk (capes, coves) and a 12-ring disk (whole peninsulas,
+// gulfs). Signed score c = 1 - 2*fraction per scale: > 0 convex, < 0 concave.
+var CONVEXITY_R1 = 4, CONVEXITY_R2 = 12;
+// Incremental scanner so the background phase can process the planet in slices
+// (the 12-ring disk per tile is the most expensive tagging computation).
+function makeConvexityScanner(tiles) {
+	var n = tiles.length;
+	var sb = getOverlayAggregate("shoreBodies", function() {
+		return computeShoreBodies(tiles);
+	});
+	var conv = {};
+	var mark = new Int32Array(n), stamp = 0;
+	function processRange(start, end) {
+		for (var i = start; i < end; i++) {
+			var tile = tiles[i];
+			if (!tile.shore) continue;
+			var myBody = sb.bodyIndex[i];
+			stamp++;
+			var frontier = [i];
+			var same1 = 0, total1 = 0, same2 = 0, total2 = 0;
+			mark[i] = stamp;
+			for (var ring = 0; ring <= CONVEXITY_R2; ring++) {
+				var next = [];
+				for (var f = 0; f < frontier.length; f++) {
+					var u = frontier[f];
+					var own = sb.bodyIndex[u] === myBody;
+					total2++; if (own) same2++;
+					if (ring <= CONVEXITY_R1) { total1++; if (own) same1++; }
+					if (ring === CONVEXITY_R2) continue;
+					var nb = tiles[u].tiles;
+					for (var k = 0; k < nb.length; k++) {
+						var v = sb.idToIndex[nb[k].id];
+						if (v === undefined || mark[v] === stamp) continue;
+						mark[v] = stamp;
+						next.push(v);
+					}
+				}
+				frontier = next;
+			}
+			var c1 = 1 - 2 * (same1 / total1);
+			var c2 = 1 - 2 * (same2 / total2);
+			conv[tile.id] = 0.5 * c1 + 0.5 * c2; // -1 concave .. +1 convex
+		}
+	}
+	return { conv: conv, processRange: processRange, total: n };
+}
+function computeLocalConvexity(tiles) {
+	var scanner = makeConvexityScanner(tiles);
+	scanner.processRange(0, scanner.total);
+	return scanner.conv;
+}
+
+// Relative convexity: each tile's score minus the MEAN score of tiles at the
+// same |shore| level WITHIN the same body. A tiny island's shore tiles are all
+// convex, so the per-body baseline absorbs that and the island reads neutral;
+// on a big continent the shore=1 baseline is a straight coast, so capes and
+// coves stand out. Display values are normalized per domain.
+function computeRelativeConvexity(tiles) {
+	var conv = getOverlayAggregate("localConvexity", function() {
+		return computeLocalConvexity(tiles);
+	});
+	var sb = getOverlayAggregate("shoreBodies", function() {
+		return computeShoreBodies(tiles);
+	});
+	var out = { value: {}, max: { land: 0.01, water: 0.01 } };
+	for (var b = 0; b < sb.bodies.length; b++) {
+		var body = sb.bodies[b];
+		// mean convexity per |shore| level in this body
+		var sum = {}, cnt = {};
+		for (var i = 0; i < body.members.length; i++) {
+			var t = tiles[body.members[i]];
+			var lvl = Math.abs(t.shore);
+			sum[lvl] = (sum[lvl] || 0) + (conv[t.id] || 0);
+			cnt[lvl] = (cnt[lvl] || 0) + 1;
+		}
+		var domain = body.isLand ? "land" : "water";
+		for (i = 0; i < body.members.length; i++) {
+			t = tiles[body.members[i]];
+			lvl = Math.abs(t.shore);
+			var rel = (conv[t.id] || 0) - sum[lvl] / cnt[lvl];
+			out.value[t.id] = rel;
+			if (Math.abs(rel) > out.max[domain]) out.max[domain] = Math.abs(rel);
+		}
+	}
+	return out;
+}
+
+registerColorOverlay("localConvexity", "Local Convexity", "Two-scale (4-ring + 12-ring, blended) fraction of each tile's surrounding disk that belongs to its own BODY, shown relative to the average tile at the same shore distance within that body (so small islands don't read hot). Land: red = more convex than its peers (capes, peninsula tips), teal = more concave (bay shores). Water: purple = inlets poking into land, dark blue = unusually open.", function(tile) {
+	if (!tile.hasOwnProperty('shore') || tile.shore === 0) return new THREE.Color(0x888888);
+	var rc = getOverlayAggregate("relativeConvexity", function() {
+		return computeRelativeConvexity(planet.topology.tiles);
+	});
+	var rel = rc.value[tile.id];
+	if (rel === undefined) return new THREE.Color(0x888888);
+	var mx = tile.shore > 0 ? rc.max.land : rc.max.water;
+	var t = Math.max(-1, Math.min(1, rel / mx));
+	t = Math.sign(t) * Math.sqrt(Math.abs(t)); // contrast boost for small deviations
+	if (tile.shore > 0) {
+		if (t >= 0) return new THREE.Color(getOverlayColor("localConvexity", "landNeutral", "#d8d8b0"))
+			.lerp(new THREE.Color(getOverlayColor("localConvexity", "landConvex", "#e00000")), t);
+		return new THREE.Color(getOverlayColor("localConvexity", "landNeutral", "#d8d8b0"))
+			.lerp(new THREE.Color(getOverlayColor("localConvexity", "landConcave", "#0e6e5c")), Math.min(1, -t));
+	} else {
+		if (t >= 0) return new THREE.Color(getOverlayColor("localConvexity", "waterNeutral", "#c4dcec"))
+			.lerp(new THREE.Color(getOverlayColor("localConvexity", "waterConvex", "#7a0fb0")), t);
+		return new THREE.Color(getOverlayColor("localConvexity", "waterNeutral", "#c4dcec"))
+			.lerp(new THREE.Color(getOverlayColor("localConvexity", "waterConcave", "#123a7a")), Math.min(1, -t));
 	}
 }, "basic", "lazy", "geography");
 
-// Neighbor Shore Comparison color overlay - shows % of neighbors' neighbors (NN) with higher/lower shore values
-registerColorOverlay("neighborShore", "Neighbor Shore Comparison", "For each land/ocean tile, shows % of neighbors' neighbors (NN) with higher/lower shore values using shore distance colors", function(tile) {
-	if (!tile.hasOwnProperty('neighborShoreComparison')) {
-		return new THREE.Color(0x888888); // Gray fallback if neighbor comparison not calculated
+// APPROACH 2: NARROW CHANNELS.
+// Water tiles on the shortest route between two land bodies. Pair selection is
+// implicit via a water Voronoi: a multi-source BFS over water, seeded from each
+// land body's adjacent water tiles, labels every water tile with its nearest
+// land body + hop distance + a parent pointer back toward that coast. Only
+// pairs whose Voronoi regions touch are considered (you can't sail between
+// bodies without crossing the meeting line). At each boundary water edge the
+// channel width = dist(a) + dist(b); for every touching pair we keep the
+// minimum-width crossing and trace the route from it back to both coasts via
+// the parent pointers. Route tiles are colored by narrowness.
+function computeNarrowChannels(tiles) {
+	var n = tiles.length;
+	var sb = getOverlayAggregate("shoreBodies", function() {
+		return computeShoreBodies(tiles);
+	});
+	var idToIndex = sb.idToIndex;
+
+	// water-tile fields
+	var label = new Int32Array(n), dist = new Int32Array(n), parent = new Int32Array(n);
+	for (var i = 0; i < n; i++) { label[i] = -1; parent[i] = -1; }
+
+	// seed: water tiles adjacent to land, labelled by the land body index
+	var frontier = [];
+	for (i = 0; i < n; i++) {
+		if ((tiles[i].shore || 0) >= 0) continue; // water only
+		var nb = tiles[i].tiles, best = -1;
+		for (var k = 0; k < nb.length; k++) {
+			var nj = idToIndex[nb[k].id];
+			if (nj !== undefined && (tiles[nj].shore || 0) > 0) { best = sb.bodyIndex[nj]; break; }
+		}
+		if (best !== -1) { label[i] = best; dist[i] = 1; frontier.push(i); }
 	}
 
-	// Add small offset to shift range so 0% gets a color too
-	var adjustedValue = tile.neighborShoreComparison;
-	if (tile.elevation > 0) {
-		// Land tiles: add 1 so 0% becomes 1%, 1% becomes 2%, etc.
-		adjustedValue = tile.neighborShoreComparison + 1;
-	} else {
-		// Ocean tiles: subtract 1 so 0% becomes -1%, -1% becomes -2%, etc.
-		adjustedValue = tile.neighborShoreComparison - 1;
+	// multi-source BFS over water
+	while (frontier.length) {
+		var next = [];
+		for (var f = 0; f < frontier.length; f++) {
+			var u = frontier[f];
+			nb = tiles[u].tiles;
+			for (k = 0; k < nb.length; k++) {
+				var v = idToIndex[nb[k].id];
+				if (v === undefined || (tiles[v].shore || 0) >= 0 || label[v] !== -1) continue;
+				label[v] = label[u];
+				dist[v] = dist[u] + 1;
+				parent[v] = u;
+				next.push(v);
+			}
+		}
+		frontier = next;
 	}
 
-	if (adjustedValue < 0) {
-		// Ocean tiles: ocean edge → deep (same anchors as shore distance)
-		var normalizedValue = Math.abs(adjustedValue) / 101.0; // Normalize to 0-1
-		return new THREE.Color(getOverlayColor("neighborShore", "oceanNear", "#87ceeb"))
-			.lerp(new THREE.Color(getOverlayColor("neighborShore", "oceanFar", "#000080")), normalizedValue);
+	// boundary edges between different labels -> minimal crossing per pair
+	var pairBest = {}; // "a:b" -> {width, u, v}
+	for (i = 0; i < n; i++) {
+		if (label[i] === -1) continue;
+		nb = tiles[i].tiles;
+		for (k = 0; k < nb.length; k++) {
+			var vj = idToIndex[nb[k].id];
+			if (vj === undefined || label[vj] === -1 || label[vj] === label[i]) continue;
+			var a = Math.min(label[i], label[vj]), b2 = Math.max(label[i], label[vj]);
+			var key = a + ":" + b2;
+			var width = dist[i] + dist[vj];
+			if (!pairBest[key] || width < pairBest[key].width) {
+				pairBest[key] = { width: width, u: i, v: vj };
+			}
+		}
+	}
+
+	// trace each pair's route back to both coasts; record narrowness per tile
+	var out = { channel: {}, maxWidth: 1, minWidth: Infinity };
+	for (var key2 in pairBest) {
+		var pb = pairBest[key2];
+		if (pb.width > out.maxWidth) out.maxWidth = pb.width;
+		if (pb.width < out.minWidth) out.minWidth = pb.width;
+		var ends = [pb.u, pb.v];
+		for (var e = 0; e < 2; e++) {
+			var cur = ends[e];
+			while (cur !== -1) {
+				var id = tiles[cur].id;
+				if (out.channel[id] === undefined || pb.width < out.channel[id]) {
+					out.channel[id] = pb.width; // keep the narrowest channel through this tile
+				}
+				cur = parent[cur];
+			}
+		}
+	}
+	if (!isFinite(out.minWidth)) out.minWidth = 1;
+	return out;
+}
+
+registerColorOverlay("narrowChannels", "Narrow Channels", "Shortest water routes between land bodies. A water Voronoi by nearest land body picks the pairs (only bodies whose water regions touch); each pair's minimum-width crossing is traced back to both coasts. Routes ramp white-hot (narrowest straits) through orange to dull red (wide passages); other water dim, land dark.", function(tile) {
+	if (!tile.hasOwnProperty('shore') || tile.shore === 0) return new THREE.Color(0x888888);
+	if (tile.shore > 0) return new THREE.Color(getOverlayColor("narrowChannels", "landBase", "#2c3526"));
+	var nc = getOverlayAggregate("narrowChannels", function() {
+		return computeNarrowChannels(planet.topology.tiles);
+	});
+	var w = nc.channel[tile.id];
+	if (w === undefined) return new THREE.Color(getOverlayColor("narrowChannels", "waterBase", "#16243e"));
+	// narrow = hot: invert and normalize width into 0..1
+	var span = Math.max(1, nc.maxWidth - nc.minWidth);
+	var t = 1 - (w - nc.minWidth) / span;
+	return new THREE.Color(getOverlayColor("narrowChannels", "wide", "#7a2020"))
+		.lerp(new THREE.Color(getOverlayColor("narrowChannels", "narrow", "#fff2b0")), t * t);
+}, "basic", "lazy", "strategic");
+
+// APPROACH 3: LOCAL THICKNESS (granulometry).
+// The width class of the widest disk that fits in the domain and contains the
+// tile — same idea as feature-detection's Approach E field, computed standalone
+// as a morphological opening of the |shore| field: for each radius r ascending,
+// the tiles with |shore| >= r are dilated back out by r-1 steps (multi-source
+// BFS within the same domain); every tile reached at radius r has thickness
+// >= r, and the last r to reach it is its thickness. Thin fingers, necks and
+// channels stay at 1-2; lobe cores carry the lobe's full width. Distinguishes
+// "on a narrow appendage" (low thickness, any |shore|) from "near the coast of
+// a wide mass" (low |shore| but high thickness).
+function computeLocalThickness(tiles) {
+	var n = tiles.length;
+	var sb = getOverlayAggregate("shoreBodies", function() {
+		return computeShoreBodies(tiles);
+	});
+	var thick = new Int32Array(n);
+	var mark = new Int32Array(n);
+	var maxAbs = 0;
+	for (var i = 0; i < n; i++) {
+		var a = Math.abs(tiles[i].shore || 0);
+		if (a > maxAbs) maxAbs = a;
+		if (a > 0) thick[i] = 1;
+	}
+	for (var r = 2; r <= maxAbs; r++) {
+		var frontier = [];
+		for (i = 0; i < n; i++) {
+			if (Math.abs(tiles[i].shore || 0) >= r) { mark[i] = r; thick[i] = r; frontier.push(i); }
+		}
+		// dilate r-1 steps within the same domain
+		for (var step = 0; step < r - 1 && frontier.length; step++) {
+			var next = [];
+			for (var f = 0; f < frontier.length; f++) {
+				var u = frontier[f];
+				var landU = tiles[u].shore > 0;
+				var nb = tiles[u].tiles;
+				for (var k = 0; k < nb.length; k++) {
+					var v = sb.idToIndex[nb[k].id];
+					if (v === undefined || mark[v] === r) continue;
+					if (!nb[k].shore || (nb[k].shore > 0) !== landU) continue;
+					mark[v] = r;
+					thick[v] = r;
+					next.push(v);
+				}
+			}
+			frontier = next;
+		}
+	}
+	var out = { value: {}, max: { land: 1, water: 1 } };
+	for (i = 0; i < n; i++) {
+		if (!tiles[i].shore) continue;
+		out.value[tiles[i].id] = thick[i];
+		var domain = tiles[i].shore > 0 ? "land" : "water";
+		if (thick[i] > out.max[domain]) out.max[domain] = thick[i];
+	}
+	return out;
+}
+
+registerColorOverlay("localThickness", "Local Thickness (Granulometry)", "Width class of the widest disk containing each tile (morphological opening of |shore|). Thin = hot: fingers, necks, channels and small islands glow orange-red on land / magenta in water; wide cores cool to dark green / deep blue. Unlike shore distance, the coast of a WIDE mass still reads thick.", function(tile) {
+	if (!tile.hasOwnProperty('shore') || tile.shore === 0) return new THREE.Color(0x888888);
+	var th = getOverlayAggregate("localThickness", function() {
+		return computeLocalThickness(planet.topology.tiles);
+	});
+	var v = th.value[tile.id];
+	if (v === undefined) return new THREE.Color(0x888888);
+	if (tile.shore > 0) {
+		var t = 1 - (v - 1) / Math.max(1, th.max.land - 1); // thin = 1
+		return new THREE.Color(getOverlayColor("localThickness", "landThick", "#1d3b1d"))
+			.lerp(new THREE.Color(getOverlayColor("localThickness", "landThin", "#ff7a1a")), t * t);
 	} else {
-		// Land tiles: land edge → inland (same anchors as shore distance)
-		var normalizedValue = adjustedValue / 101.0; // Normalize to 0-1
-		return new THREE.Color(getOverlayColor("neighborShore", "landNear", "#ffff00"))
-			.lerp(new THREE.Color(getOverlayColor("neighborShore", "landFar", "#006400")), normalizedValue);
+		t = 1 - (v - 1) / Math.max(1, th.max.water - 1);
+		return new THREE.Color(getOverlayColor("localThickness", "waterThick", "#0e2050"))
+			.lerp(new THREE.Color(getOverlayColor("localThickness", "waterThin", "#ff4fd8")), t * t);
 	}
 }, "basic", "lazy", "geography");
+
+// APPROACH 4: CHOKEPOINTS (sampled betweenness centrality).
+// How much shortest-path traffic is forced through each tile. Brandes'
+// algorithm from CHOKEPOINT_SOURCES random sources per domain (paths never
+// cross the coast), accumulating each tile's dependency score. Straits,
+// isthmuses and the necks of peninsulas score high because every route between
+// the masses they join must pass through them; open interiors spread traffic
+// and stay low. Complements Narrow Channels (which finds inter-body water
+// routes): chokepoints are bottlenecks WITHIN a connected domain.
+var CHOKEPOINT_SOURCES = 48;
+// Incremental scanner: one Brandes source per runSource() call, so the
+// background phase can spread the ~48 BFS passes across ticks.
+function makeChokepointScanner(tiles) {
+	var n = tiles.length;
+	var sb = getOverlayAggregate("shoreBodies", function() {
+		return computeShoreBodies(tiles);
+	});
+	var score = new Float64Array(n);
+	var sigma = new Float64Array(n), distA = new Int32Array(n), delta = new Float64Array(n);
+	var preds = new Array(n);
+
+	// deterministic sample: every (n / CHOKEPOINT_SOURCES)-th tile with shore != 0
+	var stride = Math.max(1, Math.floor(n / CHOKEPOINT_SOURCES));
+	var s = 0;
+
+	function runSource() { // returns false when all sources are done
+		while (s < n && !tiles[s].shore) s += stride;
+		if (s >= n) return false;
+		var src = s;
+		s += stride;
+		var landS = tiles[src].shore > 0;
+		// Brandes single-source (unweighted)
+		var order = [];
+		for (var i = 0; i < n; i++) { sigma[i] = 0; distA[i] = -1; delta[i] = 0; preds[i] = null; }
+		sigma[src] = 1; distA[src] = 0;
+		var queue = [src], qi = 0;
+		while (qi < queue.length) {
+			var u = queue[qi++];
+			order.push(u);
+			var nb = tiles[u].tiles;
+			for (var k = 0; k < nb.length; k++) {
+				var v = sb.idToIndex[nb[k].id];
+				if (v === undefined || !nb[k].shore || (nb[k].shore > 0) !== landS) continue;
+				if (distA[v] === -1) { distA[v] = distA[u] + 1; queue.push(v); }
+				if (distA[v] === distA[u] + 1) {
+					sigma[v] += sigma[u];
+					(preds[v] || (preds[v] = [])).push(u);
+				}
+			}
+		}
+		// dependency back-accumulation
+		for (i = order.length - 1; i > 0; i--) {
+			var w = order[i];
+			var pw = preds[w];
+			if (pw) {
+				var coeff = (1 + delta[w]) / sigma[w];
+				for (k = 0; k < pw.length; k++) delta[pw[k]] += sigma[pw[k]] * coeff;
+			}
+			score[w] += delta[w];
+		}
+		return true;
+	}
+
+	function finish() {
+		var out = { value: {}, max: { land: 1, water: 1 } };
+		for (var i = 0; i < n; i++) {
+			if (!tiles[i].shore) continue;
+			out.value[tiles[i].id] = score[i];
+			var domain = tiles[i].shore > 0 ? "land" : "water";
+			if (score[i] > out.max[domain]) out.max[domain] = score[i];
+		}
+		return out;
+	}
+
+	return { runSource: runSource, finish: finish };
+}
+function computeChokepoints(tiles) {
+	var scanner = makeChokepointScanner(tiles);
+	while (scanner.runSource()) {}
+	return scanner.finish();
+}
+
+registerColorOverlay("chokepoints", "Chokepoints (Betweenness)", "Sampled shortest-path betweenness centrality within each domain (paths never cross the coast). Bright gold (land) / bright cyan (water) marks tiles that most routes are forced through: isthmuses, straits, peninsula necks, channel mouths. Open interiors spread traffic and stay dark.", function(tile) {
+	if (!tile.hasOwnProperty('shore') || tile.shore === 0) return new THREE.Color(0x888888);
+	var cp = getOverlayAggregate("chokepoints", function() {
+		return computeChokepoints(planet.topology.tiles);
+	});
+	var v = cp.value[tile.id];
+	if (v === undefined) return new THREE.Color(0x888888);
+	if (tile.shore > 0) {
+		var t = Math.sqrt(Math.min(1, v / cp.max.land));
+		return new THREE.Color(getOverlayColor("chokepoints", "landLow", "#262e1e"))
+			.lerp(new THREE.Color(getOverlayColor("chokepoints", "landHigh", "#ffd700")), t);
+	} else {
+		t = Math.sqrt(Math.min(1, v / cp.max.water));
+		return new THREE.Color(getOverlayColor("chokepoints", "waterLow", "#101c33"))
+			.lerp(new THREE.Color(getOverlayColor("chokepoints", "waterHigh", "#21e6d2")), t);
+	}
+}, "basic", "lazy", "strategic");
+
+// ---------------------------------------------------------------------------
+// FROM-SCRATCH FEATURE GROUPING (approaches K, L, M)
+// ---------------------------------------------------------------------------
+// Three independent ways to PARTITION each domain into regions, all computed in
+// one background pass (aggregate "featureGroupings") and drawn as a stable
+// hue-per-region patchwork.
+//
+//   K - WATERSHED PENINSULAS (computeWatershedPeninsulas, strategic-overlays):
+//       drainage basins merged greedily with an INTERIORNESS-aware score —
+//       merging across deep-interior divides is encouraged, merging across
+//       coastal necks (low |shore|) is strongly penalised, so peninsulas and
+//       other appendages stay their own groups. Land only.
+//   L - COMMUNITIES (label propagation): every tile starts with its own label;
+//       a few synchronous rounds of "adopt the most common label among
+//       same-domain neighbours" (ties -> smallest label) grow organic blobs
+//       whose borders settle where local connectivity is weakest.
+//   M - BALANCED WATERSHED PROVINCES (computeBalancedWatershedProvinces):
+//       the same watershed merge driven by combined size (always fuse the
+//       smallest adjacent pair, border fraction as tie-break) until a target
+//       region count — roughly equal-population provinces. Land only.
+//
+// Tiny regions (< GROUPING_MIN_SIZE) merge into their most-adjacent neighbour.
+var GROUPING_MIN_SIZE = 6;
+var GROUPING_LP_ROUNDS = 10;
+
+function _mergeTinyRegions(tiles, sb, regionOf, minSize) {
+	var n = tiles.length;
+	var sizes = {};
+	for (var i = 0; i < n; i++) if (regionOf[i] >= 0) sizes[regionOf[i]] = (sizes[regionOf[i]] || 0) + 1;
+	var changed = true, rounds = 0;
+	while (changed && rounds++ < 4) {
+		changed = false;
+		for (i = 0; i < n; i++) {
+			var r = regionOf[i];
+			if (r < 0 || sizes[r] >= minSize) continue;
+			// most-adjacent same-domain neighbouring region
+			var counts = {}, nb = tiles[i].tiles;
+			for (var k = 0; k < nb.length; k++) {
+				var v = sb.idToIndex[nb[k].id];
+				if (v === undefined || regionOf[v] < 0 || regionOf[v] === r) continue;
+				if ((nb[k].shore > 0) !== (tiles[i].shore > 0)) continue;
+				counts[regionOf[v]] = (counts[regionOf[v]] || 0) + 1;
+			}
+			var best = -1, bestC = 0;
+			for (var key in counts) if (counts[key] > bestC) { bestC = counts[key]; best = +key; }
+			if (best >= 0) {
+				sizes[r]--; sizes[best]++;
+				regionOf[i] = best;
+				changed = true;
+			}
+		}
+	}
+}
+
+// Split label-equal areas into connected components so every region is contiguous.
+function _relabelComponents(tiles, sb, regionOf) {
+	var n = tiles.length;
+	var out = new Int32Array(n);
+	for (var i = 0; i < n; i++) out[i] = -1;
+	var next = 0;
+	for (i = 0; i < n; i++) {
+		if (regionOf[i] < 0 || out[i] !== -1) continue;
+		var id = next++;
+		var stack = [i];
+		out[i] = id;
+		while (stack.length) {
+			var u = stack.pop(), nb = tiles[u].tiles;
+			for (var k = 0; k < nb.length; k++) {
+				var v = sb.idToIndex[nb[k].id];
+				if (v === undefined || out[v] !== -1 || regionOf[v] !== regionOf[u]) continue;
+				if ((nb[k].shore > 0) !== (tiles[u].shore > 0)) continue;
+				out[v] = id;
+				stack.push(v);
+			}
+		}
+	}
+	return out;
+}
+
+function computeFeatureGroupings(tiles) {
+	var n = tiles.length;
+	var sb = getOverlayAggregate("shoreBodies", function() {
+		return computeShoreBodies(tiles);
+	});
+
+	// ---- K: peninsula-aware watershed merge (strategic-overlays.js) -------
+	var basins = computeWatershedPeninsulas(planet);
+
+	// ---- L: label-propagation communities ---------------------------------
+	var labels = new Int32Array(n), nextLabels = new Int32Array(n);
+	for (i = 0; i < n; i++) labels[i] = tiles[i].shore ? i : -1;
+	for (var round = 0; round < GROUPING_LP_ROUNDS; round++) {
+		for (i = 0; i < n; i++) {
+			if (labels[i] < 0) { nextLabels[i] = -1; continue; }
+			var counts = {}, landI = tiles[i].shore > 0;
+			counts[labels[i]] = 1.5; // self-bias damps oscillation
+			nb = tiles[i].tiles;
+			for (k = 0; k < nb.length; k++) {
+				var vj = sb.idToIndex[nb[k].id];
+				if (vj === undefined || labels[vj] < 0) continue;
+				if ((nb[k].shore > 0) !== landI) continue;
+				counts[labels[vj]] = (counts[labels[vj]] || 0) + 1;
+			}
+			var bl = labels[i], bc = -1;
+			for (var key in counts) {
+				var c = counts[key], kk = +key;
+				if (c > bc || (c === bc && kk < bl)) { bc = c; bl = kk; }
+			}
+			nextLabels[i] = bl;
+		}
+		var tmp = labels; labels = nextLabels; nextLabels = tmp;
+	}
+	var comm = _relabelComponents(tiles, sb, labels);
+	_mergeTinyRegions(tiles, sb, comm, GROUPING_MIN_SIZE);
+
+	// ---- M: balanced watershed merge (strategic-overlays.js) --------------
+	var provinces = computeBalancedWatershedProvinces(planet);
+
+	// pack into id-keyed maps for the colour functions (K/M are already
+	// id-keyed and land-only; L covers both domains)
+	var out = { basins: basins, communities: {}, provinces: provinces };
+	for (i = 0; i < n; i++) {
+		if (!tiles[i].shore) continue;
+		out.communities[tiles[i].id] = comm[i];
+	}
+	return out;
+}
+
+// Stable distinct colour per region id; land = warm wheel, water = cool wheel.
+function _groupingColor(id, isLand) {
+	var h = (id * 0.61803398875) % 1;
+	var j = (id * 0.382) % 1;
+	if (isLand) return new THREE.Color().setHSL((0.02 + h * 0.38) % 1, 0.42 + 0.18 * j, 0.40 + 0.16 * j);
+	return new THREE.Color().setHSL(0.50 + h * 0.22, 0.50 + 0.15 * j, 0.30 + 0.18 * j);
+}
+
+function _makeGroupingOverlayFn(prop, landOnly) {
+	return function(tile) {
+		if (!tile.hasOwnProperty('shore') || tile.shore === 0) return new THREE.Color(0x888888);
+		if (landOnly && tile.shore < 0) {
+			return new THREE.Color(getOverlayColor("featureGroupings", "ocean", "#6699cc"));
+		}
+		var fg = getOverlayAggregate("featureGroupings", function() {
+			return computeFeatureGroupings(planet.topology.tiles);
+		});
+		var id = fg[prop][tile.id];
+		if (id === undefined || id < 0) return new THREE.Color(0x888888);
+		return _groupingColor(id, tile.shore > 0);
+	};
+}
+
+registerColorOverlay("featBasinsK", "Features K: Watershed Peninsulas", "Drainage basins merged with an interiorness-aware score: merging across deep-interior divides is encouraged, merging across coastal necks (low |shore|) is strongly penalised — peninsulas, capes and other appendages keep their own groups. Land only.", _makeGroupingOverlayFn("basins", true), "basic", "lazy", "features");
+registerColorOverlay("featCommunitiesL", "Features L: Communities (label propagation)", "Graph communities: every tile starts with its own label and repeatedly adopts the most common label among same-domain neighbours. Blobs grow organically; borders settle where local connectivity is weakest.", _makeGroupingOverlayFn("communities"), "basic", "lazy", "features");
+registerColorOverlay("featProvincesM", "Features M: Balanced Watershed Provinces", "The watershed merge driven by combined size: always fuse the smallest adjacent pair (border fraction as tie-break) until a target region count, yielding roughly equal-population provinces. Land only.", _makeGroupingOverlayFn("provinces", true), "basic", "lazy", "features");
 
 // ---------------------------------------------------------------------------
 // Narrow connector detection (isthmuses + straits)
@@ -2419,7 +3199,7 @@ registerColorOverlay("narrowConnectors", "Narrow Connectors",
 		// Dim land/water context so the connectors stand out.
 		if (tile.elevation > 0) return new THREE.Color(getOverlayColor("narrowConnectors", "land", "#3a4a32"));
 		return new THREE.Color(getOverlayColor("narrowConnectors", "water", "#1b2a3a"));
-	}, "basic", "lazy", "geography");
+	}, "basic", "lazy", "strategic");
 
 function generateDynamicShoreOverlays(tiles) { // legacy stub kept so existing call sites continue to work
 	if (typeof populateColorOverlayDropdown === 'function') populateColorOverlayDropdown();
@@ -2464,7 +3244,7 @@ registerColorOverlay("watershedRegions", "Watershed Regions", "Shows watersheds 
 	// Default color for land tiles without watershed assignment
 	console.warn("Land tile without watershed assignment found");
 	return new THREE.Color(0x888888);
-}, "basic", "lazy", "geography");
+}, "basic", "lazy", "features");
 
 // Color palette arrays for different region types
 var WATERSHED_COLORS = ["#606c38","#283618","#fefae0","#dda15e","#bc6c25"];
@@ -2676,31 +3456,6 @@ function applyGraphColoring(regions, getAdjacencies, colorProperty, regionType) 
 	var avgUsage = usageCounts.reduce(function(a, b) { return a + b; }, 0) / usageCounts.length;
 }
 
-
-// Thickness Field visualization - shows the granulometric thickness used in Feature E detection
-registerColorOverlay("thickness", "Granulometric Thickness", "Width-based thickness measure: pale (thin features) to vivid (thick/wide features).", function(tile) {
-	if (!tile.hasOwnProperty('_thick')) {
-		return new THREE.Color(0x888888); // Gray fallback if thickness not calculated
-	}
-
-	// Get the thickness value and normalize it
-	var thickness = tile._thick || 0;
-	var maxThickness = 8; // matches CONFIG.thicknessMax in feature-detection.js
-
-	// Normalize to 0-1 range
-	var normalized = Math.min(thickness / maxThickness, 1.0);
-
-	// Separate color schemes for ocean and land
-	if (tile.elevation <= 0) {
-		// Ocean: thin → thick
-		return new THREE.Color(getOverlayColor("thickness", "oceanThin", "#b0e0e6"))
-			.lerp(new THREE.Color(getOverlayColor("thickness", "oceanThick", "#0047ab")), normalized);
-	} else {
-		// Land: thin → thick
-		return new THREE.Color(getOverlayColor("thickness", "landThin", "#ffffcc"))
-			.lerp(new THREE.Color(getOverlayColor("thickness", "landThick", "#228b22")), normalized);
-	}
-}, "basic", "lazy", "geography");
 
 
 // NOTE: Resource & Food overlays (crops, calories, minerals, strategic resources,

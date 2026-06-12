@@ -383,6 +383,9 @@ function generatePlanetBiomesResources(tiles, planetRadius, action) {
 		t.oil = 0;
 		t.gold = 0;
 		t.copper = 0;
+		t.coal = 0;
+		t.silver = 0;
+		t.uranium = 0;
 	}
 
 	for (t of tiles) {
@@ -470,6 +473,23 @@ function generatePlanetBiomesResources(tiles, planetRadius, action) {
 				(1 / (1 + Math.exp(-0.1 * (tile.temperature - 20)))) *
 				Math.exp(-0.2 * distanceToPlateBoundary) *
 				Math.exp(-0.002 * tile.rain);
+			// Coal: buried swamp biomass — warm, wet, low-lying, FLAT sedimentary
+			// basins away from active margins (Carboniferous foreland basins).
+			tile.coal = (1 - elevation) * Math.min(1, tile.moisture * 1.5) *
+				Math.max(0, 1 - tile.slope * 4) *
+				Math.min(1, distanceToPlateBoundary / 4) *
+				(temperature > 0.3 ? 1 : 0.3);
+			// Silver: epithermal/hydrothermal veins on volcanic arcs — mid-to-high
+			// ground hugging plate boundaries, in a different noise band than gold.
+			tile.silver = Math.max(0, 1 - 3 * Math.abs(tile.fibNoise - 0.35)) *
+				Math.max(0, 1 - 4 * Math.abs(elevation - 0.6)) /
+				Math.max(1, Math.pow(distanceToPlateBoundary, 2));
+			// Uranium: stable cratonic shields — old continental interiors FAR from
+			// plate boundaries, arid climate (sandstone roll-front / calcrete style).
+			tile.uranium = Math.max(0, 1 - 3 * Math.abs(tile.fibNoise - 0.75)) *
+				Math.min(1, distanceToPlateBoundary / 6) *
+				(1 - Math.min(1, tile.moisture)) *
+				Math.max(0, 1 - Math.abs(elevation - 0.45));
 		}
 		tile.calories = Math.max(0, tile.wheat * 7, tile.corn * 15, tile.rice * 11, tile.pasture*200, tile.fish*1300);
 	}
@@ -488,7 +508,10 @@ function generatePlanetBiomesResources(tiles, planetRadius, action) {
 		oil: 95,
 		bauxite: 98,
 		copper: 97,
-		gold: 99
+		gold: 99,
+		coal: 93,
+		silver: 98,
+		uranium: 98
 	};
 
 	function normalizeTiles(tiles, percentiles) {
@@ -797,6 +820,13 @@ function markLocalExtrema(tiles) {
 	consolidateExtremaGroups(potentialExtrema);
 }
 
+// Tunable weights for the city priority score (sliders in the City Priority
+// panel; live retune via regenerateCityPriority({...})).
+var cityPriorityConfig = {
+	coastalWeight: 1.0,  // multiplier on a coastal tile's upstream calories
+	junctionWeight: 1.0  // multiplier on the river-junction flux (non-coastal tiles)
+};
+
 // Calculate calorie flux for river junctions and coastal bonus
 function calculateCalorieFlux(tiles) {
 	//console.log("Calculating calorie flux for city prioritization...");
@@ -815,7 +845,7 @@ function calculateCalorieFlux(tiles) {
 		// Check if tile is coastal (shore = 1)
 		if (tile.shore === 1) {
 			// Coastal tiles get their full upstream calories value
-			tile.cityPriorityScore = tileUpstreamCalories;
+			tile.cityPriorityScore = cityPriorityConfig.coastalWeight * tileUpstreamCalories;
 		} else {
 			// Non-coastal tiles: tile.upstreamCalories - [highest upstreamCalories of upstream neighbors]
 			var maxNeighborUpstreamCalories = 0;
@@ -832,11 +862,26 @@ function calculateCalorieFlux(tiles) {
 			}
 
 			// Calculate flux as difference (prioritizes river junctions where calories accumulate)
-			tile.cityPriorityScore = Math.max(0, tileUpstreamCalories - maxNeighborUpstreamCalories);
+			tile.cityPriorityScore = cityPriorityConfig.junctionWeight *
+				Math.max(0, tileUpstreamCalories - maxNeighborUpstreamCalories);
 		}
 	}
 
 	//console.log("Calorie flux calculation complete");
+}
+
+// Live retuning of the city priority weights from the sliders / console.
+function regenerateCityPriority(overrides) {
+	if (overrides) for (var k in overrides) cityPriorityConfig[k] = overrides[k];
+	if (typeof planet === "undefined" || !planet || !planet.topology) return;
+	calculateCalorieFlux(planet.topology.tiles);
+	// drop the cached max so the overlay renormalizes
+	if (planet._overlayAggregates) delete planet._overlayAggregates.upstreamCalories;
+	if (typeof surfaceRenderMode !== "undefined" && surfaceRenderMode === "upstreamCalories" &&
+		typeof recalculateBufferGeometryColors === "function" &&
+		planet.renderData && planet.renderData.surface && planet.renderData.surface.geometry) {
+		recalculateBufferGeometryColors(planet.topology.tiles, planet.renderData.surface.geometry, surfaceRenderMode);
+	}
 }
 
 // Select top city locations based on calorie flux, preferring non-river neighbors
@@ -1131,74 +1176,6 @@ function calculateReverseShoreDistances(tiles) {
 	// Clean up visited flags
 	for (var i = 0; i < tiles.length; i++) {
 		delete tiles[i].visited;
-	}
-}
-
-// Calculate neighbor shore comparison values for each tile
-// For each land/ocean tile, calculate % of neighbors' neighbors (NN) with higher/lower shore values
-function calculateNeighborShoreComparison(tiles) {
-	// Initialize neighbor comparison values to 0
-	for (var i = 0; i < tiles.length; i++) {
-		tiles[i].neighborShoreComparison = 0;
-	}
-
-	// For each tile, collect all neighbors' neighbors (NN) and calculate percentage
-	for (var i = 0; i < tiles.length; i++) {
-		var tile = tiles[i];
-		if (!tile.hasOwnProperty('shore') || tile.shore === 0) {
-			continue; // Skip tiles without shore values
-		}
-
-		// Collect all neighbors' neighbors (NN)
-		var neighborsNeighbors = new Set();
-		for (var j = 0; j < tile.tiles.length; j++) {
-			var neighbor = tile.tiles[j];
-			// Add all of this neighbor's neighbors to the set
-			for (var k = 0; k < neighbor.tiles.length; k++) {
-				var nn = neighbor.tiles[k];
-				if (nn !== tile && nn.hasOwnProperty('shore')) { // Exclude the original tile
-					neighborsNeighbors.add(nn);
-				}
-			}
-		}
-
-		// Convert set to array for easier processing
-		var nnArray = Array.from(neighborsNeighbors);
-		if (nnArray.length === 0) {
-			continue; // No valid neighbors' neighbors
-		}
-
-		// Count NN tiles that meet the criteria
-		var qualifyingCount = 0;
-		for (var j = 0; j < nnArray.length; j++) {
-			var nn = nnArray[j];
-
-			// For land tiles (positive shore), count NN with greater shore values
-			// For ocean tiles (negative shore), count NN with smaller (more negative) shore values
-			if (tile.elevation > 0) {
-				// Land tile: count NN with shore value greater than this tile's
-				if (nn.shore > tile.shore) {
-					qualifyingCount++;
-				}
-			} else {
-				// Ocean tile: count NN with shore value less than this tile's (more negative)
-				if (nn.shore < tile.shore) {
-					qualifyingCount++;
-				}
-			}
-		}
-
-		// Calculate percentage (0-100)
-		var percentage = (qualifyingCount / nnArray.length) * 100;
-
-		// Store the percentage (will use same color scheme as shore distance)
-		// For land tiles, positive values
-		// For ocean tiles, negative values to match shore color scheme
-		if (tile.elevation > 0) {
-			tile.neighborShoreComparison = percentage;
-		} else {
-			tile.neighborShoreComparison = -percentage;
-		}
 	}
 }
 

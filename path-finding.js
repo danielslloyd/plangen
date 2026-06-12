@@ -232,7 +232,6 @@ function setDistances(planet, action, sailingCostConstant) {
     ctime('Recalculating Shore Distances');
     calculateShoreDistances(planet.topology.tiles);
     calculateReverseShoreDistances(planet.topology.tiles);
-    calculateNeighborShoreComparison(planet.topology.tiles);
     calculateShoreDelta(planet.topology.tiles);
     ctimeEnd('Recalculating Shore Distances');
 

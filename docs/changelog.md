@@ -2,6 +2,119 @@
 
 > Deep-dive doc. CLAUDE.md links here. Newest first.
 
+- **Tuning-panel overhaul**: (1) Layer-color pickers recolor on `change` (final
+  color only), not on every hue crossed while dragging. (2) Every tuning panel
+  gained a **"Save as defaults (copy code)"** button that copies a paste-ready
+  snippet of the current values (colors: `defineOverlayColors/Palette` calls;
+  sliders: the `var <config> = {...}` declaration with its file location);
+  Layer Colors also has a per-overlay Save. (3) New per-overlay panels (shown
+  only when their overlay is active, via `updateOverlayTuningPanels`):
+  **Watershed Peninsulas (K)** (`watershedPeninsulaConfig` + 
+  `regenerateWatershedPeninsulas`), **City Priority** (`cityPriorityConfig` in
+  post-generation.js — coastal/junction weights — + `regenerateCityPriority`),
+  **Mountain ranges** (`regenerateMountainRanges`). (4) Watershed merge: new
+  **ocean-border penalty** (`oceanPenalty`, default 0.5) — the engine now
+  tracks `coastTouch` per basin pair and penalizes merging across divides that
+  terminate at the ocean. (5) Slider scales: size penalty capped at 0.20 with
+  0.01 steps; elevation penalty up to 6.0; merge threshold quadratic (fine
+  steps at the low end, `_quadLowMap`); border reward square-root (fine steps
+  at the high end, `_sqrtHighMap`); shared wiring in `wireConfigSliders`.
+  (6) **Mountain & Hill Ranges redefined**: absolute `hillHeight` /
+  `mountainHeight` thresholds (not percentiles), and a range is a connected set
+  of WATERSHED-BORDER tiles above the hill height — drainage divides are the
+  ridgelines, so ranges trace crests.
+
+- **Watershed-merge engine + K/M replaced**: extracted the merged-watershed
+  greedy merge into a shared engine (`_watershedMergeEngine`,
+  strategic-overlays.js) that tracks shared border, mean boundary elevation AND
+  mean boundary |shore| per basin pair, with a forced "absorb every region ≤
+  tinySize" pass replacing the old tiny-bonus term (`tinyBonus` removed from
+  config, slider deleted). New merged-watershed defaults per testing:
+  borderWeight 3.0, sizeWeight 0.05, threshold 0.05, tinySize 40. **Features K**
+  is now Watershed Peninsulas (`computeWatershedPeninsulas`): border reward
+  gated multiplicatively by signed boundary interiorness, so merging across
+  coastal necks is blocked and peninsulas survive as their own groups (the old
+  |shore|-watershed K removed). **Features M** is now Balanced Watershed
+  Provinces (`computeBalancedWatershedProvinces`): smallest-pair-first merging
+  until `basins/10` regions remain — roughly equal-population provinces (the
+  old farthest-point-seeding M removed). Both land-only with ocean fill.
+- **Resources, categories, K/L/M groupings**: (1) coal/silver/uranium deposits
+  were never generated (overlays always empty) — added geologically motivated
+  formulas in `post-generation.js`: coal in warm wet flat lowland basins far
+  from plate margins, silver in hydrothermal bands hugging plate boundaries at
+  mid-high elevation, uranium in arid cratonic interiors far from boundaries;
+  percentile-thresholded like the other minerals (coal 93 / silver 98 /
+  uranium 98). (2) The old Geography category is split three ways —
+  **Geography** (terrain/elevation/temperature/moisture/simple/shore +
+  convexity/thickness scalar fields), **Features** (all partition overlays:
+  watersheds, feat A/B/C/E/H/J, terrain features, shore skeleton/branch depth,
+  K/L/M) and **Strategic** (transit centrality, shore delta, narrow
+  connectors/channels, chokepoints); five buttons in `#viewCategoryList`.
+  (3) Three from-scratch feature-grouping overlays (`computeFeatureGroupings`,
+  one background pass): **K Interiorness Basins** (watershed of |shore| —
+  borders on saddles/necks), **L Communities** (deterministic label
+  propagation), **M Balanced Provinces** (farthest-point seeds + simultaneous
+  BFS growth). See `docs/feature-detection.md`.
+- **Overlay responsiveness + pruning**: the shore-field tagging overlays'
+  aggregates are now precomputed in the background phase
+  (`calculateBackgroundOverlays` subactions; convexity and chokepoints run in
+  slices via `action.loop()`), so selecting them never blocks the UI. While
+  pending they show a ⏳ suffix in the dropdown and render flat gray (a wrapper
+  in `registerColorOverlay` short-circuits the color fn when
+  `entry.ready === false`); each group recolors live when it finishes. ALL
+  keyboard shortcuts for color overlays were removed (W/C/F/S/D/K/L/N and
+  5/7/8/9) — overlays are dropdown-only now. Overlay pruning: **deleted** Net
+  Shore (`shoreRatio`), Neighbor Shore Comparison (`neighborShore`, incl. its
+  generation pass), the old Shore Tree (Node Distance) (`shoreTree`,
+  strategic-overlays.js), the old Granulometric Thickness (`thickness`), and
+  Neck Severance (`neckSeverance`); **hidden** Reverse Shore Distance
+  (`reverseShore`, code kept — `colorOverlayRegistry[id].hidden = true`, the
+  dropdown skips hidden entries).
+- **Tagging overlay iteration**: `localConvexity` now blends TWO scales (4-ring
+  + 12-ring disks, 50/50) and counts same-BODY tiles instead of same-domain
+  (nearby separate islands no longer count as "own side"). Scrapped the
+  Shelter/Detour Index (`detourIndex`) and Coast Cells (`coastCells`) overlays
+  (not visually useful). Two new approaches: **Local Thickness (Granulometry)**
+  (`localThickness`, morphological opening of |shore| — thin fingers/necks/
+  channels hot, wide cores cool; coast of a wide mass still reads thick) and
+  **Chokepoints (Betweenness)** (`chokepoints`, Brandes betweenness sampled
+  from ~48 sources per domain, paths never cross the coast — straits, isthmuses
+  and peninsula necks glow gold/cyan).
+- **Convexity normalization + Narrow Channels**: `localConvexity` now displays
+  RELATIVE convexity (`computeRelativeConvexity`) — each tile vs. the mean of
+  same-`|shore|` tiles in its own body — so small islands no longer read hot
+  (1-tile islands score exactly 0). New **Narrow Channels** overlay
+  (`narrowChannels`, `computeNarrowChannels`): water Voronoi by nearest land
+  body picks which body pairs to connect (only touching regions, no all-pairs);
+  each pair's minimum-width crossing is traced to both coasts via BFS parent
+  pointers; routes ramp white-hot (narrowest strait) → dull red (wide passage).
+- **Four shore-field tagging overlays** (`generatePlanetRenderData_functions.js`,
+  documented in `docs/feature-detection.md` § "Shore-field tagging overlays"):
+  **Local Convexity** (`localConvexity`, 4-ring own-domain fraction — capes red,
+  bay shores teal, inlets purple), **Shelter / Detour Index** (`detourIndex`,
+  reverseShore hops ÷ chord distance — flags fjords/hooked bays/curled
+  peninsulas), **Neck Severance** (`neckSeverance`, |shore|-threshold erosion
+  vs. disconnection from the body root — lights up exactly the wide lobes behind
+  narrow necks), and **Coast Cells** (`coastCells`, coastline segmented into
+  cape/straight/bay arcs by convexity sign, every tile claims its nearest arc —
+  a feature-cell partition; warm = cape arcs, cool = bay arcs). All lazy
+  aggregates via `getOverlayAggregate`; shared `computeShoreBodies` helper.
+- **Shore skeleton tree overlays** (`generatePlanetRenderData_functions.js`,
+  `computeShoreTrees`): two new geography overlays built from the Shore Distance
+  node tiles (the red/fuchsia local extremes from `computeShoreNodeSet`).
+  Per connected body: root = node with max `|shore|`; a Dijkstra tree whose step
+  cost favors high-`|shore|` tiles (so paths follow the interior spine); each
+  node tip is traced back to the root, traces merging at junction vertices.
+  Remaining tiles claim the nearest skeleton tile via multi-source BFS.
+  **Shore Tree (Skeleton)** (`shoreSkeleton`) draws the branches in place
+  (root white, land tips red, water tips fuchsia, junctions black, per-branch
+  palette over dimmed bases). **Shore Branch Depth** (`shoreBranchDepth`)
+  colors every tile by the number of tree vertices between its branch and the
+  root (land yellow→red, water light-blue→purple) — high depth tags
+  peninsulas/bays. Memoized per planet via `getOverlayAggregate("shoreTrees")`
+  (~10ms at 4k tiles). Note: id `shoreTree` was already taken by the older
+  BFS node-distance overlay in `strategic-overlays.js`, hence `shoreSkeleton`.
+
 - **Context-efficiency pass**: moved deep-dive docs out of CLAUDE.md into `docs/`
   (this file, `feature-detection.md`, `rendering.md`, `coordinate-system.md`);
   extracted resource/food overlays into `resource-overlays.js`; removed dead code

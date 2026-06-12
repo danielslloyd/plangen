@@ -1016,7 +1016,7 @@ function updateBackgroundProgressUI(action) {
 // user is currently viewing one, recolour the surface live.
 function calculateBackgroundOverlays(planet, action) {
 	var FEATURE_IDS = ["featPlatesA", "featNestedB", "featLobesC", "featThicknessE", "featBioH"];
-	var STRATEGIC_IDS = ["strategicA", "strategicC", "shoreTree", "mergedWatersheds",
+	var STRATEGIC_IDS = ["strategicA", "strategicC", "mergedWatersheds",
 		"mountainRanges", "terrainBasinRelief", "terrainMassif"];
 
 	function finishGroup(ids) {
@@ -1042,7 +1042,72 @@ function calculateBackgroundOverlays(planet, action) {
 			if (typeof generateStrategicOverlays === "function") generateStrategicOverlays(planet);
 			ctimeEnd('Background: Strategic Overlays');
 			finishGroup(STRATEGIC_IDS);
-		}, 50, "Computing strategic overlays");
+		}, 50, "Computing strategic overlays")
+		// Shore-field tagging overlays: precompute their aggregates here so
+		// selecting them from the dropdown never blocks the UI. Each group is a
+		// separate subaction (the SteppedAction yields between them); the two
+		// expensive ones (convexity, chokepoints) additionally run in slices via
+		// action.loop().
+		.executeSubaction(function (action) {
+			var tiles = planet.topology.tiles;
+			getOverlayAggregate("shoreTrees", function() { return computeShoreTrees(tiles); });
+			finishGroup(["shoreSkeleton", "shoreBranchDepth"]);
+		}, 10, "Shore trees")
+		.executeSubaction(function (action) {
+			var tiles = planet.topology.tiles;
+			getOverlayAggregate("localThickness", function() { return computeLocalThickness(tiles); });
+			finishGroup(["localThickness"]);
+		}, 10, "Local thickness")
+		.executeSubaction(function (action) {
+			var tiles = planet.topology.tiles;
+			getOverlayAggregate("narrowChannels", function() { return computeNarrowChannels(tiles); });
+			finishGroup(["narrowChannels"]);
+		}, 10, "Narrow channels")
+		.executeSubaction(function (action) {
+			var tiles = planet.topology.tiles;
+			getOverlayAggregate("featureGroupings", function() { return computeFeatureGroupings(tiles); });
+			finishGroup(["featBasinsK", "featCommunitiesL", "featProvincesM"]);
+		}, 15, "Feature groupings (K/L/M)")
+		.executeSubaction(function (action) {
+			// Convexity in ~1500-tile slices.
+			var tiles = planet.topology.tiles;
+			if (!action._convexityScanner) {
+				action._convexityScanner = makeConvexityScanner(tiles);
+				action._convexityIndex = 0;
+			}
+			var scanner = action._convexityScanner;
+			var end = Math.min(scanner.total, action._convexityIndex + 1500);
+			scanner.processRange(action._convexityIndex, end);
+			action._convexityIndex = end;
+			if (end < scanner.total) {
+				action.loop(end / scanner.total);
+			} else {
+				planet._overlayAggregates = planet._overlayAggregates || {};
+				planet._overlayAggregates.localConvexity = scanner.conv;
+				getOverlayAggregate("relativeConvexity", function() { return computeRelativeConvexity(tiles); });
+				finishGroup(["localConvexity"]);
+			}
+		}, 20, "Local convexity")
+		.executeSubaction(function (action) {
+			// Chokepoints: a few Brandes sources per tick.
+			var tiles = planet.topology.tiles;
+			if (!action._chokeScanner) {
+				action._chokeScanner = makeChokepointScanner(tiles);
+				action._chokeDone = 0;
+			}
+			var more = true;
+			for (var i = 0; i < 4 && more; i++) {
+				more = action._chokeScanner.runSource();
+				action._chokeDone++;
+			}
+			if (more) {
+				action.loop(Math.min(0.99, action._chokeDone / CHOKEPOINT_SOURCES));
+			} else {
+				planet._overlayAggregates = planet._overlayAggregates || {};
+				planet._overlayAggregates.chokepoints = action._chokeScanner.finish();
+				finishGroup(["chokepoints"]);
+			}
+		}, 20, "Chokepoints");
 }
 
 function Plate(color, driftAxis, driftRate, spinRate, elevation, oceanic, root) {

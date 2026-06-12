@@ -20,12 +20,14 @@ realistic terrain, weather, biomes, and resources. Three.js for rendering; a
 ## Key Keyboard Controls
 
 - **Space**: new planet. **1/2/3**: 20/40/60 subdivisions (3 uses large seed).
-- **5-9**: base render modes (terrain/plates/elevation/temperature/moisture).
 - **A/B**: pathfinding start/end. **Arrow keys**: camera; **Page Up/Down**: zoom.
 - **J**: Globe/Mercator. **H**: elevation exaggeration ("Raised", both projections).
-- **R** rivers, **U** sun, **I/O/P** plate boundaries/movements/air currents.
-- Surface overlays are also chosen from the control-panel dropdown (filtered by the
-  Geography/Food/Resources category buttons), not just keys.
+- **R** rivers, **U** sun, **6** plate outline, **I/O/P** plate
+  boundaries/movements/air currents, **M** moon.
+- Color overlays have NO keyboard shortcuts — they are chosen only from the
+  control-panel dropdown (filtered by the Geography / Features / Strategic /
+  Food / Resources category buttons). Overlays still computing in the
+  background show a ⏳ suffix and render gray until ready.
 
 ## Deep-dive docs (read on demand)
 

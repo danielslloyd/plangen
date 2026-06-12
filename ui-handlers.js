@@ -116,33 +116,15 @@ function keyDownHandler(event) {
 function keyUpHandler(event) {
 	if (disableKeys === true) return;
 
+	// NOTE: keyboard shortcuts for color overlays were removed — overlays are
+	// chosen from the control-panel dropdown only.
 	switch (event.which) {
-		case KEY.W:
-			setSurfaceRenderMode("wheat");
-			event.preventDefault();
-			break;
-		case KEY.C:
-			setSurfaceRenderMode("corn");
-			event.preventDefault();
-			break;
-		case KEY.F:
-			setSurfaceRenderMode("fish");
-			event.preventDefault();
-			break;
 		case KEY.A:
             setFromVertex(event);
             event.preventDefault();
             break;
 		case KEY.B:
 			setToVertex(event);
-			event.preventDefault();
-			break;
-		case KEY.S:
-			setSurfaceRenderMode("shore");
-			event.preventDefault();
-			break;
-		case KEY.D:
-			setSurfaceRenderMode("rice");
 			event.preventDefault();
 			break;
 		case KEY_LEFTARROW:
@@ -187,32 +169,8 @@ function keyUpHandler(event) {
 			generatePlanetAsynchronous();
 			event.preventDefault();
 			break;
-		case KEY["5"]:
-			setSurfaceRenderMode("terrain");
-			event.preventDefault();
-			break;
 		case KEY["6"]:
 			showHidePlateOutline();
-			event.preventDefault();
-			break;
-		case KEY["7"]:
-			setSurfaceRenderMode("elevation");
-			event.preventDefault();
-			break;
-		case KEY["8"]:
-			setSurfaceRenderMode("temperature");
-			event.preventDefault();
-			break;
-		case KEY["9"]:
-			setSurfaceRenderMode("moisture"); //moisture
-			event.preventDefault();
-			break;
-		case KEY.K:
-			setSurfaceRenderMode("calorie");
-			event.preventDefault();
-			break;
-		case KEY.W:
-			setSurfaceRenderMode("watersheds");
 			event.preventDefault();
 			break;
 		case KEY.U:
@@ -245,14 +203,6 @@ function keyUpHandler(event) {
             break;
         case KEY.H:
             toggleElevationExaggeration();
-            event.preventDefault();
-            break;
-        case KEY.L:
-            setSurfaceRenderMode("oilStripes");
-            event.preventDefault();
-            break;
-        case KEY.N:
-            setSurfaceRenderMode("upstreamCalories");
             event.preventDefault();
             break;
 	}

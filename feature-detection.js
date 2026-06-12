@@ -65,10 +65,6 @@
 		                      // merge, adjacent same-domain provinces are joined when they
 		                      // share a wide border AND the union is more compact
 		                      // (area/perimeter²). Higher = more aggressive joining.
-		plateWaterCost: 1.0,  // ocean boundary "search": how strongly open-water edges
-		                      // resist being cut (scaled by local water width) so ocean
-		                      // province boundaries snap onto the narrowest channels.
-		                      // 0 = off (raw plate boundaries through open water).
 		// Approach B (erosion split)
 		maxErosion: 6,        // deepest erosion level to attempt.
 		// Approach C (inscribed-disk lobes)
@@ -96,12 +92,12 @@
 
 	// overlay id -> approach letter, and approach letter -> per-tile hierarchy prop
 	var OVERLAYS = {
-		featPlatesA: "A", featNestedB: "B", featLobesC: "C", featThicknessE: "E", featBioH: "H"
+		featPlatesA: "A", featNestedB: "B", featLobesC: "C", featThicknessE: "E", featBioH: "H", featPlatesJ: "J"
 	};
 	var APPROACH_PROP = {
-		A: "hierarchyA", B: "hierarchyB", C: "hierarchyC", E: "hierarchyE", H: "hierarchyH"
+		A: "hierarchyA", B: "hierarchyB", C: "hierarchyC", E: "hierarchyE", H: "hierarchyH", J: "hierarchyJ"
 	};
-	var REGISTERED_IDS = ["featPlatesA", "featNestedB", "featLobesC", "featThicknessE", "featBioH"];
+	var REGISTERED_IDS = ["featPlatesA", "featNestedB", "featLobesC", "featThicknessE", "featBioH", "featPlatesJ"];
 
 	// ------------------------------------------------------------------
 	// Helpers
@@ -543,7 +539,13 @@
 	// tile intrusions and pull the boundary toward the locally dominant plate,
 	// then tiny leftover provinces are merged into their main neighbour. Operates
 	// over ALL tiles (land + water), since plates span both.
-	function computePlateProvinces(tiles, idState, allOut) {
+	// opts: { prop, approach, minWaterBoundary }. Approach A passes the defaults;
+	// the J clone passes minWaterBoundary:true to re-route water boundaries onto the
+	// shortest crossings.
+	function computePlateProvinces(tiles, idState, allOut, opts) {
+		opts = opts || {};
+		var PROP = opts.prop || "hierarchyA";
+		var APPROACH = opts.approach || "A";
 		var NONE = { none: true };
 		function pkey(t) { return t.plate || NONE; }
 
@@ -599,63 +601,130 @@
 			else if (!isLand(mt) && plateMajLand(mp)) { var nq = waterOwner.get(mt); if (nq !== undefined) assign.set(mt, nq); }
 		}
 
-		// Cost-aware ocean boundary search: relocate ocean province boundaries onto
-		// the NARROWEST water channels. The donated plates already fix WHICH plate
-		// owns the open ocean; this step only re-decides the shallow/coastal water
-		// between two ocean plates so the seam falls at a strait rather than wandering
-		// through open water.
-		//
-		// Method: a multi-source cost-distance partition (Dijkstra). Open-ocean
-		// "core" tiles (|shore| >= plateWaterCore) are the sources, each carrying its
-		// donated plate. Traversing a water tile costs MORE the NARROWER the water
-		// (cap - width), so a plate's influence flows freely across its own open ocean
-		// but a narrow channel is an expensive barrier - the two plates' regions meet
-		// at that barrier, i.e. the boundary snaps to the channel. Cores keep their
-		// plate (open-ocean plate divisions are preserved); only water is touched, so
-		// provinces stay single-domain.
-		if (CONFIG.plateWaterCost > 0) {
-			var CORE_DEPTH = CONFIG.plateWaterCore || 3;   // |shore| >= this = open-ocean source
-			var WIDTH_CAP = 8;
-			var nodeCost = function (t) {
-				var width = Math.abs(t.shore || 0);
-				if (width > WIDTH_CAP) width = WIDTH_CAP;
-				return 1 + CONFIG.plateWaterCost * (WIDTH_CAP - width); // narrow water = high barrier
-			};
-			// Binary min-heap keyed by cost-distance.
-			var heap = [];
-			function hPush(d, t) {
-				heap.push({ d: d, t: t });
-				var i = heap.length - 1;
-				while (i > 0) { var p = (i - 1) >> 1; if (heap[p].d <= heap[i].d) break; var tmp = heap[p]; heap[p] = heap[i]; heap[i] = tmp; i = p; }
+		// Min-water-boundary (J clone only): re-route every water province boundary
+		// onto the SHORTEST water crossing. The seam between two ocean provinces spans
+		// water from one land body to another; the shortest such curve cuts the fewest
+		// water-water edges - i.e. it runs through the narrowest channel. For each
+		// adjacent water-province pair we take a min-cut (unit-capacity max-flow,
+		// Edmonds-Karp) inside a band around their shared boundary: the deep middle of
+		// the crossing relocates freely to the channel, while the two COASTAL ENDPOINTS
+		// (where the seam meets land) are not hard-anchored - they may slide up to
+		// ENDPOINT_SLACK edges along the SAME coast. Coastal tiles farther than that
+		// from the current endpoints are pinned to their province, which both keeps an
+		// endpoint on its own land body and limits how far it can wander.
+		if (opts.minWaterBoundary) {
+			var BAND = 12;           // half-width of the water band searched for the min cut
+			var ENDPOINT_SLACK = 3;  // edges a coastal endpoint may slide along its coast
+			// Water provinces = connected same-label water components.
+			var provOf = new Map(), provLabel = [], seenW = new Set();
+			for (var wi = 0; wi < tiles.length; wi++) {
+				var ws = tiles[wi];
+				if (isLand(ws) || seenW.has(ws)) continue;
+				var lbl = assign.get(ws), pid = provLabel.length, stk = [ws]; seenW.add(ws);
+				while (stk.length) {
+					var cc = stk.pop(); provOf.set(cc, pid);
+					var ccn = cc.tiles;
+					for (var z = 0; z < ccn.length; z++) { var zn = ccn[z]; if (!seenW.has(zn) && !isLand(zn) && assign.get(zn) === lbl) { seenW.add(zn); stk.push(zn); } }
+				}
+				provLabel.push(lbl);
 			}
-			function hPop() {
-				var top = heap[0], last = heap.pop();
-				if (heap.length) { heap[0] = last; var i = 0, n = heap.length; for (;;) { var l = 2 * i + 1, r = l + 1, s = i; if (l < n && heap[l].d < heap[s].d) s = l; if (r < n && heap[r].d < heap[s].d) s = r; if (s === i) break; var tmp2 = heap[s]; heap[s] = heap[i]; heap[i] = tmp2; i = s; } }
-				return top;
-			}
-			var dist = new Map(), lab = new Map();
-			for (var ci = 0; ci < tiles.length; ci++) {
-				var ct = tiles[ci];
-				if (isLand(ct)) continue;
-				if (Math.abs(ct.shore || 0) >= CORE_DEPTH) { dist.set(ct, 0); lab.set(ct, assign.get(ct)); hPush(0, ct); }
-			}
-			while (heap.length) {
-				var top2 = hPop(), cur2 = top2.t;
-				if (top2.d > (dist.get(cur2) || 0)) continue;       // stale entry
-				var cnb = cur2.tiles;
-				for (var ck = 0; ck < cnb.length; ck++) {
-					var cn = cnb[ck];
-					if (isLand(cn)) continue;
-					var nd = top2.d + nodeCost(cn);
-					if (!dist.has(cn) || nd < dist.get(cn)) { dist.set(cn, nd); lab.set(cn, lab.get(cur2)); hPush(nd, cn); }
+			// Adjacent water-province pairs (share >=1 water-water edge).
+			var pairSeen = {}, pairs = [];
+			for (var pi2 = 0; pi2 < tiles.length; pi2++) {
+				var pt = tiles[pi2];
+				if (isLand(pt)) continue;
+				var pa = provOf.get(pt), pn = pt.tiles;
+				for (var pk = 0; pk < pn.length; pk++) {
+					var po = pn[pk]; if (isLand(po)) continue;
+					var pb = provOf.get(po); if (pb === pa) continue;
+					var lo = pa < pb ? pa : pb, hi = pa < pb ? pb : pa, key = lo + "_" + hi;
+					if (!pairSeen[key]) { pairSeen[key] = 1; pairs.push([lo, hi]); }
 				}
 			}
-			// Apply the cost-distance labels; water not reached by any core (a sea with
-			// no open-ocean tile) keeps its donated assignment.
-			for (var ai = 0; ai < tiles.length; ai++) {
-				var at = tiles[ai];
-				if (isLand(at)) continue;
-				if (lab.has(at)) assign.set(at, lab.get(at));
+			// For each pair, find the minimum-length water cut inside a band around
+			// their shared boundary, via unit-capacity max-flow on an integer graph
+			// (super-source = the band's A-side rim, super-sink = its B-side rim).
+			for (var ph = 0; ph < pairs.length; ph++) {
+				var A = pairs[ph][0], B = pairs[ph][1];
+				// Contact tiles = band depth 0.
+				var band = [], depthOf = new Map(), q0 = [];
+				for (var ci = 0; ci < tiles.length; ci++) {
+					var t = tiles[ci]; if (isLand(t)) continue;
+					var pr = provOf.get(t); if (pr !== A && pr !== B) continue;
+					var nb0 = t.tiles, touches = false;
+					for (var ck = 0; ck < nb0.length; ck++) { var nn = nb0[ck]; if (isLand(nn)) continue; var pp = provOf.get(nn); if ((pr === A && pp === B) || (pr === B && pp === A)) { touches = true; break; } }
+					if (touches) { depthOf.set(t, 0); q0.push(t); band.push(t); }
+				}
+				// BFS the band outward to BAND, staying inside provinces A/B water.
+				var qh = 0;
+				while (qh < q0.length) {
+					var u = q0[qh++], du = depthOf.get(u); if (du >= BAND) continue;
+					var nbu = u.tiles;
+					for (var uk = 0; uk < nbu.length; uk++) {
+						var v = nbu[uk]; if (isLand(v) || depthOf.has(v)) continue;
+						var pv = provOf.get(v); if (pv !== A && pv !== B) continue;
+						depthOf.set(v, du + 1); q0.push(v); band.push(v);
+					}
+				}
+				// Endpoint slack region: water tiles within ENDPOINT_SLACK of where the
+				// current A/B contact meets land (the crossing's coastal endpoints). The
+				// cut may move freely here, so an endpoint can slide a few edges along its
+				// own coast; everywhere else the coastline assignment is held fixed.
+				var slack = new Set(), sq = [], sh = 0, sDepth = new Map();
+				for (var an = 0; an < band.length; an++) {
+					var ab = band[an]; if (depthOf.get(ab) !== 0) continue;   // contact tiles
+					var abn = ab.tiles, onCoast = false;
+					for (var ak = 0; ak < abn.length; ak++) if (isLand(abn[ak])) { onCoast = true; break; }
+					if (onCoast && !slack.has(ab)) { slack.add(ab); sDepth.set(ab, 0); sq.push(ab); }
+				}
+				while (sh < sq.length) {
+					var su = sq[sh++], sd = sDepth.get(su); if (sd >= ENDPOINT_SLACK) continue;
+					var sn = su.tiles;
+					for (var sk = 0; sk < sn.length; sk++) { var sv = sn[sk]; if (isLand(sv) || slack.has(sv) || !depthOf.has(sv)) continue; slack.add(sv); sDepth.set(sv, sd + 1); sq.push(sv); }
+				}
+				// Integer-index band tiles; SRC, SNK sentinels.
+				var idx = new Map();
+				for (var bi = 0; bi < band.length; bi++) idx.set(band[bi], bi);
+				var SRC = band.length, SNK = band.length + 1, N = band.length + 2;
+				var eTo = [], eCap = [], eNext = [], eHead = new Array(N); for (var hi2 = 0; hi2 < N; hi2++) eHead[hi2] = -1;
+				var addEdge = function (a, b, c, rc) {
+					eTo.push(b); eCap.push(c); eNext.push(eHead[a]); eHead[a] = eTo.length - 1;
+					eTo.push(a); eCap.push(rc); eNext.push(eHead[b]); eHead[b] = eTo.length - 1;
+				};
+				var INF = 1e9, rimA = 0, rimB = 0;
+				for (var bj = 0; bj < band.length; bj++) {
+					var bt = band[bj], bp = provOf.get(bt), bn = bt.tiles, isRim = false, coastal = false;
+					for (var bk = 0; bk < bn.length; bk++) {
+						var w = bn[bk];
+						if (isLand(w)) { coastal = true; continue; }
+						if (idx.has(w)) { if (idx.get(w) > bj) addEdge(bj, idx.get(w), 1, 1); }   // band water-water edge
+						else if (provOf.get(w) === bp) isRim = true;                                // leads to open same-province water
+					}
+					// Pin to its province if it is a deep rim, or a coastal tile outside the
+					// endpoint-slack zone (so the seam's coast endpoints move only a little).
+					if (isRim || (coastal && !slack.has(bt))) {
+						if (bp === A) { addEdge(SRC, bj, INF, 0); rimA++; } else { addEdge(bj, SNK, INF, 0); rimB++; }
+					}
+				}
+				if (rimA === 0 || rimB === 0) continue;   // a province fully inside the band: leave pair as-is
+				// Edmonds-Karp max-flow.
+				var parEdge = new Array(N);
+				for (;;) {
+					for (var li = 0; li < N; li++) parEdge[li] = -1;
+					var bq = [SRC], bh = 0; parEdge[SRC] = -2; var reached = false;
+					while (bh < bq.length) {
+						var nu = bq[bh++]; if (nu === SNK) { reached = true; break; }
+						for (var e = eHead[nu]; e !== -1; e = eNext[e]) { var nv = eTo[e]; if (parEdge[nv] === -1 && eCap[e] > 0) { parEdge[nv] = e; bq.push(nv); } }
+					}
+					if (!reached) break;
+					var node = SNK, push = INF;
+					while (node !== SRC) { var pe = parEdge[node]; if (eCap[pe] < push) push = eCap[pe]; node = eTo[pe ^ 1]; }
+					node = SNK; while (node !== SRC) { var pe2 = parEdge[node]; eCap[pe2] -= push; eCap[pe2 ^ 1] += push; node = eTo[pe2 ^ 1]; }
+				}
+				// Min cut = nodes reachable from SRC in the residual graph -> A side.
+				var srcSide = new Array(N), vq = [SRC], vh = 0; srcSide[SRC] = true;
+				while (vh < vq.length) { var vu = vq[vh++]; for (var e2 = eHead[vu]; e2 !== -1; e2 = eNext[e2]) { var vv = eTo[e2]; if (!srcSide[vv] && eCap[e2] > 0) { srcSide[vv] = true; vq.push(vv); } } }
+				for (var rb2 = 0; rb2 < band.length; rb2++) assign.set(band[rb2], srcSide[rb2] ? provLabel[A] : provLabel[B]);
 			}
 		}
 
@@ -665,7 +734,7 @@
 			var t0 = tiles[a];
 			if (visited.has(t0)) continue;
 			var pl = assign.get(t0);
-			var region = makeFeature("A", isLand(t0), 1, null, t0, fieldValue(t0), idState);
+			var region = makeFeature(APPROACH, isLand(t0), 1, null, t0, fieldValue(t0), idState);
 			region._tiles = [];
 			var stack = [t0]; visited.add(t0);
 			while (stack.length) {
@@ -686,7 +755,7 @@
 		for (var sv = 0; sv < survivors.length; sv++) allOut.push(survivors[sv]);
 		for (var ti = 0; ti < tiles.length; ti++) {
 			var o = owner.get(tiles[ti]);
-			tiles[ti].hierarchyA = (o && !o._dead) ? [o] : null;
+			tiles[ti][PROP] = (o && !o._dead) ? [o] : null;
 		}
 	}
 
@@ -794,7 +863,7 @@
 		for (var i = 0; i < tiles.length; i++) {
 			tiles[i]._bFinest = null; tiles[i]._eFinest = null; tiles[i]._thick = 0;
 			tiles[i].hierarchyA = null; tiles[i].hierarchyB = null; tiles[i].hierarchyC = null;
-			tiles[i].hierarchyE = null; tiles[i].hierarchyH = null;
+			tiles[i].hierarchyE = null; tiles[i].hierarchyH = null; tiles[i].hierarchyJ = null;
 		}
 		var bodies = groupByBody(tiles);
 		var totals = { land: 0, water: 0 };
@@ -810,6 +879,14 @@
 		populateRegions(tiles, "hierarchyA");
 		assignFeatureMarkers(featuresA);
 		classifySimple(featuresA, "Plate");
+
+		// ---- Approach J (plate provinces, min water boundary - clone of A) ----
+		var idJ = { next: 3000000 };
+		var featuresJ = [];
+		computePlateProvinces(tiles, idJ, featuresJ, { prop: "hierarchyJ", approach: "J", minWaterBoundary: true });
+		populateRegions(tiles, "hierarchyJ");
+		assignFeatureMarkers(featuresJ);
+		classifySimple(featuresJ, "Plate");
 
 		// ---- Approach B (erosion split) ----
 		var idB = { next: 1000000 };
@@ -861,11 +938,12 @@
 		assignFeatureGraphColors(tiles, "hierarchyC");
 		assignFeatureGraphColors(tiles, "hierarchyE");
 		assignFeatureGraphColors(tiles, "hierarchyH");
+		assignFeatureGraphColors(tiles, "hierarchyJ");
 
 		DATA = {
 			totals: totals,
-			featuresByApproach: { A: featuresA, B: featuresB, C: featuresC, E: featuresE, H: featuresH },
-			counts: { A: featuresA.length, B: featuresB.length, C: featuresC.length, E: featuresE.length, H: featuresH.length }
+			featuresByApproach: { A: featuresA, B: featuresB, C: featuresC, E: featuresE, H: featuresH, J: featuresJ },
+			counts: { A: featuresA.length, B: featuresB.length, C: featuresC.length, E: featuresE.length, H: featuresH.length, J: featuresJ.length }
 		};
 		return DATA;
 	}
@@ -975,19 +1053,22 @@
 		if (typeof registerColorOverlay !== "function") return;
 		registerColorOverlay("featPlatesA", "Features A: Plate provinces",
 			"Approach A. Tectonic plates as large features with smoothed (smart) boundaries. 5-colour map.",
-			makeFeatureColorFn("hierarchyA", "featPlatesA"), "basic");
+			makeFeatureColorFn("hierarchyA", "featPlatesA"), "basic", "lazy", "features");
 		registerColorOverlay("featNestedB", "Features B: Nested (erosion)",
 			"Approach B. Recursive erosion split. 5-colour map; hover for outlines + names.",
-			makeFeatureColorFn("hierarchyB", "featNestedB"), "basic");
+			makeFeatureColorFn("hierarchyB", "featNestedB"), "basic", "lazy", "features");
 		registerColorOverlay("featLobesC", "Features C: Lobes (inscribed disk)",
 			"Approach C. Greedy core+appendage lobes. 5-colour map.",
-			makeFeatureColorFn("hierarchyC", "featLobesC"), "basic");
+			makeFeatureColorFn("hierarchyC", "featLobesC"), "basic", "lazy", "features");
 		registerColorOverlay("featThicknessE", "Features E: Thickness (granulometry)",
 			"Approach E. Width-based nesting; cuts narrow necks; optional basin mode. 5-colour map.",
-			makeFeatureColorFn("hierarchyE", "featThicknessE"), "basic");
+			makeFeatureColorFn("hierarchyE", "featThicknessE"), "basic", "lazy", "features");
 		registerColorOverlay("featBioH", "Features H: Bioregions (climate)",
 			"Approach H. Contiguous regions of similar temperature & moisture. 5-colour map.",
-			makeFeatureColorFn("hierarchyH", "featBioH"), "basic");
+			makeFeatureColorFn("hierarchyH", "featBioH"), "basic", "lazy", "features");
+		registerColorOverlay("featPlatesJ", "Features J: Plate provinces (min water boundary)",
+			"Approach A clone. Water province boundaries are re-routed onto the shortest water crossing (narrowest channel) between land bodies. 5-colour map.",
+			makeFeatureColorFn("hierarchyJ", "featPlatesJ"), "basic", "lazy", "features");
 		for (var i = 0; i < REGISTERED_IDS.length; i++) defineFeatureColorSlots(REGISTERED_IDS[i]);
 	}
 

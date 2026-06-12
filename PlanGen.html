@@ -111,7 +111,7 @@
 		<div id="layerColorPanel" class="panel" style="position: absolute; left: 1em; top: 1em; width: 20em; display: none; padding: 1em;">
 			<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75em;">
 				<h2 style="margin: 0; font-size: 110%;">Layer Colors</h2>
-				<button id="resetLayerColorsButton" style="font-size: 75%; padding: 0.25em 0.5em;" title="Reset this layer's colours to defaults">Reset</button>
+				<span><button id="saveLayerColorsButton" style="font-size: 75%; padding: 0.25em 0.5em; margin-right: 0.3em;" title="Copy a paste-ready code snippet of the current colours, to save as the new file defaults">Save</button><button id="resetLayerColorsButton" style="font-size: 75%; padding: 0.25em 0.5em;" title="Reset this layer's colours to defaults">Reset</button></span>
 			</div>
 			<div id="layerColorContent"></div>
 		</div>
@@ -160,7 +160,9 @@
 
 				<!-- View Category Buttons -->
 				<div id="viewCategoryList" class="toggleButtonList onlyOne" style="margin-bottom: 0.5em;">
-					<button id="categoryGeography" title="Geographic features and terrain" class="categoryButton" data-category="geography">Geography</button>
+					<button id="categoryGeography" title="Base terrain and scalar geography fields" class="categoryButton" data-category="geography">Geography</button>
+					<button id="categoryFeatures" title="Feature grouping: partitions of the map into named regions" class="categoryButton" data-category="features">Features</button>
+					<button id="categoryStrategic" title="Strategic analyses: routes, chokepoints, connectors" class="categoryButton" data-category="strategic">Strategic</button>
 					<button id="categoryFood" title="Food resources and productivity" class="categoryButton" data-category="food">Food</button>
 					<button id="categoryResources" title="Strategic mineral resources" class="categoryButton" data-category="resources">Resources</button>
 				</div>
@@ -174,6 +176,7 @@
 					<summary style="cursor: pointer; user-select: none; opacity: 0.85;">Feature Detection tuning</summary>
 					<div style="margin-top: 0.4em;">
 						<button id="showFeatureRootsButton" title="Show each feature's marker tile (furthest from any other feature) and its link to its parent (the feature node-tree)" style="font-size: 75%; width: 100%; margin-bottom: 0.5em;">Show Feature Roots</button>
+						<button id="fdSaveConfig" title="Copy a paste-ready code snippet of the current values, to save as the new file defaults" style="font-size: 75%; width: 100%; margin-bottom: 0.4em;">Save as defaults (copy code)</button>
 
 						<div class="fdGroup" data-approach="A">
 							<div style="opacity: 0.7; margin: 0.3em 0 0.15em 0;">A — Plate provinces</div>
@@ -213,12 +216,48 @@
 				<details id="mergedWatershedPanel" style="margin-top: 0.5em; font-size: 85%; display: none;">
 					<summary style="cursor: pointer; user-select: none; opacity: 0.85;">Merged watershed tuning</summary>
 					<div style="margin-top: 0.4em;">
-						<div class="mwSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Reward for the fraction of the smaller basin's border that the merge removes.">Border reward</span><input type="range" id="mwBorderWeight" min="0" max="300" step="5" value="150" style="flex:1.5;"><span id="mwBorderWeightVal" style="width:2.6em; text-align:right;">1.50</span></div>
-						<div class="mwSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Penalty proportional to the smaller basin's size (dislike merging large basins).">Size penalty</span><input type="range" id="mwSizeWeight" min="0" max="200" step="5" value="35" style="flex:1.5;"><span id="mwSizeWeightVal" style="width:2.6em; text-align:right;">0.35</span></div>
-						<div class="mwSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Penalty proportional to mean boundary elevation (dislike high-elevation divides).">Elevation penalty</span><input type="range" id="mwElevWeight" min="0" max="300" step="5" value="80" style="flex:1.5;"><span id="mwElevWeightVal" style="width:2.6em; text-align:right;">0.80</span></div>
-						<div class="mwSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Basins with this many tiles or fewer are almost always merged.">Tiny basin size</span><input type="range" id="mwTinySize" min="0" max="80" step="1" value="16" style="flex:1.5;"><span id="mwTinySizeVal" style="width:2.6em; text-align:right;">16</span></div>
-						<div class="mwSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Desirability bonus added when the smaller side is tiny.">Tiny bonus</span><input type="range" id="mwTinyBonus" min="0" max="1500" step="25" value="500" style="flex:1.5;"><span id="mwTinyBonusVal" style="width:2.6em; text-align:right;">5.00</span></div>
-						<div class="mwSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Keep merging while the best pair's desirability stays at/above this.">Merge threshold</span><input type="range" id="mwThreshold" min="0" max="100" step="1" value="15" style="flex:1.5;"><span id="mwThresholdVal" style="width:2.6em; text-align:right;">0.15</span></div>
+						<button id="mwSaveConfig" title="Copy a paste-ready code snippet of the current values, to save as the new file defaults" style="font-size: 75%; width: 100%; margin-bottom: 0.4em;">Save as defaults (copy code)</button>
+						<div class="mwSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Reward for the fraction of the smaller basin's border that the merge removes. Finer steps at the high end.">Border reward</span><input type="range" id="mwBorderWeight" min="0" max="600" step="2" value="150" style="flex:1.5;"><span id="mwBorderWeightVal" style="width:2.6em; text-align:right;">3.00</span></div>
+						<div class="mwSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Penalty proportional to the smaller basin's size (max 0.20).">Size penalty</span><input type="range" id="mwSizeWeight" min="0" max="20" step="1" value="5" style="flex:1.5;"><span id="mwSizeWeightVal" style="width:2.6em; text-align:right;">0.05</span></div>
+						<div class="mwSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Penalty proportional to mean boundary elevation (dislike high-elevation divides).">Elevation penalty</span><input type="range" id="mwElevWeight" min="0" max="600" step="5" value="80" style="flex:1.5;"><span id="mwElevWeightVal" style="width:2.6em; text-align:right;">0.80</span></div>
+						<div class="mwSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Penalty applied when the shared divide terminates at the ocean (touches the coast).">Ocean-border penalty</span><input type="range" id="mwOceanPenalty" min="0" max="300" step="5" value="50" style="flex:1.5;"><span id="mwOceanPenaltyVal" style="width:2.6em; text-align:right;">0.50</span></div>
+						<div class="mwSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Basins with this many tiles or fewer always merge into a neighbour.">Tiny basin size</span><input type="range" id="mwTinySize" min="0" max="120" step="1" value="40" style="flex:1.5;"><span id="mwTinySizeVal" style="width:2.6em; text-align:right;">40</span></div>
+						<div class="mwSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Keep merging while the best pair's desirability stays at/above this. Finer steps at the low end.">Merge threshold</span><input type="range" id="mwThreshold" min="0" max="100" step="1" value="22" style="flex:1.5;"><span id="mwThresholdVal" style="width:2.6em; text-align:right;">0.048</span></div>
+					</div>
+				</details>
+
+				<!-- Features K (Watershed Peninsulas) tuning -->
+				<details id="watershedPeninsulaPanel" style="margin-top: 0.5em; font-size: 85%; display: none;">
+					<summary style="cursor: pointer; user-select: none; opacity: 0.85;">Watershed Peninsulas (K) tuning</summary>
+					<div style="margin-top: 0.4em;">
+						<button id="wpSaveConfig" title="Copy a paste-ready code snippet of the current values, to save as the new file defaults" style="font-size: 75%; width: 100%; margin-bottom: 0.4em;">Save as defaults (copy code)</button>
+						<div class="wpSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Reward for the border fraction the merge removes (gated by interiorness). Finer steps at the high end.">Border reward</span><input type="range" id="wpBorderWeight" min="0" max="600" step="2" value="150" style="flex:1.5;"><span id="wpBorderWeightVal" style="width:2.6em; text-align:right;">3.00</span></div>
+						<div class="wpSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Penalty proportional to the smaller basin's size (max 0.20).">Size penalty</span><input type="range" id="wpSizeWeight" min="0" max="20" step="1" value="5" style="flex:1.5;"><span id="wpSizeWeightVal" style="width:2.6em; text-align:right;">0.05</span></div>
+						<div class="wpSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Penalty proportional to mean boundary elevation.">Elevation penalty</span><input type="range" id="wpElevWeight" min="0" max="600" step="5" value="30" style="flex:1.5;"><span id="wpElevWeightVal" style="width:2.6em; text-align:right;">0.30</span></div>
+						<div class="wpSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Boundary interiorness below this BLOCKS the merge (preserves peninsulas).">Neck midpoint</span><input type="range" id="wpNeckMid" min="0" max="100" step="1" value="25" style="flex:1.5;"><span id="wpNeckMidVal" style="width:2.6em; text-align:right;">0.25</span></div>
+						<div class="wpSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Basins with this many tiles or fewer always merge into a neighbour.">Tiny basin size</span><input type="range" id="wpTinySize" min="0" max="120" step="1" value="40" style="flex:1.5;"><span id="wpTinySizeVal" style="width:2.6em; text-align:right;">40</span></div>
+						<div class="wpSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Keep merging while the best desirability stays at/above this. Finer steps at the low end.">Merge threshold</span><input type="range" id="wpThreshold" min="0" max="100" step="1" value="22" style="flex:1.5;"><span id="wpThresholdVal" style="width:2.6em; text-align:right;">0.048</span></div>
+					</div>
+				</details>
+
+				<!-- City Priority Score tuning -->
+				<details id="cityPriorityPanel" style="margin-top: 0.5em; font-size: 85%; display: none;">
+					<summary style="cursor: pointer; user-select: none; opacity: 0.85;">City Priority tuning</summary>
+					<div style="margin-top: 0.4em;">
+						<button id="cpSaveConfig" title="Copy a paste-ready code snippet of the current values, to save as the new file defaults" style="font-size: 75%; width: 100%; margin-bottom: 0.4em;">Save as defaults (copy code)</button>
+						<div class="cpSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Multiplier on a coastal tile's upstream calories.">Coastal weight</span><input type="range" id="cpCoastalWeight" min="0" max="300" step="5" value="100" style="flex:1.5;"><span id="cpCoastalWeightVal" style="width:2.6em; text-align:right;">1.00</span></div>
+						<div class="cpSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Multiplier on the river-junction flux (upstream calories minus the best upstream neighbour).">Junction weight</span><input type="range" id="cpJunctionWeight" min="0" max="300" step="5" value="100" style="flex:1.5;"><span id="cpJunctionWeightVal" style="width:2.6em; text-align:right;">1.00</span></div>
+					</div>
+				</details>
+
+				<!-- Mountain & Hill Ranges tuning -->
+				<details id="mountainRangePanel" style="margin-top: 0.5em; font-size: 85%; display: none;">
+					<summary style="cursor: pointer; user-select: none; opacity: 0.85;">Mountain ranges tuning</summary>
+					<div style="margin-top: 0.4em;">
+						<button id="mrSaveConfig" title="Copy a paste-ready code snippet of the current values, to save as the new file defaults" style="font-size: 75%; width: 100%; margin-bottom: 0.4em;">Save as defaults (copy code)</button>
+						<div class="mrSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Minimum elevation for a watershed-border tile to count as a hill.">Min hill height</span><input type="range" id="mrHillHeight" min="0" max="100" step="1" value="35" style="flex:1.5;"><span id="mrHillHeightVal" style="width:2.6em; text-align:right;">0.35</span></div>
+						<div class="mrSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Minimum elevation for a range tile to be brightened as a mountain.">Min mountain height</span><input type="range" id="mrMountainHeight" min="0" max="100" step="1" value="60" style="flex:1.5;"><span id="mrMountainHeightVal" style="width:2.6em; text-align:right;">0.60</span></div>
+						<div class="mrSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Connected ranges smaller than this are dropped.">Min range size</span><input type="range" id="mrMinSize" min="1" max="20" step="1" value="3" style="flex:1.5;"><span id="mrMinSizeVal" style="width:2.6em; text-align:right;">3</span></div>
 					</div>
 				</details>
 			</div>
