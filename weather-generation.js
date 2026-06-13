@@ -121,10 +121,18 @@ function initializeAirHeat(corners, heatLevel, action) {
 	});
 }
 
+// Propagate one front of air heat along the air currents. The previous version
+// pushed every downstream neighbour once per inflowing edge (so the next front
+// held many duplicates that were re-scanned and re-committed) and used
+// splice(0, count) (O(active)) to drop the processed front. Here we dedupe the
+// next front with a `_heatQueued` flag and rebuild the frontier in place from a
+// scratch array, so work is proportional to the (deduped) front size.
+var _heatNext = [];
 function processAirHeat(activeCorners, action) {
 	var consumedHeat = 0;
-	var activeCornerCount = activeCorners.length;
-	for (var i = 0; i < activeCornerCount; ++i) {
+	var next = _heatNext;
+	next.length = 0;
+	for (var i = 0; i < activeCorners.length; ++i) {
 		var corner = activeCorners[i];
 		if (corner.airHeat === 0) continue;
 
@@ -140,20 +148,20 @@ function processAirHeat(activeCorners, action) {
 		for (var j = 0; j < corner.corners.length; ++j) {
 			var outflow = corner.airCurrentOutflows[j];
 			if (outflow > 0) {
-				corner.corners[j].newAirHeat += remainingCornerAirHeat * outflow;
-				activeCorners.push(corner.corners[j]);
+				var nb = corner.corners[j];
+				if (!nb._heatQueued) { nb._heatQueued = true; next.push(nb); }
+				nb.newAirHeat += remainingCornerAirHeat * outflow;
 			}
 		}
 	}
 
-	activeCorners.splice(0, activeCornerCount);
-
-	for (var i = 0; i < activeCorners.length; ++i) {
-		var corner = activeCorners[i];
-		corner.airHeat = corner.newAirHeat;
-	}
-	for (var i = 0; i < activeCorners.length; ++i) {
-		activeCorners[i].newAirHeat = 0;
+	activeCorners.length = 0;
+	for (var i = 0; i < next.length; ++i) {
+		var c = next[i];
+		c.airHeat = c.newAirHeat;
+		c.newAirHeat = 0;
+		c._heatQueued = false;
+		activeCorners.push(c);
 	}
 
 	return consumedHeat;
@@ -211,10 +219,13 @@ function initializeAirMoisture(corners, moistureLevel, action) {
 	});
 }
 
+// See processAirHeat: deduped next front + in-place rebuild (no O(active) splice).
+var _moistNext = [];
 function processAirMoisture(activeCorners, action) {
 	var consumedMoisture = 0;
-	var activeCornerCount = activeCorners.length;
-	for (var i = 0; i < activeCornerCount; ++i) {
+	var next = _moistNext;
+	next.length = 0;
+	for (var i = 0; i < activeCorners.length; ++i) {
 		var corner = activeCorners[i];
 		if (corner.airMoisture === 0) continue;
 
@@ -230,20 +241,20 @@ function processAirMoisture(activeCorners, action) {
 		for (var j = 0; j < corner.corners.length; ++j) {
 			var outflow = corner.airCurrentOutflows[j];
 			if (outflow > 0) {
-				corner.corners[j].newAirMoisture += remainingCornerAirMoisture * outflow;
-				activeCorners.push(corner.corners[j]);
+				var nb = corner.corners[j];
+				if (!nb._moistQueued) { nb._moistQueued = true; next.push(nb); }
+				nb.newAirMoisture += remainingCornerAirMoisture * outflow;
 			}
 		}
 	}
 
-	activeCorners.splice(0, activeCornerCount);
-
-	for (var i = 0; i < activeCorners.length; ++i) {
-		var corner = activeCorners[i];
-		corner.airMoisture = corner.newAirMoisture;
-	}
-	for (var i = 0; i < activeCorners.length; ++i) {
-		activeCorners[i].newAirMoisture = 0;
+	activeCorners.length = 0;
+	for (var i = 0; i < next.length; ++i) {
+		var c = next[i];
+		c.airMoisture = c.newAirMoisture;
+		c.newAirMoisture = 0;
+		c._moistQueued = false;
+		activeCorners.push(c);
 	}
 
 	return consumedMoisture;

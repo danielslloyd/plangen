@@ -397,6 +397,9 @@ function buildSurfaceRenderObject(tiles, watersheds, random, action, customMater
 			for (var offset = -1; offset <= 1; offset++) {
 				var meshCopy = new THREE.Mesh(planetGeometry, planetMaterial);
 				meshCopy.position.x = offset * mapWidth;
+				// Raised Mercator: relief casts and receives real shadows
+				meshCopy.castShadow = !!useElevationDisplacement;
+				meshCopy.receiveShadow = !!useElevationDisplacement;
 				planetRenderObject.add(meshCopy);
 			}
 		} else {
@@ -1607,18 +1610,34 @@ function calculateTerrainColor(tile) {
 	return terrainColor;
 }
 
+// Blend a value t in [0,1] across an ordered array of THREE.Color stops.
+function _lerpColorStops(stops, t) {
+	t = Math.max(0, Math.min(1, t));
+	if (t <= 0) return stops[0].clone();
+	if (t >= 1) return stops[stops.length - 1].clone();
+	var seg = t * (stops.length - 1);
+	var i = Math.floor(seg);
+	return stops[i].clone().lerp(stops[i + 1], seg - i);
+}
+
 function calculateElevationColor(tile) {
 	if (tile.elevation <= 0) {
-		// Ocean depths - blue gradient
+		// Sea floor: shallow shelf brightens, abyss darkens (eased so most of the
+		// ocean stays a readable mid-blue rather than collapsing to near-black).
 		var normalizedDepth = Math.min(-tile.elevation, 1);
-		return new THREE.Color(getOverlayColor("elevation", "oceanShallow", "#224488"))
-			.lerp(new THREE.Color(getOverlayColor("elevation", "oceanDeep", "#000044")), normalizedDepth);
-	} else {
-		// Land elevation - brown to white gradient
-		var normalizedElevation = Math.min(tile.elevation, 1);
-		return new THREE.Color(getOverlayColor("elevation", "landLow", "#4b2f20"))
-			.lerp(new THREE.Color(getOverlayColor("elevation", "landHigh", "#ffffff")), normalizedElevation);
+		return new THREE.Color(getOverlayColor("elevation", "oceanShallow", "#3d6ea8"))
+			.lerp(new THREE.Color(getOverlayColor("elevation", "oceanDeep", "#0a1a3c")), Math.pow(normalizedDepth, 0.6));
 	}
+	// Land: hypsometric green→gold→umber→snow ramp. Square-rooted so lowlands
+	// (the bulk of land) get most of the colour range instead of all reading brown.
+	var stops = [
+		new THREE.Color(getOverlayColor("elevation", "landLowland", "#3f7d4f")),
+		new THREE.Color(getOverlayColor("elevation", "landPlain",   "#9fb35a")),
+		new THREE.Color(getOverlayColor("elevation", "landUpland",  "#b9924e")),
+		new THREE.Color(getOverlayColor("elevation", "landMontane", "#7a5236")),
+		new THREE.Color(getOverlayColor("elevation", "landPeak",    "#ffffff"))
+	];
+	return _lerpColorStops(stops, Math.pow(Math.min(tile.elevation, 1), 0.7));
 }
 
 function calculateTemperatureColor(tile) {
@@ -1635,10 +1654,25 @@ function calculateTemperatureColor(tile) {
 }
 
 function calculateMoistureColor(tile) {
-	var normalizedMoisture = Math.max(0, Math.min(tile.moisture || 0, 1));
-	// Dry to wet
-	return new THREE.Color(getOverlayColor("moisture", "dry", "#8b4513"))
-		.lerp(new THREE.Color(getOverlayColor("moisture", "wet", "#00ff00")), normalizedMoisture);
+	// Rainfall map: ocean is a flat muted blue; land ramps arid tan → grassy
+	// green → lush teal by precipitation (tile.rain), normalized to the wettest
+	// land tile so the gradient uses its full range on any planet.
+	if (tile.elevation <= 0) return new THREE.Color(getOverlayColor("moisture", "ocean", "#33485e"));
+	var maxRain = getOverlayAggregate("moisture", function() {
+		var m = 0;
+		var tiles = planet.topology.tiles;
+		for (var i = 0; i < tiles.length; i++) {
+			if (tiles[i].elevation > 0 && tiles[i].rain > m) m = tiles[i].rain;
+		}
+		return m || 1;
+	});
+	var t = Math.max(0, Math.min((tile.rain || 0) / maxRain, 1));
+	var stops = [
+		new THREE.Color(getOverlayColor("moisture", "dry", "#d8c9a0")),
+		new THREE.Color(getOverlayColor("moisture", "mid", "#7cb342")),
+		new THREE.Color(getOverlayColor("moisture", "wet", "#1f6f5c"))
+	];
+	return _lerpColorStops(stops, Math.pow(t, 0.7));
 }
 
 function calculatePlatesColor(tile) {
@@ -1953,14 +1987,14 @@ function getColorOverlays() {
 // data is pending they are marked not-ready, so the dropdown shows a spinner
 // and their colour functions return gray until the background pass finishes.
 var DEFERRED_OVERLAY_IDS = [
-	"featPlatesA", "featNestedB", "featLobesC", "featThicknessE", "featBioH",
+	"featPlatesA", "featNestedB", "featThicknessE",
 	"strategicA", "strategicC", "mergedWatersheds",
 	"mountainRanges", "terrainBasinRelief", "terrainMassif",
 	// shore-field tagging overlays: their aggregates are precomputed in the
 	// background phase so selecting them never blocks the UI.
 	"shoreSkeleton", "shoreBranchDepth", "localConvexity",
 	"narrowChannels", "localThickness", "chokepoints",
-	"featBasinsK", "featCommunitiesL", "featProvincesM"
+	"featBasinsK", "featCommunitiesL"
 ];
 
 function setOverlaysReady(ids, ready) {
@@ -2026,6 +2060,9 @@ function recreateGeometryWithMaterial(materialType) {
 		for (var offset = -1; offset <= 1; offset++) {
 			var meshCopy = new THREE.Mesh(oldGeometry, newMaterial);
 			meshCopy.position.x = offset * mapWidth;
+			// Raised Mercator: relief casts and receives real shadows
+			meshCopy.castShadow = !!useElevationDisplacement;
+			meshCopy.receiveShadow = !!useElevationDisplacement;
 			newObject.add(meshCopy);
 		}
 	} else {
@@ -2049,7 +2086,7 @@ function recreateGeometryWithMaterial(materialType) {
 registerColorOverlay("terrain", "Realistic Terrain", "Realistic biome-based terrain coloring", calculateTerrainColor, "lambert", "lazy", "geography");
 registerColorOverlay("elevation", "Elevation Map", "Height-based visualization from brown (low) to white (high)", calculateElevationColor, "lambert", "lazy", "geography");
 registerColorOverlay("temperature", "Temperature Map", "Thermal visualization from blue (cold) to red (hot)", calculateTemperatureColor, "lambert", "lazy", "geography");
-registerColorOverlay("moisture", "Moisture Map", "Precipitation visualization from brown (dry) to green (wet)", calculateMoistureColor, "lambert", "lazy", "geography");
+registerColorOverlay("moisture", "Rainfall Map", "Precipitation (rainfall) from arid tan through green to lush teal; ocean muted blue", calculateMoistureColor, "lambert", "lazy", "geography");
 // Tectonic plates are no longer a full-surface color overlay; the plate boundaries
 // are now drawn as a red outline via the "Plate Boundaries" Overlay Display Option
 // (renderPlateOutline / rebuildPlateOutline). calculatePlatesColor is retained for
@@ -2686,23 +2723,44 @@ function computeNarrowChannels(tiles) {
 		}
 	}
 
+	// Trace from a crossing tile back to its own coast by steepest descent on the
+	// BFS distance field, breaking ties by alignment with a fixed outward
+	// direction (away from the meeting line). The raw BFS parent tree gives a
+	// hop-optimal but geometrically jagged/wandering path; descending dist while
+	// favouring the straight outward heading yields a near-geodesic route that
+	// crosses the strait directly instead of meandering across open water.
+	function traceToCoast(start, outward, width) {
+		var cur = start, guard = 0;
+		while (cur !== -1 && guard++ < n) {
+			var id = tiles[cur].id;
+			if (out.channel[id] === undefined || width < out.channel[id]) out.channel[id] = width;
+			if (dist[cur] <= 1) break; // reached the coast-adjacent ring
+			nb = tiles[cur].tiles;
+			var bestNext = -1, bestDist = dist[cur], bestDot = -Infinity;
+			for (var kk = 0; kk < nb.length; kk++) {
+				var w = idToIndex[nb[kk].id];
+				if (w === undefined || label[w] !== label[cur]) continue;
+				if (dist[w] >= dist[cur]) continue;             // must descend toward coast
+				var dir = tiles[w].averagePosition.clone().sub(tiles[cur].averagePosition).normalize();
+				var dot = dir.dot(outward);
+				if (dist[w] < bestDist || (dist[w] === bestDist && dot > bestDot)) {
+					bestDist = dist[w]; bestDot = dot; bestNext = w;
+				}
+			}
+			if (bestNext === -1) { cur = parent[cur]; continue; } // fall back to BFS tree
+			cur = bestNext;
+		}
+	}
+
 	// trace each pair's route back to both coasts; record narrowness per tile
 	var out = { channel: {}, maxWidth: 1, minWidth: Infinity };
 	for (var key2 in pairBest) {
 		var pb = pairBest[key2];
 		if (pb.width > out.maxWidth) out.maxWidth = pb.width;
 		if (pb.width < out.minWidth) out.minWidth = pb.width;
-		var ends = [pb.u, pb.v];
-		for (var e = 0; e < 2; e++) {
-			var cur = ends[e];
-			while (cur !== -1) {
-				var id = tiles[cur].id;
-				if (out.channel[id] === undefined || pb.width < out.channel[id]) {
-					out.channel[id] = pb.width; // keep the narrowest channel through this tile
-				}
-				cur = parent[cur];
-			}
-		}
+		var outU = tiles[pb.u].averagePosition.clone().sub(tiles[pb.v].averagePosition).normalize();
+		traceToCoast(pb.u, outU, pb.width);
+		traceToCoast(pb.v, outU.clone().negate(), pb.width);
 	}
 	if (!isFinite(out.minWidth)) out.minWidth = 1;
 	return out;
@@ -2898,10 +2956,10 @@ registerColorOverlay("chokepoints", "Chokepoints (Betweenness)", "Sampled shorte
 }, "basic", "lazy", "strategic");
 
 // ---------------------------------------------------------------------------
-// FROM-SCRATCH FEATURE GROUPING (approaches K, L, M)
+// FROM-SCRATCH FEATURE GROUPING (approaches K, L)
 // ---------------------------------------------------------------------------
-// Three independent ways to PARTITION each domain into regions, all computed in
-// one background pass (aggregate "featureGroupings") and drawn as a stable
+// Two independent ways to PARTITION each domain into regions, computed in one
+// background pass (aggregate "featureGroupings") and drawn as a stable
 // hue-per-region patchwork.
 //
 //   K - WATERSHED PENINSULAS (computeWatershedPeninsulas, strategic-overlays):
@@ -2913,10 +2971,6 @@ registerColorOverlay("chokepoints", "Chokepoints (Betweenness)", "Sampled shorte
 //       a few synchronous rounds of "adopt the most common label among
 //       same-domain neighbours" (ties -> smallest label) grow organic blobs
 //       whose borders settle where local connectivity is weakest.
-//   M - BALANCED WATERSHED PROVINCES (computeBalancedWatershedProvinces):
-//       the same watershed merge driven by combined size (always fuse the
-//       smallest adjacent pair, border fraction as tie-break) until a target
-//       region count — roughly equal-population provinces. Land only.
 //
 // Tiny regions (< GROUPING_MIN_SIZE) merge into their most-adjacent neighbour.
 var GROUPING_MIN_SIZE = 6;
@@ -3012,12 +3066,9 @@ function computeFeatureGroupings(tiles) {
 	var comm = _relabelComponents(tiles, sb, labels);
 	_mergeTinyRegions(tiles, sb, comm, GROUPING_MIN_SIZE);
 
-	// ---- M: balanced watershed merge (strategic-overlays.js) --------------
-	var provinces = computeBalancedWatershedProvinces(planet);
-
-	// pack into id-keyed maps for the colour functions (K/M are already
-	// id-keyed and land-only; L covers both domains)
-	var out = { basins: basins, communities: {}, provinces: provinces };
+	// pack into id-keyed maps for the colour functions (K is already id-keyed
+	// and land-only; L covers both domains)
+	var out = { basins: basins, communities: {} };
 	for (i = 0; i < n; i++) {
 		if (!tiles[i].shore) continue;
 		out.communities[tiles[i].id] = comm[i];
@@ -3050,7 +3101,6 @@ function _makeGroupingOverlayFn(prop, landOnly) {
 
 registerColorOverlay("featBasinsK", "Features K: Watershed Peninsulas", "Drainage basins merged with an interiorness-aware score: merging across deep-interior divides is encouraged, merging across coastal necks (low |shore|) is strongly penalised — peninsulas, capes and other appendages keep their own groups. Land only.", _makeGroupingOverlayFn("basins", true), "basic", "lazy", "features");
 registerColorOverlay("featCommunitiesL", "Features L: Communities (label propagation)", "Graph communities: every tile starts with its own label and repeatedly adopts the most common label among same-domain neighbours. Blobs grow organically; borders settle where local connectivity is weakest.", _makeGroupingOverlayFn("communities"), "basic", "lazy", "features");
-registerColorOverlay("featProvincesM", "Features M: Balanced Watershed Provinces", "The watershed merge driven by combined size: always fuse the smallest adjacent pair (border fraction as tie-break) until a target region count, yielding roughly equal-population provinces. Land only.", _makeGroupingOverlayFn("provinces", true), "basic", "lazy", "features");
 
 // ---------------------------------------------------------------------------
 // Narrow connector detection (isthmuses + straits)

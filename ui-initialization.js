@@ -7,8 +7,10 @@ $(document).ready(function onDocumentReady() {
 	});
 	// Projector removed in r125, using Raycaster directly in click handlers
 
-	// Disable face culling to ensure all faces are visible
-	renderer.shadowMap.enabled = false; // Disable shadows for debugging
+	// Shadow mapping is used only by the Raised Mercator sun light; no other
+	// light casts shadows, so this is near-free in the other view modes.
+	renderer.shadowMap.enabled = true;
+	renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 	renderer.setClearColor(0x000033, 1); // Dark blue background instead of black
 
 	// Add multiple debug lights for better illumination
@@ -32,6 +34,25 @@ $(document).ready(function onDocumentReady() {
 	var light4 = new THREE.DirectionalLight(0xFFFFFF, 0.3);
 	light4.position.set(0, -10, 0).normalize();
 	scene.add(light4);
+
+	// Raised Mercator sun: a low NW light that casts real shadows from the
+	// displaced relief onto the map plane. Hidden in all other view modes
+	// (toggled in updateCamera). Shadow camera covers the full visible map.
+	window.mercatorShadowLight = new THREE.DirectionalLight(0xFFFFFF, 0.9);
+	window.mercatorShadowLight.position.set(-18, 18, 26);
+	window.mercatorShadowLight.castShadow = true;
+	window.mercatorShadowLight.shadow.mapSize.width = 4096;
+	window.mercatorShadowLight.shadow.mapSize.height = 4096;
+	window.mercatorShadowLight.shadow.camera.left = -16;
+	window.mercatorShadowLight.shadow.camera.right = 16;
+	window.mercatorShadowLight.shadow.camera.top = 12;
+	window.mercatorShadowLight.shadow.camera.bottom = -12;
+	window.mercatorShadowLight.shadow.camera.near = 1;
+	window.mercatorShadowLight.shadow.camera.far = 100;
+	window.mercatorShadowLight.shadow.bias = -0.0005;
+	window.mercatorShadowLight.visible = false;
+	scene.add(window.mercatorShadowLight);
+	scene.add(window.mercatorShadowLight.target);
 
 	requestAnimationFrame(render);
 
@@ -141,6 +162,18 @@ $(document).ready(function onDocumentReady() {
 	ui.showAirCurrentsButton.click(showHideAirCurrents);
 	ui.showCoastlineButton.click(showHideCoastline);
 	ui.showPlateOutlineButton.click(showHidePlateOutline);
+
+	// Raised Mercator sun position sliders: live-update the shadow light direction
+	$("#mercatorSunAzimuthSlider").on("input", function() {
+		mercatorSunAzimuth = parseFloat(this.value);
+		$("#mercatorSunAzimuthVal").text(this.value + "°");
+		if (projectionMode === "mercator") { updateCamera(); markRenderActivity(); }
+	});
+	$("#mercatorSunElevationSlider").on("input", function() {
+		mercatorSunElevation = parseFloat(this.value);
+		$("#mercatorSunElevationVal").text(this.value + "°");
+		if (projectionMode === "mercator") { updateCamera(); markRenderActivity(); }
+	});
 
 	// Removed detail level and generate buttons
 	ui.advancedSettingsButton = $("#advancedSettingsButton");
@@ -629,6 +662,8 @@ function setSurfaceRenderMode(mode, force) {
 
 	// Rebuild feature root/node markers for the (possibly new) active overlay.
 	if (typeof rebuildFeatureRoots === "function") rebuildFeatureRoots();
+	// Build/clear the floating feature labels for the (possibly new) active overlay.
+	if (typeof rebuildFeatureLabels === "function") rebuildFeatureLabels();
 	// Show only the active feature overlay's tuning knobs.
 	if (typeof updateFeatureControlsVisibility === "function") updateFeatureControlsVisibility();
 	// Show the merged-watershed tuning knobs only for that overlay.
@@ -656,15 +691,15 @@ function setupFeatureDetectionControls() {
 		{ id: "fdPlateMin",     key: "plateMinSize" },
 		{ id: "fdPlateMerge",   key: "plateMerge" },
 		{ id: "fdMaxErosion",   key: "maxErosion" },
-		{ id: "fdLobeEdge",     key: "lobeEdgeWater" },
-		{ id: "fdLobeMin",      key: "lobeMinSize" },
 		{ id: "fdThickMax",     key: "thicknessMax" },
 		{ id: "fdNeckWidth",    key: "neckWidth" },
 		{ id: "fdEFollowBasins", key: "eFollowBasins",
 		  toValue: function(v) { return v === 1; }, fromValue: function(v) { return v ? 1 : 0; },
 		  format: function(v) { return v ? "on" : "off"; } },
-		{ id: "fdClimateBands", key: "climateBands" },
-		{ id: "fdClimateMin",   key: "climateMinSize" },
+		{ id: "fdSplitMergeOcean", key: "splitMergeOcean" },
+		{ id: "fdSplitMergeLand",  key: "splitMergeLand" },
+		{ id: "fdSplitNeck",       key: "splitNeckWidth" },
+		{ id: "fdSplitMinPart",    key: "splitMinPart" },
 		{ id: "fdDarken",       key: "darkenPerLevel",
 		  toValue: function(v) { return v / 100; }, fromValue: function(v) { return Math.round(v * 100); },
 		  format: function(v) { return (v / 100).toFixed(2); } }

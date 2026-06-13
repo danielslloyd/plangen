@@ -73,9 +73,18 @@ var useElevationDisplacement = false; // Binary parameter: use stored displaceme
 var riverElevationDeltaThreshold = 0.1; // Minimum elevation difference for white waterfall rivers
 var enableElevationDistributionReshaping = true; // Apply realistic elevation distribution
 var elevationExponent = 4; // Exponential curve steepness for elevation distribution (higher = more contrast)
+// Peak sharpness: an extra power applied to each land tile's elevation percentile
+// BEFORE the exponential reshaping curve. 1 = old behaviour (broad high ground that
+// reads as plateaus); >1 pushes the bulk of land down into the flat lowland band and
+// reserves the steep top of the curve for only the highest few percent of tiles, so
+// mountains become pointy spikes instead of high plateaus.
+var peakSharpness = 2.5;
 var renderEdgeCosts = false;
 var sailingCostConstant = 10.0; // Configurable constant for sailing cost calculation (cost = k / speed)
 var sunTimeOffset = 0;
+var generateLakes = false; // master toggle for lake formation (not exposed in the UI)
+var mercatorSunAzimuth = 135; // degrees, CCW from +X (east); 135 = NW. Raised Mercator sun direction
+var mercatorSunElevation = 46; // degrees above the horizon. Raised Mercator sun height
 var pressedKeys = {};
 var disableKeys = false;
 var ui = {};
@@ -177,6 +186,13 @@ function generatePlanetAsynchronous() {
 	var heatLevel = generationSettings.heatLevel;
 	var moistureLevel = generationSettings.moistureLevel;
 
+	// Make sure the cached mesh for this detail level is loaded before the
+	// pipeline runs (no-op/instant for custom sizes or once cached); then build
+	// and execute the generation action.
+	var preload = (typeof preloadCachedMesh === "function") ? preloadCachedMesh(subdivisions) : Promise.resolve(null);
+	preload.then(function () { startGeneration(); });
+
+	function startGeneration() {
 	activeAction = new SteppedAction(updateProgressUI)
 		.executeSubaction(function (action) {
 			ui.progressPanel.show();
@@ -211,6 +227,7 @@ function generatePlanetAsynchronous() {
 			ui.backgroundProgressPanel.hide();
 		}, 0)
 		.execute();
+	}
 }
 function Planet() {}
 
@@ -280,7 +297,11 @@ function generatePlanet(icosahedronSubdivision, topologyDistortionRate, plateCou
 	action
 		.executeSubaction(function (action) {
 			ctime('1. Mesh Generation');
-			generatePlanetMesh(icosahedronSubdivision, topologyDistortionRate, random, action);
+			// Load the cached mesh for this detail level if available (and not
+			// overridden) instead of regenerating it; otherwise generate from scratch.
+			var cached = (typeof getCachedMesh === "function") ? getCachedMesh(icosahedronSubdivision) : null;
+			if (cached) action.provideResult(cached);
+			else generatePlanetMesh(icosahedronSubdivision, topologyDistortionRate, random, action);
 		}, 6, "Generating Mesh")
 		.getResult(function (result) {
 			ctimeEnd('1. Mesh Generation');
@@ -1015,7 +1036,7 @@ function updateBackgroundProgressUI(action) {
 // finishes we mark its overlays ready (clears the dropdown spinner) and, if the
 // user is currently viewing one, recolour the surface live.
 function calculateBackgroundOverlays(planet, action) {
-	var FEATURE_IDS = ["featPlatesA", "featNestedB", "featLobesC", "featThicknessE", "featBioH"];
+	var FEATURE_IDS = ["featPlatesA", "featNestedB", "featThicknessE"];
 	var STRATEGIC_IDS = ["strategicA", "strategicC", "mergedWatersheds",
 		"mountainRanges", "terrainBasinRelief", "terrainMassif"];
 
@@ -1037,12 +1058,29 @@ function calculateBackgroundOverlays(planet, action) {
 			ctimeEnd('Background: Feature Detection');
 			finishGroup(FEATURE_IDS);
 		}, 50, "Detecting geographic features")
+		// Transit Centrality is the heaviest analysis; run it a few mouth-pairs at
+		// a time and yield between slices so the globe stays responsive while it
+		// fills in (rather than freezing the tab in one multi-second call).
 		.executeSubaction(function (action) {
-			ctime('Background: Strategic Overlays');
-			if (typeof generateStrategicOverlays === "function") generateStrategicOverlays(planet);
+			if (!action._stratAStarted) {
+				ctime('Background: Strategic Overlays');
+				action._stratAStarted = true;
+				action._stratAState = (typeof computeStrategicA_begin === "function")
+					? computeStrategicA_begin(planet.topology.tiles, planet) : null;
+			}
+			if (action._stratAState) {
+				if (computeStrategicA_step(action._stratAState, 6)) {
+					computeStrategicA_end(action._stratAState);
+				} else {
+					action.loop(action._stratAState.progress);
+				}
+			}
+		}, 40, "Computing transit centrality")
+		.executeSubaction(function (action) {
+			if (typeof generateStrategicOverlaysRest === "function") generateStrategicOverlaysRest(planet);
 			ctimeEnd('Background: Strategic Overlays');
 			finishGroup(STRATEGIC_IDS);
-		}, 50, "Computing strategic overlays")
+		}, 10, "Computing strategic overlays")
 		// Shore-field tagging overlays: precompute their aggregates here so
 		// selecting them from the dropdown never blocks the UI. Each group is a
 		// separate subaction (the SteppedAction yields between them); the two
@@ -1066,8 +1104,8 @@ function calculateBackgroundOverlays(planet, action) {
 		.executeSubaction(function (action) {
 			var tiles = planet.topology.tiles;
 			getOverlayAggregate("featureGroupings", function() { return computeFeatureGroupings(tiles); });
-			finishGroup(["featBasinsK", "featCommunitiesL", "featProvincesM"]);
-		}, 15, "Feature groupings (K/L/M)")
+			finishGroup(["featBasinsK", "featCommunitiesL"]);
+		}, 15, "Feature groupings (K/L)")
 		.executeSubaction(function (action) {
 			// Convexity in ~1500-tile slices.
 			var tiles = planet.topology.tiles;

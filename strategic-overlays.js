@@ -252,7 +252,21 @@ function _computeVirtualShore(tiles, savedShore, N, tileIndex, virtualElev, expa
 // boosts intensity so coastal chokepoints also light up on both sides.
 // ============================================================================
 
+// Transit Centrality is the heaviest analysis in the whole pipeline (~435 mouth
+// pairs x 3 full-graph A* searches). Running it as one synchronous call froze the
+// tab for seconds even though it is a "background" overlay. It is therefore split
+// into begin / step / end so the pipeline can process a handful of pairs per
+// SteppedAction slice and yield between them, keeping the globe responsive while
+// the overlay fills in. `computeStrategicA` keeps the old all-at-once behaviour
+// for the save/load regeneration paths.
 function computeStrategicA(tiles, planet) {
+	var state = computeStrategicA_begin(tiles, planet);
+	if (!state) return;
+	while (!computeStrategicA_step(state, Infinity)) { /* single pass */ }
+	computeStrategicA_end(state);
+}
+
+function computeStrategicA_begin(tiles, planet) {
 	var isLand  = function(t) { return t.elevation > 0; };
 	var isOcean = function(t) { return t.elevation <= 0; };
 
@@ -277,7 +291,7 @@ function computeStrategicA(tiles, planet) {
 
 	if (mouths.length < 2 || !planet || !planet.aStarEdges) {
 		for (var i = 0; i < tiles.length; i++) { tiles[i]._strategicA = 0; tiles[i]._strategicA_cross = 0; }
-		return;
+		return null;
 	}
 
 	// --- 3. Build filtered graphs from existing terrain-weighted edges ---
@@ -320,11 +334,20 @@ function computeStrategicA(tiles, planet) {
 			}
 		});
 	}
-	var landFinder  = makeAstar(landGraph);
-	var oceanFinder = makeAstar(oceanGraph);
-	var fullFinder  = makeAstar(fullGraph);
 
-	// Convert ngraph node array → tile array, or null if no path.
+	return {
+		tiles: tiles, isLand: isLand, isOcean: isOcean, tileById: tileById, mouths: mouths,
+		landFinder:  makeAstar(landGraph),
+		oceanFinder: makeAstar(oceanGraph),
+		fullFinder:  makeAstar(fullGraph),
+		i: 0, j: 1, progress: 0,
+		totalPairs: mouths.length * (mouths.length - 1) / 2, donePairs: 0
+	};
+}
+
+// Process up to maxPairs mouth pairs. Returns true when all pairs are done.
+function computeStrategicA_step(state, maxPairs) {
+	var mouths = state.mouths, tileById = state.tileById, isOcean = state.isOcean;
 	function nodesToTiles(nodes) {
 		if (!nodes || nodes.length === 0) return null;
 		var path = [];
@@ -335,40 +358,47 @@ function computeStrategicA(tiles, planet) {
 		return path.length > 0 ? path : null;
 	}
 
-	// --- 4. Weighted betweenness accumulation ---
-	for (var i = 0; i < mouths.length; i++) {
-		var calA = mouths[i].upstreamCalories || 0;
-		var drainI = mouths[i].drain;
-
-		for (var j = i + 1; j < mouths.length; j++) {
-			var calB = mouths[j].upstreamCalories || 0;
+	var processed = 0;
+	while (state.i < mouths.length) {
+		var calA = mouths[state.i].upstreamCalories || 0;
+		var drainI = mouths[state.i].drain;
+		while (state.j < mouths.length) {
+			if (processed >= maxPairs) {
+				state.progress = state.totalPairs > 0 ? state.donePairs / state.totalPairs : 1;
+				return false;
+			}
+			var jj = state.j++;
+			processed++; state.donePairs++;
+			var calB = mouths[jj].upstreamCalories || 0;
 			var w = Math.sqrt(calA * calB);
 			if (w <= 0) continue;
 
-			// Land-only pass.
-			var pathL = nodesToTiles(landFinder.find(mouths[i].id, mouths[j].id));
+			var pathL = nodesToTiles(state.landFinder.find(mouths[state.i].id, mouths[jj].id));
 			if (pathL) for (var k = 0; k < pathL.length; k++) pathL[k]._sA_l += w;
 
-			// Ocean-only pass (drain to drain).
-			var drainJ = mouths[j].drain;
+			var drainJ = mouths[jj].drain;
 			if (drainI && isOcean(drainI) && drainJ && isOcean(drainJ)) {
-				var pathO = nodesToTiles(oceanFinder.find(drainI.id, drainJ.id));
+				var pathO = nodesToTiles(state.oceanFinder.find(drainI.id, drainJ.id));
 				if (pathO) for (var k = 0; k < pathO.length; k++) pathO[k]._sA_o += w;
 			}
 
-			// Vanilla A* (cross-domain).
-			var pathX = nodesToTiles(fullFinder.find(mouths[i].id, mouths[j].id));
+			var pathX = nodesToTiles(state.fullFinder.find(mouths[state.i].id, mouths[jj].id));
 			if (pathX) for (var k = 0; k < pathX.length; k++) pathX[k]._sA_x += w;
 		}
+		state.i++; state.j = state.i + 1;
 	}
+	state.progress = 1;
+	return true;
+}
 
-	// --- 5. Smooth to widen corridors ---
+// Smooth + normalise once all pairs are accumulated.
+function computeStrategicA_end(state) {
+	var tiles = state.tiles, isLand = state.isLand, isOcean = state.isOcean;
 	var smoothRounds = 6;
 	_smoothField(tiles, '_sA_l', isLand,  smoothRounds);
 	_smoothField(tiles, '_sA_o', isOcean, smoothRounds);
 	_smoothField(tiles, '_sA_x', function(t) { return true; }, smoothRounds);
 
-	// --- 6. Normalise per channel ---
 	var maxL = 0, maxO = 0, maxX = 0;
 	for (var i = 0; i < tiles.length; i++) {
 		if (isLand(tiles[i])  && tiles[i]._sA_l > maxL) maxL = tiles[i]._sA_l;
@@ -870,38 +900,6 @@ function regenerateWatershedPeninsulas(overrides) {
 	}
 }
 
-// M — BALANCED MERGE: desirability is dominated by combined size (always fuse
-// the smallest adjacent pair, border fraction as tie-break) and merging
-// continues until a target region count, giving roughly equal-population
-// watershed provinces.
-var balancedWatershedConfig = {
-	basinsPerProvince: 10, // target = raw basin count / this (scales with resolution)
-	borderWeight: 0.6,     // tie-break toward border-erasing merges
-	tinySize: 40
-};
-
-function computeBalancedWatershedProvinces(planet) {
-	var cfg = balancedWatershedConfig;
-	var W = ((planet.topology && planet.topology.watersheds) || []).length;
-	var target = Math.max(6, Math.round(W / cfg.basinsPerProvince));
-	var ctx = _watershedMergeEngine(planet, {
-		desirability: function(c, a, b, m) {
-			var minPerim = Math.min(c.perim[a], c.perim[b]); if (minPerim < 1) minPerim = 1;
-			var borderFrac = m.shared / minPerim;
-			return -(c.size[a] + c.size[b]) / c.meanSize + cfg.borderWeight * borderFrac;
-		},
-		keepMerging: function(bestD, regionCount) { return regionCount > target; },
-		tinySize: cfg.tinySize
-	});
-	if (!ctx) return {};
-	var out = {}, groups = ctx.groupTilesByRoot();
-	for (var r in groups) {
-		var ts = groups[r];
-		for (var j = 0; j < ts.length; j++) out[ts[j].id] = +r;
-	}
-	return out;
-}
-
 // ============================================================================
 // MOUNTAIN / HILL RANGES  (Task: collect ranges as tile groups, coloured)
 //
@@ -1070,6 +1068,14 @@ function generateStrategicOverlays(planet) {
 	ctime('Strategic A: Transit Centrality');
 	computeStrategicA(tiles, planet);
 	ctimeEnd('Strategic A: Transit Centrality');
+	generateStrategicOverlaysRest(planet);
+}
+
+// Everything except Transit Centrality. The main pipeline runs centrality
+// incrementally (computeStrategicA_begin/step/end) and then calls this; the
+// save/load paths use generateStrategicOverlays (all-at-once) above.
+function generateStrategicOverlaysRest(planet) {
+	var tiles = planet.topology.tiles;
 	ctime('Strategic C: Shore Delta @ N');
 	computeStrategicC(tiles);
 	ctimeEnd('Strategic C: Shore Delta @ N');

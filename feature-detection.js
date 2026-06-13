@@ -15,16 +15,14 @@
 // & open ocean; low at peninsula tips & coves; a narrow neck (isthmus / bay
 // mouth) is a SADDLE of the field.
 //
-// FOUR APPROACHES, each producing a per-tile NESTED hierarchy of features:
+// APPROACHES, each producing a per-tile NESTED hierarchy of features:
+//
+//   A - PLATE PROVINCES            [tectonic plates + smart boundaries]
+//       Plates as large features with smoothed boundaries and domain cleanup.
 //
 //   B - EROSION SPLIT (recursive)  [threshold topology]
 //       Recursively split each body into connected components of {w > e}; flood
 //       the rest to the nearest core; recurse with e+1. Each split adds a level.
-//
-//   C - INSCRIBED-DISK LOBES       [region growth, "most land-locked part"]
-//       From the deepest-interior unclaimed tile, grow a disk (BFS) until its
-//       boundary is >= lobeEdgeWater% opposite-domain/claimed, claim that lobe,
-//       then repeat. Partitions a body into a core + its appendages.
 //
 //   E - GRANULOMETRIC THICKNESS    [scale / width]   (the favourite)
 //       Local thickness field (bounded-disk granulometry of w) nested by
@@ -33,12 +31,13 @@
 //       optional LAND-FOLLOWS-DRAINAGE-BASINS mode (large land bodies are first
 //       partitioned by river basins, then nested by thickness).
 //
-//   H - BIOREGIONS                 [climate]
-//       Contiguous regions of similar (temperature, moisture).
+//   N - SPLIT COHESION             [plate provinces, per-domain cohesion + nesting]
+//       Plate provinces with separate land/ocean cohesion merge, then land
+//       provinces are cut at narrow necks into nested peninsula/isthmus features.
 //
 // VISUALIZATION:
 //   * B overlay: base hue DARKENED once per nesting level (depth reads dark).
-//   * C/E/H overlays: a distinct stable HUE per finest feature (patchwork).
+//   * A/E/N overlays: a distinct stable HUE per finest feature (patchwork).
 //   * Hover (any feature overlay): outline every feature in the tile's hierarchy
 //     + a subtle popup label at each feature's marker tile.
 //   * "Show Feature Roots": dot at every feature's marker tile (the tile FURTHEST
@@ -67,10 +66,6 @@
 		                      // (area/perimeter²). Higher = more aggressive joining.
 		// Approach B (erosion split)
 		maxErosion: 6,        // deepest erosion level to attempt.
-		// Approach C (inscribed-disk lobes)
-		lobeEdgeWater: 40,    // stop growing a lobe once >= this % of its boundary
-		                      // edges hit opposite-domain / claimed tiles.
-		lobeMinSize: 12,      // merge lobes smaller than this into a neighbour.
 		// Approach E (granulometric thickness)
 		thicknessMax: 8,      // cap on the thickness field / erosion depth.
 		neckWidth: 1,         // tiles with |shore| <= this act as walls, forcing a
@@ -78,9 +73,14 @@
 		eFollowBasins: false, // LAND ONLY: a last-minute rule that keeps each drainage
 		                      // basin inside a single feature (snaps split boundaries
 		                      // to basin lines). Does NOT add features or touch water.
-		// Approach H (bioregions, climate)
-		climateBands: 4,      // bands per climate axis (temperature, moisture).
-		climateMinSize: 8,    // merge bioregions smaller than this into a neighbour.
+		// Approach N (split-cohesion provinces: plate provinces with separate
+		// land/ocean cohesion-merge strengths + peninsula/isthmus nesting on land)
+		splitMergeOcean: 90,  // cohesion merge strength for OCEAN provinces (80..100 in UI)
+		splitMergeLand: 15,   // cohesion merge strength for LAND provinces (0..50 in UI)
+		splitNeckWidth: 2,    // land nesting: tiles with |shore| <= this act as walls;
+		                      // the cut-off parts become nested peninsula features and
+		                      // the necks themselves become isthmus features. 0 = off.
+		splitMinPart: 6,      // nested land parts smaller than this merge into a sibling.
 		// Shared
 		darkenPerLevel: 0.72  // B: brightness multiplier per nesting level.
 	};
@@ -92,12 +92,12 @@
 
 	// overlay id -> approach letter, and approach letter -> per-tile hierarchy prop
 	var OVERLAYS = {
-		featPlatesA: "A", featNestedB: "B", featLobesC: "C", featThicknessE: "E", featBioH: "H", featPlatesJ: "J"
+		featPlatesA: "A", featNestedB: "B", featThicknessE: "E", featSplitN: "N"
 	};
 	var APPROACH_PROP = {
-		A: "hierarchyA", B: "hierarchyB", C: "hierarchyC", E: "hierarchyE", H: "hierarchyH", J: "hierarchyJ"
+		A: "hierarchyA", B: "hierarchyB", E: "hierarchyE", N: "hierarchyN"
 	};
-	var REGISTERED_IDS = ["featPlatesA", "featNestedB", "featLobesC", "featThicknessE", "featBioH", "featPlatesJ"];
+	var REGISTERED_IDS = ["featPlatesA", "featNestedB", "featThicknessE", "featSplitN"];
 
 	// ------------------------------------------------------------------
 	// Helpers
@@ -265,9 +265,21 @@
 	// pairs/triples but refuses to absorb a concave bay (which would lower
 	// compactness). `strength` (0..100) tunes the bar: 50 ≈ require no loss, lower is
 	// stricter, higher tolerates a small loss. `claimed` maps tile -> owning region.
+	// `strength` may be a single 0..100 number, or `{ land, water }` for separate
+	// per-domain strengths (Approach N's split cohesion).
 	function mergeByCohesion(regions, claimed, strength) {
-		if (!strength || strength <= 0) return;
-		var requiredRatio = 1.0 + (50 - strength) / 100 * 0.6; // 0→1.30, 50→1.00, 100→0.70
+		var landStrength, waterStrength;
+		if (strength && typeof strength === "object") {
+			landStrength = strength.land || 0;
+			waterStrength = strength.water || 0;
+		} else {
+			landStrength = waterStrength = strength || 0;
+		}
+		if (landStrength <= 0 && waterStrength <= 0) return;
+		function requiredRatioFor(isLandV) {
+			var s = isLandV ? landStrength : waterStrength;
+			return 1.0 + (50 - s) / 100 * 0.6; // 0→1.30, 50→1.00, 100→0.70
+		}
 		var minBorderFrac = 0.15;   // shared border / smaller region perimeter
 		var maxPasses = 8;
 
@@ -306,6 +318,8 @@
 				}
 				shared.forEach(function (S, O) {
 					if (R.id > O.id) return;                            // count each pair once
+					var domainStrength = R.isLand ? landStrength : waterStrength;
+					if (domainStrength <= 0) return;                    // merging disabled for this domain
 					var aR = area.get(R), aO = area.get(O);
 					var pR = perim.get(R), pO = perim.get(O);
 					var mergedPerim = pR + pO - 2 * S;
@@ -314,7 +328,7 @@
 					if (borderFrac < minBorderFrac) return;
 					var compMerged = compactness(aR + aO, mergedPerim);
 					var weighted = (aR * compactness(aR, pR) + aO * compactness(aO, pO)) / (aR + aO);
-					if (compMerged < requiredRatio * weighted) return;
+					if (compMerged < requiredRatioFor(R.isLand) * weighted) return;
 					cands.push({ a: R, b: O, gain: compMerged - weighted });
 				});
 			}
@@ -336,82 +350,6 @@
 				merged++;
 			}
 			if (merged === 0) break;
-		}
-	}
-
-	// ==================================================================
-	// APPROACH C: INSCRIBED-DISK LOBES  (the "most land-locked part" idea)
-	// ==================================================================
-	function computeLobesForBody(bodyTiles, idState, allOut) {
-		var tileSet = new Set(bodyTiles);
-		var landDomain = isLand(bodyTiles[0]);
-		var threshold = CONFIG.lobeEdgeWater / 100;
-		var minSize = CONFIG.lobeMinSize;
-
-		var sorted = bodyTiles.slice().sort(function (a, b) {
-			var d = fieldValue(b) - fieldValue(a);
-			return d !== 0 ? d : (a.id || 0) - (b.id || 0);
-		});
-
-		var claimed = new Map();
-		var lobes = [];
-		var sortIdx = 0;
-
-		while (true) {
-			while (sortIdx < sorted.length && claimed.has(sorted[sortIdx])) sortIdx++;
-			if (sortIdx >= sorted.length) break;
-			var seed = sorted[sortIdx];
-
-			var region = [];
-			var inRegion = new Set();
-			var dist = new Map();
-			var queue = [seed]; dist.set(seed, 0);
-			var qhead = 0;
-			var blocking = 0, openEdges = 0;
-
-			while (qhead < queue.length) {
-				var t = queue[qhead++];
-				if (claimed.has(t) || inRegion.has(t)) continue;
-				inRegion.add(t); region.push(t);
-
-				var nb = t.tiles;
-				for (var k = 0; k < nb.length; k++) {
-					var n = nb[k];
-					if (inRegion.has(n)) {
-						openEdges--;
-					} else if (!tileSet.has(n) || claimed.has(n)) {
-						blocking++;
-					} else {
-						openEdges++;
-						if (!dist.has(n)) { dist.set(n, dist.get(t) + 1); queue.push(n); }
-					}
-				}
-
-				var total = blocking + openEdges;
-				if (region.length >= minSize && total > 0 && (blocking / total) >= threshold) break;
-			}
-
-			var lobe = makeFeature("C", landDomain, 2, null, seed, fieldValue(seed), idState);
-			lobe._tiles = region;
-			for (var r = 0; r < region.length; r++) claimed.set(region[r], lobe);
-			lobes.push(lobe);
-		}
-
-		mergeSmallRegions(lobes, claimed, minSize);
-		var survivors = lobes.filter(function (l) { return !l._dead; });
-
-		var bodyRoot = makeFeature("C", landDomain, 1, null, sorted[0], fieldValue(sorted[0]), idState);
-		bodyRoot._tiles = bodyTiles;
-		allOut.push(bodyRoot);
-		for (var s = 0; s < survivors.length; s++) {
-			survivors[s].parent = bodyRoot;
-			bodyRoot.children.push(survivors[s]);
-			allOut.push(survivors[s]);
-		}
-
-		for (var bt = 0; bt < bodyTiles.length; bt++) {
-			var owner = claimed.get(bodyTiles[bt]);
-			bodyTiles[bt].hierarchyC = owner ? [bodyRoot, owner] : [bodyRoot];
 		}
 	}
 
@@ -482,55 +420,6 @@
 	}
 
 	// ==================================================================
-	// APPROACH H: BIOREGIONS  (climate)
-	// ==================================================================
-	function computeBioregions(tiles, idState, allOut) {
-		var tmin = Infinity, tmax = -Infinity, mmin = Infinity, mmax = -Infinity;
-		for (var i = 0; i < tiles.length; i++) {
-			if (fieldValue(tiles[i]) === 0) continue;
-			var T = tiles[i].temperature || 0, M = tiles[i].moisture || 0;
-			if (T < tmin) tmin = T; if (T > tmax) tmax = T;
-			if (M < mmin) mmin = M; if (M > mmax) mmax = M;
-		}
-		var bands = Math.max(1, CONFIG.climateBands);
-		var tSpan = (tmax - tmin) || 1, mSpan = (mmax - mmin) || 1;
-		function classOf(tile) {
-			var tb = Math.min(bands - 1, Math.max(0, Math.floor((tile.temperature - tmin) / tSpan * bands)));
-			var mb = Math.min(bands - 1, Math.max(0, Math.floor((tile.moisture - mmin) / mSpan * bands)));
-			return (isLand(tile) ? 0 : 1000) + tb * bands + mb;
-		}
-
-		var owner = new Map(), regions = [];
-		for (var a = 0; a < tiles.length; a++) {
-			var t0 = tiles[a];
-			if (fieldValue(t0) === 0 || owner.has(t0)) continue;
-			var cls = classOf(t0);
-			var region = makeFeature("H", isLand(t0), 1, null, t0, fieldValue(t0), idState);
-			region._tiles = [];
-			var stack = [t0]; owner.set(t0, region);
-			while (stack.length) {
-				var c = stack.pop();
-				region._tiles.push(c);
-				var nb = c.tiles;
-				for (var k = 0; k < nb.length; k++) {
-					var n = nb[k];
-					if (fieldValue(n) === 0 || owner.has(n)) continue;
-					if (classOf(n) === cls) { owner.set(n, region); stack.push(n); }
-				}
-			}
-			regions.push(region);
-		}
-
-		mergeSmallRegions(regions, owner, CONFIG.climateMinSize);
-		var survivors = regions.filter(function (r) { return !r._dead; });
-		for (var s = 0; s < survivors.length; s++) allOut.push(survivors[s]);
-		for (var ti = 0; ti < tiles.length; ti++) {
-			var o = owner.get(tiles[ti]);
-			tiles[ti].hierarchyH = (o && !o._dead) ? [o] : null;
-		}
-	}
-
-	// ==================================================================
 	// APPROACH A: PLATE PROVINCES  (plates as large features + smart boundaries)
 	// ==================================================================
 	// Large features come straight from the tectonic plates. The raw plate
@@ -539,9 +428,8 @@
 	// tile intrusions and pull the boundary toward the locally dominant plate,
 	// then tiny leftover provinces are merged into their main neighbour. Operates
 	// over ALL tiles (land + water), since plates span both.
-	// opts: { prop, approach, minWaterBoundary }. Approach A passes the defaults;
-	// the J clone passes minWaterBoundary:true to re-route water boundaries onto the
-	// shortest crossings.
+	// opts: { prop, approach, merge }. Approach A passes the defaults; Approach N
+	// passes a per-domain { land, water } cohesion strength via opts.merge.
 	function computePlateProvinces(tiles, idState, allOut, opts) {
 		opts = opts || {};
 		var PROP = opts.prop || "hierarchyA";
@@ -601,133 +489,6 @@
 			else if (!isLand(mt) && plateMajLand(mp)) { var nq = waterOwner.get(mt); if (nq !== undefined) assign.set(mt, nq); }
 		}
 
-		// Min-water-boundary (J clone only): re-route every water province boundary
-		// onto the SHORTEST water crossing. The seam between two ocean provinces spans
-		// water from one land body to another; the shortest such curve cuts the fewest
-		// water-water edges - i.e. it runs through the narrowest channel. For each
-		// adjacent water-province pair we take a min-cut (unit-capacity max-flow,
-		// Edmonds-Karp) inside a band around their shared boundary: the deep middle of
-		// the crossing relocates freely to the channel, while the two COASTAL ENDPOINTS
-		// (where the seam meets land) are not hard-anchored - they may slide up to
-		// ENDPOINT_SLACK edges along the SAME coast. Coastal tiles farther than that
-		// from the current endpoints are pinned to their province, which both keeps an
-		// endpoint on its own land body and limits how far it can wander.
-		if (opts.minWaterBoundary) {
-			var BAND = 12;           // half-width of the water band searched for the min cut
-			var ENDPOINT_SLACK = 3;  // edges a coastal endpoint may slide along its coast
-			// Water provinces = connected same-label water components.
-			var provOf = new Map(), provLabel = [], seenW = new Set();
-			for (var wi = 0; wi < tiles.length; wi++) {
-				var ws = tiles[wi];
-				if (isLand(ws) || seenW.has(ws)) continue;
-				var lbl = assign.get(ws), pid = provLabel.length, stk = [ws]; seenW.add(ws);
-				while (stk.length) {
-					var cc = stk.pop(); provOf.set(cc, pid);
-					var ccn = cc.tiles;
-					for (var z = 0; z < ccn.length; z++) { var zn = ccn[z]; if (!seenW.has(zn) && !isLand(zn) && assign.get(zn) === lbl) { seenW.add(zn); stk.push(zn); } }
-				}
-				provLabel.push(lbl);
-			}
-			// Adjacent water-province pairs (share >=1 water-water edge).
-			var pairSeen = {}, pairs = [];
-			for (var pi2 = 0; pi2 < tiles.length; pi2++) {
-				var pt = tiles[pi2];
-				if (isLand(pt)) continue;
-				var pa = provOf.get(pt), pn = pt.tiles;
-				for (var pk = 0; pk < pn.length; pk++) {
-					var po = pn[pk]; if (isLand(po)) continue;
-					var pb = provOf.get(po); if (pb === pa) continue;
-					var lo = pa < pb ? pa : pb, hi = pa < pb ? pb : pa, key = lo + "_" + hi;
-					if (!pairSeen[key]) { pairSeen[key] = 1; pairs.push([lo, hi]); }
-				}
-			}
-			// For each pair, find the minimum-length water cut inside a band around
-			// their shared boundary, via unit-capacity max-flow on an integer graph
-			// (super-source = the band's A-side rim, super-sink = its B-side rim).
-			for (var ph = 0; ph < pairs.length; ph++) {
-				var A = pairs[ph][0], B = pairs[ph][1];
-				// Contact tiles = band depth 0.
-				var band = [], depthOf = new Map(), q0 = [];
-				for (var ci = 0; ci < tiles.length; ci++) {
-					var t = tiles[ci]; if (isLand(t)) continue;
-					var pr = provOf.get(t); if (pr !== A && pr !== B) continue;
-					var nb0 = t.tiles, touches = false;
-					for (var ck = 0; ck < nb0.length; ck++) { var nn = nb0[ck]; if (isLand(nn)) continue; var pp = provOf.get(nn); if ((pr === A && pp === B) || (pr === B && pp === A)) { touches = true; break; } }
-					if (touches) { depthOf.set(t, 0); q0.push(t); band.push(t); }
-				}
-				// BFS the band outward to BAND, staying inside provinces A/B water.
-				var qh = 0;
-				while (qh < q0.length) {
-					var u = q0[qh++], du = depthOf.get(u); if (du >= BAND) continue;
-					var nbu = u.tiles;
-					for (var uk = 0; uk < nbu.length; uk++) {
-						var v = nbu[uk]; if (isLand(v) || depthOf.has(v)) continue;
-						var pv = provOf.get(v); if (pv !== A && pv !== B) continue;
-						depthOf.set(v, du + 1); q0.push(v); band.push(v);
-					}
-				}
-				// Endpoint slack region: water tiles within ENDPOINT_SLACK of where the
-				// current A/B contact meets land (the crossing's coastal endpoints). The
-				// cut may move freely here, so an endpoint can slide a few edges along its
-				// own coast; everywhere else the coastline assignment is held fixed.
-				var slack = new Set(), sq = [], sh = 0, sDepth = new Map();
-				for (var an = 0; an < band.length; an++) {
-					var ab = band[an]; if (depthOf.get(ab) !== 0) continue;   // contact tiles
-					var abn = ab.tiles, onCoast = false;
-					for (var ak = 0; ak < abn.length; ak++) if (isLand(abn[ak])) { onCoast = true; break; }
-					if (onCoast && !slack.has(ab)) { slack.add(ab); sDepth.set(ab, 0); sq.push(ab); }
-				}
-				while (sh < sq.length) {
-					var su = sq[sh++], sd = sDepth.get(su); if (sd >= ENDPOINT_SLACK) continue;
-					var sn = su.tiles;
-					for (var sk = 0; sk < sn.length; sk++) { var sv = sn[sk]; if (isLand(sv) || slack.has(sv) || !depthOf.has(sv)) continue; slack.add(sv); sDepth.set(sv, sd + 1); sq.push(sv); }
-				}
-				// Integer-index band tiles; SRC, SNK sentinels.
-				var idx = new Map();
-				for (var bi = 0; bi < band.length; bi++) idx.set(band[bi], bi);
-				var SRC = band.length, SNK = band.length + 1, N = band.length + 2;
-				var eTo = [], eCap = [], eNext = [], eHead = new Array(N); for (var hi2 = 0; hi2 < N; hi2++) eHead[hi2] = -1;
-				var addEdge = function (a, b, c, rc) {
-					eTo.push(b); eCap.push(c); eNext.push(eHead[a]); eHead[a] = eTo.length - 1;
-					eTo.push(a); eCap.push(rc); eNext.push(eHead[b]); eHead[b] = eTo.length - 1;
-				};
-				var INF = 1e9, rimA = 0, rimB = 0;
-				for (var bj = 0; bj < band.length; bj++) {
-					var bt = band[bj], bp = provOf.get(bt), bn = bt.tiles, isRim = false, coastal = false;
-					for (var bk = 0; bk < bn.length; bk++) {
-						var w = bn[bk];
-						if (isLand(w)) { coastal = true; continue; }
-						if (idx.has(w)) { if (idx.get(w) > bj) addEdge(bj, idx.get(w), 1, 1); }   // band water-water edge
-						else if (provOf.get(w) === bp) isRim = true;                                // leads to open same-province water
-					}
-					// Pin to its province if it is a deep rim, or a coastal tile outside the
-					// endpoint-slack zone (so the seam's coast endpoints move only a little).
-					if (isRim || (coastal && !slack.has(bt))) {
-						if (bp === A) { addEdge(SRC, bj, INF, 0); rimA++; } else { addEdge(bj, SNK, INF, 0); rimB++; }
-					}
-				}
-				if (rimA === 0 || rimB === 0) continue;   // a province fully inside the band: leave pair as-is
-				// Edmonds-Karp max-flow.
-				var parEdge = new Array(N);
-				for (;;) {
-					for (var li = 0; li < N; li++) parEdge[li] = -1;
-					var bq = [SRC], bh = 0; parEdge[SRC] = -2; var reached = false;
-					while (bh < bq.length) {
-						var nu = bq[bh++]; if (nu === SNK) { reached = true; break; }
-						for (var e = eHead[nu]; e !== -1; e = eNext[e]) { var nv = eTo[e]; if (parEdge[nv] === -1 && eCap[e] > 0) { parEdge[nv] = e; bq.push(nv); } }
-					}
-					if (!reached) break;
-					var node = SNK, push = INF;
-					while (node !== SRC) { var pe = parEdge[node]; if (eCap[pe] < push) push = eCap[pe]; node = eTo[pe ^ 1]; }
-					node = SNK; while (node !== SRC) { var pe2 = parEdge[node]; eCap[pe2] -= push; eCap[pe2 ^ 1] += push; node = eTo[pe2 ^ 1]; }
-				}
-				// Min cut = nodes reachable from SRC in the residual graph -> A side.
-				var srcSide = new Array(N), vq = [SRC], vh = 0; srcSide[SRC] = true;
-				while (vh < vq.length) { var vu = vq[vh++]; for (var e2 = eHead[vu]; e2 !== -1; e2 = eNext[e2]) { var vv = eTo[e2]; if (!srcSide[vv] && eCap[e2] > 0) { srcSide[vv] = true; vq.push(vv); } } }
-				for (var rb2 = 0; rb2 < band.length; rb2++) assign.set(band[rb2], srcSide[rb2] ? provLabel[A] : provLabel[B]);
-			}
-		}
-
 		// Contiguous same-plate regions = provinces.
 		var visited = new Set(), regions = [], owner = new Map();
 		for (var a = 0; a < tiles.length; a++) {
@@ -750,12 +511,147 @@
 		}
 
 		mergeSmallRegions(regions, owner, CONFIG.plateMinSize, true);   // same-domain merges only
-		mergeByCohesion(regions, owner, CONFIG.plateMerge);            // join into rounder features
+		// `opts.merge` (number or {land, water}) overrides the default strength.
+		mergeByCohesion(regions, owner, opts.merge !== undefined ? opts.merge : CONFIG.plateMerge);
 		var survivors = regions.filter(function (r) { return !r._dead; });
 		for (var sv = 0; sv < survivors.length; sv++) allOut.push(survivors[sv]);
 		for (var ti = 0; ti < tiles.length; ti++) {
 			var o = owner.get(tiles[ti]);
 			tiles[ti][PROP] = (o && !o._dead) ? [o] : null;
+		}
+	}
+
+	// ==================================================================
+	// APPROACH N LAND NESTING: PENINSULAS & ISTHMUSES INSIDE PROVINCES
+	// ==================================================================
+	// For each LAND province from the split-cohesion pass, cut the province at
+	// narrow necks (|shore| <= splitNeckWidth acts as a wall) into parts. The
+	// LARGEST part is the province trunk and keeps the plain [province]
+	// hierarchy; every other part becomes a nested level-2 feature (a peninsula
+	// or appendage), and each wall component that connects two or more parts
+	// becomes an explicit ISTHMUS feature. Water provinces are untouched.
+	function nestLandProvincesN(tiles, features, idState) {
+		var neckW = CONFIG.splitNeckWidth | 0;
+		if (neckW <= 0) return;
+		var minPart = Math.max(1, CONFIG.splitMinPart | 0);
+		var provinces = features.slice().filter(function (f) { return !f._dead && f.isLand; });
+
+		for (var pi = 0; pi < provinces.length; pi++) {
+			var P = provinces[pi];
+			var prov = P._tiles;
+			if (!prov || prov.length < minPart * 2) continue;
+			var provSet = new Set(prov);
+
+			// Cores = connected components of the wide interior (|shore| > neckW).
+			var cores = connectedComponentsAbove(prov, provSet, neckW, fieldValue);
+			if (cores.length < 2) continue;
+
+			// Grow every non-core tile out to its nearest core (walls included),
+			// giving a full partition of the province into "parts".
+			var groups = fillToCores(prov, provSet, cores);
+
+			// Wall components (the necks themselves): connected runs of
+			// |shore| <= neckW tiles that touch 2+ different parts -> isthmus.
+			var partOf = new Map();
+			for (var g = 0; g < groups.length; g++) {
+				for (var gt = 0; gt < groups[g].length; gt++) partOf.set(groups[g][gt], g);
+			}
+			// A neck is a SHORT wall run joining 2+ parts. Long wall components
+			// (e.g. an entire low-shore coastal ring that happens to touch two
+			// cores) are not isthmuses - cap size by the cut width.
+			var maxNeckSize = (2 * neckW + 1) * 4;
+			var wallSeen = new Set(), isthmusComps = [];
+			for (var wi = 0; wi < prov.length; wi++) {
+				var w0 = prov[wi];
+				if (fieldValue(w0) > neckW || wallSeen.has(w0)) continue;
+				var comp = [], stack = [w0]; wallSeen.add(w0);
+				var touched = new Set();
+				while (stack.length) {
+					var c = stack.pop(); comp.push(c);
+					var nb = c.tiles;
+					for (var k = 0; k < nb.length; k++) {
+						var n = nb[k];
+						if (!provSet.has(n)) continue;
+						if (fieldValue(n) <= neckW) {
+							if (!wallSeen.has(n)) { wallSeen.add(n); stack.push(n); }
+						} else {
+							touched.add(partOf.get(n));
+						}
+					}
+				}
+				if (touched.size >= 2 && comp.length >= 2 && comp.length <= maxNeckSize) isthmusComps.push(comp);
+			}
+			var isthmusTiles = new Set();
+			for (var ic = 0; ic < isthmusComps.length; ic++) {
+				for (var it = 0; it < isthmusComps[ic].length; it++) isthmusTiles.add(isthmusComps[ic][it]);
+			}
+
+			// Build child features. The largest part is the trunk: no child.
+			var order = groups.map(function (grp, gi) { return gi; }).sort(function (a, b) {
+				return groups[b].length - groups[a].length;
+			});
+			var trunkIdx = order[0];
+			var children = [], claimed = new Map();
+			for (var oi = 0; oi < order.length; oi++) {
+				var gi2 = order[oi];
+				if (gi2 === trunkIdx) continue;
+				var part = groups[gi2].filter(function (t) { return !isthmusTiles.has(t); });
+				if (part.length === 0) continue;
+				var maxW = 0, rootT = part[0];
+				for (var pt = 0; pt < part.length; pt++) {
+					if (fieldValue(part[pt]) > maxW) { maxW = fieldValue(part[pt]); rootT = part[pt]; }
+				}
+				var child = makeFeature("N", true, 2, P, rootT, maxW, idState);
+				child._tiles = part;
+				for (var ct = 0; ct < part.length; ct++) claimed.set(part[ct], child);
+				children.push(child);
+			}
+			for (var nc = 0; nc < isthmusComps.length; nc++) {
+				var necks = isthmusComps[nc];
+				var neck = makeFeature("N", true, 2, P, necks[0], neckW, idState);
+				neck._tiles = necks.slice();
+				neck._isNeck = true;
+				for (var nt = 0; nt < necks.length; nt++) claimed.set(necks[nt], neck);
+				children.push(neck);
+			}
+			if (children.length === 0) continue;
+
+			// Absorb tiny non-neck parts into the sibling they touch most
+			// (never into a neck; necks stay, they are the point).
+			for (var ai = 0; ai < children.length; ai++) {
+				var R = children[ai];
+				if (R._dead || R._isNeck || R._tiles.length >= minPart) continue;
+				var counts = new Map(), best = null, bestC = 0;
+				for (var rt = 0; rt < R._tiles.length; rt++) {
+					var rnb = R._tiles[rt].tiles;
+					for (var rk = 0; rk < rnb.length; rk++) {
+						var o = claimed.get(rnb[rk]);
+						if (!o || o === R || o._dead || o._isNeck) continue;
+						var cc = (counts.get(o) || 0) + 1; counts.set(o, cc);
+						if (cc > bestC) { bestC = cc; best = o; }
+					}
+				}
+				if (!best) {
+					// isolated tiny part: return its tiles to the trunk
+					for (var rz = 0; rz < R._tiles.length; rz++) claimed.delete(R._tiles[rz]);
+					R._dead = true;
+					continue;
+				}
+				for (var rm = 0; rm < R._tiles.length; rm++) {
+					claimed.set(R._tiles[rm], best);
+					best._tiles.push(R._tiles[rm]);
+				}
+				R._dead = true;
+			}
+
+			var survivors = children.filter(function (c) { return !c._dead; });
+			for (var si = 0; si < survivors.length; si++) {
+				P.children.push(survivors[si]);
+				features.push(survivors[si]);
+				for (var st = 0; st < survivors[si]._tiles.length; st++) {
+					survivors[si]._tiles[st].hierarchyN = [P, survivors[si]];
+				}
+			}
 		}
 	}
 
@@ -862,8 +758,8 @@
 	function computeAll(tiles) {
 		for (var i = 0; i < tiles.length; i++) {
 			tiles[i]._bFinest = null; tiles[i]._eFinest = null; tiles[i]._thick = 0;
-			tiles[i].hierarchyA = null; tiles[i].hierarchyB = null; tiles[i].hierarchyC = null;
-			tiles[i].hierarchyE = null; tiles[i].hierarchyH = null; tiles[i].hierarchyJ = null;
+			tiles[i].hierarchyA = null; tiles[i].hierarchyB = null;
+			tiles[i].hierarchyE = null; tiles[i].hierarchyN = null;
 		}
 		var bodies = groupByBody(tiles);
 		var totals = { land: 0, water: 0 };
@@ -880,13 +776,39 @@
 		assignFeatureMarkers(featuresA);
 		classifySimple(featuresA, "Plate");
 
-		// ---- Approach J (plate provinces, min water boundary - clone of A) ----
-		var idJ = { next: 3000000 };
-		var featuresJ = [];
-		computePlateProvinces(tiles, idJ, featuresJ, { prop: "hierarchyJ", approach: "J", minWaterBoundary: true });
-		populateRegions(tiles, "hierarchyJ");
-		assignFeatureMarkers(featuresJ);
-		classifySimple(featuresJ, "Plate");
+		// ---- Approach N (split-cohesion provinces + land nesting) ----
+		// Plate provinces with separate cohesion strengths per domain (ocean
+		// provinces fuse aggressively into large seas; land provinces stay
+		// fragmented), then land provinces are cut at narrow necks into nested
+		// peninsula parts with explicit isthmus features.
+		var idN = { next: 16000000 };
+		var featuresN = [];
+		computePlateProvinces(tiles, idN, featuresN, {
+			prop: "hierarchyN", approach: "N",
+			merge: { land: CONFIG.splitMergeLand, water: CONFIG.splitMergeOcean }
+		});
+		nestLandProvincesN(tiles, featuresN, idN);
+		populateRegions(tiles, "hierarchyN");
+		assignFeatureMarkers(featuresN);
+		classifyAll(featuresN, totals);
+		// In N the isthmus label is structural: necks are isthmuses by
+		// construction, and a nested non-neck part is always a peninsula-type
+		// feature even when long and thin (the generic connector heuristic
+		// would otherwise mislabel narrow peninsulas as isthmuses).
+		var isthmusCount = 0, renamedCounts = {};
+		for (var ni = 0; ni < featuresN.length; ni++) {
+			var fN = featuresN[ni];
+			if (fN._dead) continue;
+			if (fN._isNeck) {
+				fN.classification = "Isthmus";
+				fN.name = "Isthmus N" + (++isthmusCount);
+			} else if (fN.level === 2 && (fN.classification === "Isthmus" || fN.classification === "Strait")) {
+				var szN = fN.regionTiles.length, TN = Math.max(1, totals.land);
+				fN.classification = szN > 0.05 * TN ? "Peninsula" : (szN > 0.012 * TN ? "Headland" : "Cape");
+				renamedCounts[fN.classification] = (renamedCounts[fN.classification] || 0) + 1;
+				fN.name = fN.classification + " N" + renamedCounts[fN.classification];
+			}
+		}
 
 		// ---- Approach B (erosion split) ----
 		var idB = { next: 1000000 };
@@ -900,14 +822,6 @@
 		populateRegions(tiles, "hierarchyB");
 		assignFeatureMarkers(featuresB);
 		classifyAll(featuresB, totals);
-
-		// ---- Approach C (inscribed-disk lobes) ----
-		var idC = { next: 1 };
-		var featuresC = [];
-		bodies.forEach(function (bt) { computeLobesForBody(bt, idC, featuresC); });
-		populateRegions(tiles, "hierarchyC");
-		assignFeatureMarkers(featuresC);
-		classifyAll(featuresC, totals);
 
 		// ---- Approach E (granulometric thickness, + neck cut, + basin snap) ----
 		// Separate land/water id ranges so the land-only basin snap can never shift
@@ -924,26 +838,16 @@
 		assignFeatureMarkers(featuresE);
 		classifyAll(featuresE, totals);
 
-		// ---- Approach H (bioregions, climate) ----
-		var idH = { next: 13000000 };
-		var featuresH = [];
-		computeBioregions(tiles, idH, featuresH);
-		populateRegions(tiles, "hierarchyH");
-		assignFeatureMarkers(featuresH);
-		classifySimple(featuresH, "Bioregion");
-
 		// 5-colour-map graph colouring for every approach (land + ocean independently).
 		assignFeatureGraphColors(tiles, "hierarchyA");
 		assignFeatureGraphColors(tiles, "hierarchyB");
-		assignFeatureGraphColors(tiles, "hierarchyC");
 		assignFeatureGraphColors(tiles, "hierarchyE");
-		assignFeatureGraphColors(tiles, "hierarchyH");
-		assignFeatureGraphColors(tiles, "hierarchyJ");
+		assignFeatureGraphColors(tiles, "hierarchyN");
 
 		DATA = {
 			totals: totals,
-			featuresByApproach: { A: featuresA, B: featuresB, C: featuresC, E: featuresE, H: featuresH, J: featuresJ },
-			counts: { A: featuresA.length, B: featuresB.length, C: featuresC.length, E: featuresE.length, H: featuresH.length, J: featuresJ.length }
+			featuresByApproach: { A: featuresA, B: featuresB, E: featuresE, N: featuresN },
+			counts: { A: featuresA.length, B: featuresB.length, E: featuresE.length, N: featuresN.length }
 		};
 		return DATA;
 	}
@@ -1057,18 +961,12 @@
 		registerColorOverlay("featNestedB", "Features B: Nested (erosion)",
 			"Approach B. Recursive erosion split. 5-colour map; hover for outlines + names.",
 			makeFeatureColorFn("hierarchyB", "featNestedB"), "basic", "lazy", "features");
-		registerColorOverlay("featLobesC", "Features C: Lobes (inscribed disk)",
-			"Approach C. Greedy core+appendage lobes. 5-colour map.",
-			makeFeatureColorFn("hierarchyC", "featLobesC"), "basic", "lazy", "features");
 		registerColorOverlay("featThicknessE", "Features E: Thickness (granulometry)",
 			"Approach E. Width-based nesting; cuts narrow necks; optional basin mode. 5-colour map.",
 			makeFeatureColorFn("hierarchyE", "featThicknessE"), "basic", "lazy", "features");
-		registerColorOverlay("featBioH", "Features H: Bioregions (climate)",
-			"Approach H. Contiguous regions of similar temperature & moisture. 5-colour map.",
-			makeFeatureColorFn("hierarchyH", "featBioH"), "basic", "lazy", "features");
-		registerColorOverlay("featPlatesJ", "Features J: Plate provinces (min water boundary)",
-			"Approach A clone. Water province boundaries are re-routed onto the shortest water crossing (narrowest channel) between land bodies. 5-colour map.",
-			makeFeatureColorFn("hierarchyJ", "featPlatesJ"), "basic", "lazy", "features");
+		registerColorOverlay("featSplitN", "Features N: Split cohesion (land/ocean)",
+			"Plate provinces with separate cohesion merge per domain (ocean fuses into big seas, land stays fine-grained), plus nested peninsula/isthmus features inside land provinces. 5-colour map.",
+			makeFeatureColorFn("hierarchyN", "featSplitN"), "basic", "lazy", "features");
 		for (var i = 0; i < REGISTERED_IDS.length; i++) defineFeatureColorSlots(REGISTERED_IDS[i]);
 	}
 
@@ -1451,6 +1349,7 @@
 		console.timeEnd("featureDetection");
 		console.log("Feature detection counts -> A:" + data.counts.A + " B:" + data.counts.B +
 			" C:" + data.counts.C + " E:" + data.counts.E + " H:" + data.counts.H +
+			" N:" + data.counts.N +
 			" (land/water tiles " + data.totals.land + "/" + data.totals.water + ")");
 	}
 

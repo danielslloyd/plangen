@@ -33,7 +33,7 @@ realistic terrain, weather, biomes, and resources. Three.js for rendering; a
 
 - `docs/rendering.md` — projection/view modes, render-data cache, mercator
   wrapping, plate/coastline outlines.
-- `docs/feature-detection.md` — the A/B/C/E/H feature overlays, tuning sliders,
+- `docs/feature-detection.md` — the A/B/E/N feature overlays, tuning sliders,
   roots, hover, classification.
 - `docs/coordinate-system.md` — the cartesianToSpherical axis-rotation fix.
 - `docs/changelog.md` — recent work, newest first.
@@ -41,7 +41,11 @@ realistic terrain, weather, biomes, and resources. Three.js for rendering; a
 ## Architecture Overview
 
 ### Core generation pipeline (via `SteppedAction`, non-blocking)
-1. **Geometry** (`geometry.js`): icosahedral mesh at N subdivisions.
+1. **Geometry** (`geometry.js`): icosahedral mesh at N subdivisions. For the three
+   standard detail levels (20/40/60) the mesh is loaded from a cached JSON file
+   (`meshes/mesh-N.json`, see `mesh-cache.js`) instead of being generated; set
+   `useCustomMesh = true` to always generate. Regenerate the files with
+   `node scripts/generate-meshes.js`.
 2. **Topology**: dual graph (tiles/corners/edges) from the mesh.
 3. **Tectonic plates** (`generatePlanetTerrain_functions.js`): continental/oceanic.
 4. **Elevation** (`elevation-generation.js`): exponential distribution + exaggeration.
@@ -75,6 +79,7 @@ realistic terrain, weather, biomes, and resources. Three.js for rendering; a
 // planet-generator.js
 subdivisions: 60,        // Mesh complexity (20/40/60)
 elevationExponent: 4,    // Exponential curve steepness
+peakSharpness: 2.5,      // Power on land percentile pre-reshape; >1 = pointier peaks (less plateau)
 elevationMultiplier: 80, // 3D terrain exaggeration
 riverThreshold: 0.0001,  // Min flow for river rendering
 plateCount: 36,          // Tectonic plates
@@ -91,8 +96,8 @@ period 4π); up/down arrows reversed (up = north).
 ## Geographic Feature Detection (summary — see `docs/feature-detection.md`)
 
 `generateFeatureOverlays(planet)` builds nested land/water features as color
-overlays (approaches **A** plate provinces, **B** erosion, **C** lobes, **E**
-thickness, **H** bioregions), each a `tile.hierarchyX` array. Tunable live via the
+overlays (approaches **A** plate provinces, **B** erosion, **E** thickness,
+**N** split-cohesion), each a `tile.hierarchyX` array. Tunable live via the
 "Feature Detection tuning" sliders or `regenerateFeatureOverlays({...})`.
 
 ## Common Development Patterns
@@ -109,10 +114,11 @@ thickness, **H** bioregions), each a `tile.hierarchyX` array. Tunable live via t
 
 Loaded in order (see `PlanGen.html`):
 1. External: jQuery 2.1.0, Three.js r125, ngraph.
-2. `SteppedAction.js`, `geometry.js`, `utilities.js`, `elevation-generation.js`
+2. `SteppedAction.js`, `geometry.js`, `mesh-cache.js`, `utilities.js`, `elevation-generation.js`
 3. Generation: `generatePlanetTerrain_functions.js`, `post-generation.js`,
    `generatePlanetRenderData_functions.js`, `resource-overlays.js`
-4. `feature-detection.js` (after render-data, before rendering)
+4. `feature-detection.js`, then `feature-labels.js` (the "Labels (named
+   features)" overlay — floating 3D feature labels) (after render-data, before rendering)
 5. `rendering-3d.js`, `weather-generation.js`, `planet-generator.js`
 6. UI: `ui-handlers.js`, `ui-initialization.js`
 7. Extras: `path-finding.js`, `debug-overlay.js`, `text-labels.js`,

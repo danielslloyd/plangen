@@ -13,11 +13,13 @@ Computed once per planet by `generateFeatureOverlays(planet)`, hooked into
 `planet-generator.js` right after `generateDynamicShoreOverlays` (and on the
 save/load + GeoJSON-import paths). Must run after shore distances exist.
 
-## Five approaches (each builds a nested per-tile hierarchy)
-History: the letters have been reused. Earlier A (persistence merge tree), D
-(coast convexity arcs), F (drainage basins) and G (relief tiers), plus a
-Prominence debug overlay, were removed. F's drainage idea survives as an option on
-E. **A is now PLATE PROVINCES** (below).
+## Approaches (each builds a nested per-tile hierarchy)
+History: the letters have been reused and several approaches retired. Earlier A
+(persistence merge tree), D (coast convexity arcs), F (drainage basins) and G
+(relief tiers), plus a Prominence debug overlay, were removed; F's drainage idea
+survives as an option on E. **C (inscribed-disk lobes), H (bioregions) and J
+(min-water-boundary plate clone) were also removed.** Remaining: A, B, E, N.
+**A is now PLATE PROVINCES** (below).
 - **Approach A — plate provinces** (`tile.hierarchyA`): tectonic plates are the
   large features. Raw plate boundaries are tectonic noise, so "smart boundary"
   logic cleans them in two steps: (1) `CONFIG.plateSmooth` majority-vote
@@ -42,11 +44,6 @@ E. **A is now PLATE PROVINCES** (below).
   split each body into connected components of `{|shore| > e}`, flood the rest to
   the nearest core, recurse with `e+1`. Each split adds a level. Captures
   narrow-mouth bays/straits even without interior maxima.
-- **Approach C — inscribed-disk lobes** (`tile.hierarchyC`): the "most
-  land-locked part" idea. Seed at the deepest-interior unclaimed tile, grow a BFS
-  disk until `>= CONFIG.lobeEdgeWater%` of its boundary edges hit
-  opposite-domain/claimed tiles, claim that lobe, then repeat. Lobes below
-  `CONFIG.lobeMinSize` are merged into a neighbour. 2-level `[bodyRoot, lobe]`.
 - **Approach E — granulometric thickness** (`tile.hierarchyE`) — the favourite.
   A bounded-disk granulometry of `w` (capped at `CONFIG.thicknessMax`, slider to
   40) produces a local THICKNESS field, nested by threshold via the shared split
@@ -63,24 +60,17 @@ E. **A is now PLATE PROVINCES** (below).
     reassigns to existing features (emptied leaves are pruned), so it **never adds
     features and never changes the water partition** — verified water tile→feature
     grouping is byte-identical on/off.
-- **Approach J — plate provinces, min water boundary** (`tile.hierarchyJ`): a
-  CLONE of A (same `computePlateProvinces` with `minWaterBoundary:true`). After the
-  donation step, every water province boundary is re-routed onto the shortest water
-  crossing: for each adjacent water-province pair, a unit-capacity **min-cut**
-  (Edmonds-Karp on an integer graph) inside a `BAND`-wide band around their shared
-  boundary, between the two sides' band rims, picks the partition that cuts the
-  fewest water-water edges — i.e. the deep middle slides to the narrowest channel
-  between the flanking land bodies. The crossing's COASTAL ENDPOINTS are not hard-
-  anchored: coastal band tiles are pinned to their province *except* within
-  `ENDPOINT_SLACK` (3) edges of where the seam currently meets land, so an endpoint
-  may slide a few edges along — and stays on — its own land body. Typically ~12-18%
-  less total water-boundary length than A.
-- **Approach H — bioregions** (`tile.hierarchyH`): climate driven. Bins each tile
-  by normalized (`temperature`, `moisture`) into `CONFIG.climateBands`² classes,
-  takes connected same-class components within a domain, merges regions below
-  `CONFIG.climateMinSize`. Single-level (flat) features.
+- **Approach N — split-cohesion provinces + land nesting** (`tile.hierarchyN`):
+  plate provinces (same `computePlateProvinces`) with separate cohesion-merge
+  strengths per domain via `opts.merge = { land: CONFIG.splitMergeLand, water:
+  CONFIG.splitMergeOcean }` — ocean provinces fuse aggressively into a few large
+  seas while land provinces stay fine-grained. Then `nestLandProvincesN` cuts each
+  land province at narrow necks (`|shore| <= CONFIG.splitNeckWidth` act as walls):
+  the cut-off non-trunk parts become nested peninsula/headland/cape features and
+  the necks themselves become explicit isthmus features (parts below
+  `CONFIG.splitMinPart` merge into a sibling).
 
-Each tile gets `tile.hierarchyB/C/E/H` = ordered array of feature objects
+Each tile gets `tile.hierarchyB/E/N` = ordered array of feature objects
 (root → finest). Feature object fields: `{ id, approach, isLand, level, parent,
 children, root (the marker tile - see below), maxW, regionTiles, classification,
 name }`. The shared split machinery (`buildSplitHierarchy` /
@@ -89,21 +79,19 @@ optional `passable` predicate (B runs it on `|shore|`; E on the thickness field 
 neck-cut predicate).
 
 ## Overlays
-- `featPlatesA` — "Features A: Plate provinces"        — distinct hue per feature
-- `featNestedB` — "Features B: Nested (erosion)"      — darken-by-depth
-- `featLobesC` — "Features C: Lobes (inscribed disk)" — distinct hue per feature
-- `featThicknessE` — "Features E: Thickness (granulometry)" — distinct hue per feature
-- `featBioH` — "Features H: Bioregions (climate)" — 5-colour map
-- `featPlatesJ` — "Features J: Plate provinces (min water boundary)" — 5-colour map
+- `featPlatesA` — "Features A: Plate provinces"        — 5-colour map
+- `featNestedB` — "Features B: Nested (erosion)"      — 5-colour map
+- `featThicknessE` — "Features E: Thickness (granulometry)" — 5-colour map
+- `featSplitN` — "Features N: Split cohesion (land/ocean)" — 5-colour map
 
 All feature overlays are drawn as a **5-colour map**: `assignFeatureGraphColors`
 greedily graph-colours each approach's finest features (land and ocean graphs
 independently, planar so 4-colourable) giving every feature a `feature.colorIndex`
 0..4, and `makeFeatureColorFn` paints it from the editable 5-entry land/water
 palettes (`FEATURE_LAND/WATER_PALETTE_DEFAULT`). Adjacent same-domain features
-never share a colour. A/H/J use `classifySimple` (size-ranked "Plate N" /
-"Bioregion N"); B/C/E use the geographic classifier. (B no longer darkens by
-nesting depth — `CONFIG.darkenPerLevel` is unused.)
+never share a colour. A uses `classifySimple` (size-ranked "Plate N"); B/E/N use
+the geographic classifier. (B no longer darkens by nesting depth —
+`CONFIG.darkenPerLevel` is unused.)
 
 ## Tuning sliders (control panel)
 The "Feature Detection tuning" `<details>` under the Surface Color Overlay
@@ -155,23 +143,23 @@ aren't mislabeled.
 ## Tuning (sliders or console)
 Prefer the sliders above; the same knobs are available on `console`.
 `featureDetectionConfig` = `{ plateSmooth, plateMinSize, plateMerge (A);
-maxErosion, darkenPerLevel (B); lobeEdgeWater, lobeMinSize (C); thicknessMax,
-neckWidth, eFollowBasins (E); climateBands, climateMinSize (H) }`. Re-run with
+maxErosion, darkenPerLevel (B); thicknessMax, neckWidth, eFollowBasins (E);
+splitMergeOcean, splitMergeLand, splitNeckWidth, splitMinPart (N) }`. Re-run with
 `regenerateFeatureOverlays({...})`; it recomputes, unregisters stale overlay ids,
 rebuilds the dropdown, reapplies the current overlay, and rebuilds root markers.
 Examples:
 ```javascript
 regenerateFeatureOverlays({ plateMerge: 70 })           // A: join more provinces into rounder features
-regenerateFeatureOverlays({ lobeEdgeWater: 55 })        // C: larger lobes
 regenerateFeatureOverlays({ neckWidth: 2 })             // E: cut wider straits/isthmuses
 regenerateFeatureOverlays({ eFollowBasins: true })      // E: land follows drainage basins
 regenerateFeatureOverlays({ thicknessMax: 10 })         // E: deeper width nesting
+regenerateFeatureOverlays({ splitMergeOcean: 95 })      // N: fuse ocean into fewer large seas
 ```
 
 ## Shore-field tagging overlays (lazy, in `generatePlanetRenderData_functions.js`)
 
 Six additional overlays for tagging coastline features (peninsulas, bays, capes,
-gulfs...). Unlike approaches A–H above they are NOT hierarchies — each is a
+gulfs...). Unlike the approaches above they are NOT hierarchies — each is a
 standalone per-tile field/partition, computed lazily on first recolor and
 memoized per planet via `getOverlayAggregate`. All key off `tile.shore`
 (`shore === 0` tiles render gray) and treat land/water symmetrically with
@@ -243,11 +231,11 @@ stay dark. Land dim-olive→gold, water navy→cyan. Complements Narrow Channels
 (inter-body water routes): chokepoints are bottlenecks WITHIN a connected
 domain. O(sources·N).
 
-## From-scratch feature grouping (K, L, M — `computeFeatureGroupings`)
+## From-scratch feature grouping (K, L — `computeFeatureGroupings`)
 
-Three standalone partitions (category **Features**), computed together in one
+Two standalone partitions (category **Features**), computed together in one
 background pass (aggregate `featureGroupings`) and drawn as a stable
-hue-per-region patchwork (`_groupingColor`). K and M are built on the shared
+hue-per-region patchwork (`_groupingColor`). K is built on the shared
 watershed-merge engine (`_watershedMergeEngine`, strategic-overlays.js), which
 also powers Watershed Regions (Merged): it builds the basin-adjacency graph
 (shared border, mean boundary elevation, mean boundary |shore|), greedily
@@ -272,11 +260,3 @@ with its own label; `GROUPING_LP_ROUNDS` (10) synchronous rounds of "adopt the
 most common neighbour label" (self-bias 1.5, ties → smallest label), then
 connected-component relabeling so regions are contiguous. Organic blobs whose
 borders settle where local connectivity is weakest.
-
-### Features M: Balanced Watershed Provinces `featProvincesM`
-`computeBalancedWatershedProvinces` (strategic-overlays.js): the same watershed
-merge driven by combined size — desirability `-(size_a+size_b)/mean +
-0.6*borderFrac` always fuses the smallest adjacent pair (border fraction as
-tie-break) and merging continues until `max(6, basins/10)` regions remain,
-yielding roughly equal-population provinces. Land only. Config:
-`balancedWatershedConfig`.

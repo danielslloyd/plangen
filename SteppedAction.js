@@ -2,8 +2,12 @@ function SteppedAction(progressUpdater, unbrokenInterval, sleepInterval) {
 	this.callStack = null;
 	this.subactions = [];
 	this.finalizers = [];
-	this.unbrokenInterval = (typeof (unbrokenInterval) === "number" && unbrokenInterval >= 0) ? unbrokenInterval : 16;
+	// Work for ~30ms per burst then yield. Larger than the old 16ms so we issue
+	// ~half as many yields (each yield has fixed scheduling overhead) while still
+	// staying well under a frame-budget pair so interactive regeneration is smooth.
+	this.unbrokenInterval = (typeof (unbrokenInterval) === "number" && unbrokenInterval >= 0) ? unbrokenInterval : 30;
 	this.sleepInterval = (typeof (sleepInterval) === "number" && sleepInterval >= 0) ? sleepInterval : 0;
+	this._channel = null;
 	this.loopAction = false;
 	this.started = false;
 	this.canceled = false;
@@ -16,13 +20,32 @@ function SteppedAction(progressUpdater, unbrokenInterval, sleepInterval) {
 	this.progressUpdater = (typeof (progressUpdater) === "function") ? progressUpdater : null;
 }
 
+// Schedule the next work burst. When sleepInterval is 0 (the default) we use a
+// MessageChannel instead of setTimeout: setTimeout(0) is clamped to ~4ms after a
+// few nested calls in the foreground AND throttled to >=1s in a backgrounded tab,
+// which made generation in an unfocused tab ~8x slower. MessageChannel callbacks
+// are not throttled and fire with ~0 latency, so generation runs at full speed
+// even in the background. A real positive sleepInterval still uses setTimeout.
+SteppedAction.prototype._scheduleStep = function SteppedAction_scheduleStep() {
+	var self = this;
+	if (this.sleepInterval > 0 || typeof MessageChannel === "undefined") {
+		window.setTimeout(function () { self.step(); }, this.sleepInterval);
+		return;
+	}
+	if (this._channel === null) {
+		this._channel = new MessageChannel();
+		this._channel.port1.onmessage = function () { self.step(); };
+	}
+	this._channel.port2.postMessage(0);
+};
+
 SteppedAction.prototype.execute = function SteppedAction_execute() {
 	if (!this.canceled && !this.completed && this.callStack === null && this.started === false) {
 		this.started = true;
 		if (this.subactions.length > 0) {
 			this.beginSubactions(0, 1);
 			if (this.progressUpdater !== null) this.progressUpdater(this);
-			window.setTimeout(this.step.bind(this), this.sleepInterval);
+			this._scheduleStep();
 		} else {
 			this.completed = true;
 		}
@@ -76,7 +99,7 @@ SteppedAction.prototype.step = function SteppedAction_step() {
 			this.callStack = this.callStack.parent;
 		}
 	} else if (!this.completed) {
-		window.setTimeout(this.step.bind(this), this.sleepInterval);
+		this._scheduleStep();
 	}
 };
 

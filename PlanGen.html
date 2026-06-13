@@ -13,6 +13,7 @@
 		<script src="jquery.mousewheel.js"></script>
 		<script src="SteppedAction.js"></script>
 		<script src="geometry.js"></script>
+		<script src="mesh-cache.js"></script>
 		<script src="utilities.js"></script>
 		<script src="elevation-generation.js"></script>
 		<script src="generatePlanetTerrain_functions.js"></script>
@@ -22,6 +23,7 @@
 		<script src="resource-overlays.js"></script>
 		<script src="strategic-overlays.js"></script>
 		<script src="feature-detection.js"></script>
+		<script src="feature-labels.js"></script>
 		<script src="rendering-3d.js"></script>
 		<script src="weather-generation.js"></script>
 		<script src="planet-generator.js"></script>
@@ -191,12 +193,6 @@
 							<div class="fdSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;">Darken / level</span><input type="range" id="fdDarken" min="50" max="95" step="1" value="72" style="flex:1.5;"><span id="fdDarkenVal" style="width:2.6em; text-align:right;">0.72</span></div>
 						</div>
 
-						<div class="fdGroup" data-approach="C">
-							<div style="opacity: 0.7; margin: 0.3em 0 0.15em 0;">C — Lobes (inscribed disk)</div>
-							<div class="fdSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;">Edge water %</span><input type="range" id="fdLobeEdge" min="10" max="90" step="5" value="40" style="flex:1.5;"><span id="fdLobeEdgeVal" style="width:2.6em; text-align:right;">40</span></div>
-							<div class="fdSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;">Min lobe size</span><input type="range" id="fdLobeMin" min="1" max="60" step="1" value="12" style="flex:1.5;"><span id="fdLobeMinVal" style="width:2.6em; text-align:right;">12</span></div>
-						</div>
-
 						<div class="fdGroup" data-approach="E">
 							<div style="opacity: 0.7; margin: 0.3em 0 0.15em 0;">E — Thickness (favourite)</div>
 							<div class="fdSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;">Max thickness</span><input type="range" id="fdThickMax" min="2" max="80" step="1" value="8" style="flex:1.5;"><span id="fdThickMaxVal" style="width:2.6em; text-align:right;">8</span></div>
@@ -204,11 +200,14 @@
 							<div class="fdSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Last-minute LAND-ONLY rule: keep each drainage basin inside a single feature (does not add features or affect water)">Drainage basins</span><input type="range" id="fdEFollowBasins" min="0" max="1" step="1" value="0" style="flex:1.5;"><span id="fdEFollowBasinsVal" style="width:2.6em; text-align:right;">off</span></div>
 						</div>
 
-						<div class="fdGroup" data-approach="H">
-							<div style="opacity: 0.7; margin: 0.3em 0 0.15em 0;">H — Bioregions</div>
-							<div class="fdSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;">Climate bands</span><input type="range" id="fdClimateBands" min="2" max="8" step="1" value="4" style="flex:1.5;"><span id="fdClimateBandsVal" style="width:2.6em; text-align:right;">4</span></div>
-							<div class="fdSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;">Min region size</span><input type="range" id="fdClimateMin" min="1" max="40" step="1" value="8" style="flex:1.5;"><span id="fdClimateMinVal" style="width:2.6em; text-align:right;">8</span></div>
+						<div class="fdGroup" data-approach="N">
+							<div style="opacity: 0.7; margin: 0.3em 0 0.15em 0;">N — Split cohesion (land/ocean)</div>
+							<div class="fdSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Cohesion merge strength for OCEAN provinces. High values fuse ocean plates into a few large seas.">Ocean cohesion</span><input type="range" id="fdSplitMergeOcean" min="80" max="100" step="1" value="90" style="flex:1.5;"><span id="fdSplitMergeOceanVal" style="width:2.6em; text-align:right;">90</span></div>
+							<div class="fdSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Cohesion merge strength for LAND provinces. Low values keep land regions fine-grained.">Land cohesion</span><input type="range" id="fdSplitMergeLand" min="0" max="50" step="1" value="15" style="flex:1.5;"><span id="fdSplitMergeLandVal" style="width:2.6em; text-align:right;">15</span></div>
+							<div class="fdSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Land nesting: tiles within this many steps of the coast act as walls; parts cut off become nested peninsulas and the necks become isthmus features. 0 = no nesting.">Neck cut width</span><input type="range" id="fdSplitNeck" min="0" max="8" step="1" value="2" style="flex:1.5;"><span id="fdSplitNeckVal" style="width:2.6em; text-align:right;">2</span></div>
+							<div class="fdSliderRow" style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Nested land parts smaller than this merge into a sibling part.">Min part size</span><input type="range" id="fdSplitMinPart" min="1" max="30" step="1" value="6" style="flex:1.5;"><span id="fdSplitMinPartVal" style="width:2.6em; text-align:right;">6</span></div>
 						</div>
+
 					</div>
 				</details>
 
@@ -272,6 +271,11 @@
 					<button id="showAirCurrentsButton" title="Show Air Currents" style="font-size: 75%;">Air Currents (P)</button>
 					<button id="showCoastlineButton" title="Show a thin black outline along coastlines (land/water boundary)" style="font-size: 75%;">Coastline</button>
 					<button id="showPlateOutlineButton" title="Show a red outline along tectonic plate boundaries" style="font-size: 75%;">Plate Boundaries (6)</button>
+				</div>
+				<!-- Raised Mercator sun position (only affects 3D mercator view's shadow light) -->
+				<div id="mercatorSunControls" style="margin-top: 0.5em; font-size: 80%;">
+					<div style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Compass direction the sun shines from in Raised Mercator (degrees CCW from east)">Sun azimuth</span><input type="range" id="mercatorSunAzimuthSlider" min="0" max="360" step="5" value="135" style="flex:1.5;"><span id="mercatorSunAzimuthVal" style="width:2.6em; text-align:right;">135°</span></div>
+					<div style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.2em;"><span style="flex:1.1;" title="Sun height above the horizon in Raised Mercator (low = long shadows)">Sun elevation</span><input type="range" id="mercatorSunElevationSlider" min="5" max="90" step="1" value="46" style="flex:1.5;"><span id="mercatorSunElevationVal" style="width:2.6em; text-align:right;">46°</span></div>
 				</div>
 			</div>
 
