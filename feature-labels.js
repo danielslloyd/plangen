@@ -15,17 +15,23 @@
 //   * Mountain & hill ranges          (computeMountainRanges -> tile._rangeId)
 //   * Rivers                          (tile.river / tile.drain / tile.sources)
 //
-// Glyph size scales with the size of the feature.
+// Glyph size scales with the size of the feature. Text is kept upright (never
+// upside-down), its path is smoothed to a minimum radius of curvature, and a
+// per-frame screen-space pass hides labels that would overlap or that stack up
+// when the Mercator map is zoomed out (largest features win).
 // ============================================================================
 
 (function (global) {
 	var OVERLAY_ID = "featLabels";
 	var labelState = { group: null };
-	var glyphTexCache = {};   // char -> THREE.CanvasTexture
+	var placedLabels = [];     // [{ group, anchor, halfLen, halfUp, normal, priority }]
+	var glyphTexCache = {};     // char -> THREE.CanvasTexture
+	var REF_UP = new THREE.Vector3(0, 1, 0);   // planet "north" / screen up axis
+	var MERC_PERIOD = Math.PI * 4.0;
+	var MAX_TURN = 0.55;        // ~31°: max allowed bend between spine segments
 
 	function isMercator() { return typeof projectionMode !== "undefined" && projectionMode === "mercator"; }
 	function isRaised() { return typeof useElevationDisplacement !== "undefined" && useElevationDisplacement; }
-	var MERC_PERIOD = Math.PI * 4.0;
 
 	// ------------------------------------------------------------------
 	// Deterministic name generator (seeded so names are stable per planet)
@@ -35,12 +41,11 @@
 		"syl", "thal", "ul", "vor", "wyn", "xan", "yr", "zel", "ar", "bre"];
 	var SYL_B = ["a", "e", "i", "o", "u", "ae", "ia", "or", "an", "en", "ir", "un", "yl", "ow", "ar"];
 	var SYL_C = ["dor", "mar", "wyn", "los", "gard", "heim", "thas", "rim", "vale", "fell",
-		"moor", "reach", "wick", "stad", "land", " holm", "ney", "dell", "crag", "mere"];
+		"moor", "reach", "wick", "stad", "land", "holm", "ney", "dell", "crag", "mere"];
 
 	function seededRng(seed) {
 		// Avalanche-mix the seed first: feature ids are large and sequential, and a
-		// plain LCG started on consecutive seeds yields near-identical first outputs
-		// (every name came out "Val..."). This scrambles bits before use.
+		// plain LCG started on consecutive seeds yields near-identical first outputs.
 		var s = (seed >>> 0) || 1;
 		s ^= s >>> 16; s = (s * 0x45d9f3b) >>> 0;
 		s ^= s >>> 16; s = (s * 0x45d9f3b) >>> 0;
@@ -53,10 +58,9 @@
 		var name = SYL_A[(r() * SYL_A.length) | 0];
 		if (r() < 0.55) name += SYL_B[(r() * SYL_B.length) | 0];
 		name += SYL_C[(r() * SYL_C.length) | 0];
-		return cap(name.replace(/\s+/g, ""));
+		return cap(name);
 	}
 
-	// Map a feature classification + proper name to a display label.
 	function displayName(cls, name) {
 		switch (cls) {
 			case "Ocean": return name + " Ocean";
@@ -73,8 +77,7 @@
 			case "Mountains": return name + " Mountains";
 			case "Hills": return name + " Hills";
 			case "River": return name + " River";
-			// Continent / Island / Islet keep the bare proper noun.
-			default: return name;
+			default: return name;   // Continent / Island / Islet
 		}
 	}
 
@@ -89,7 +92,7 @@
 		ctx.font = "bold " + Math.round(S * 0.74) + "px Georgia, 'Times New Roman', serif";
 		ctx.textAlign = "center";
 		ctx.textBaseline = "middle";
-		ctx.linejoin = "round";
+		ctx.lineJoin = "round";
 		ctx.lineWidth = Math.round(S * 0.12);
 		ctx.strokeStyle = "rgba(20,20,30,0.92)";
 		ctx.strokeText(ch, S / 2, S / 2);
@@ -104,8 +107,6 @@
 	// ------------------------------------------------------------------
 	// Geometry helpers
 	// ------------------------------------------------------------------
-	// Convert an on-sphere cartesian point (+ its tile elevation 0..1) to a world
-	// point lifted `floatOff` above the rendered surface, plus the surface normal.
 	function worldPoint(cart, elev, floatOff) {
 		if (isMercator()) {
 			var m = cartesianToMercator(cart, mercatorCenterLat, mercatorCenterLon);
@@ -131,10 +132,40 @@
 		return best;
 	}
 
-	// Build an ordered spine of control points {cart, elev} that runs along the
-	// feature's long axis and bends to follow a curved feature. Bucketing tiles by
-	// their projection onto the farthest-pair axis and averaging each bucket
-	// recovers the curve of the feature, not just a straight chord.
+	// Smooth a list of {cart, elev} control points (keeping the endpoints fixed and
+	// re-projecting onto the sphere) until no interior vertex bends more than
+	// MAX_TURN — this enforces a minimum radius of curvature so text never kinks.
+	function smoothSpine(pts) {
+		if (pts.length < 3) return pts;
+		function maxTurn(p) {
+			var mx = 0;
+			for (var i = 1; i < p.length - 1; i++) {
+				var a = p[i].cart.clone().sub(p[i - 1].cart);
+				var b = p[i + 1].cart.clone().sub(p[i].cart);
+				if (a.lengthSq() < 1e-9 || b.lengthSq() < 1e-9) continue;
+				var ang = a.angleTo(b);
+				if (ang > mx) mx = ang;
+			}
+			return mx;
+		}
+		var passes = 0;
+		while (maxTurn(pts) > MAX_TURN && passes < 40) {
+			var np = [{ cart: pts[0].cart.clone(), elev: pts[0].elev }];
+			for (var i = 1; i < pts.length - 1; i++) {
+				var c = pts[i - 1].cart.clone().multiplyScalar(0.25)
+					.add(pts[i].cart.clone().multiplyScalar(0.5))
+					.add(pts[i + 1].cart.clone().multiplyScalar(0.25));
+				c.normalize().multiplyScalar(pts[i].cart.length()); // keep on sphere
+				np.push({ cart: c, elev: pts[i].elev });
+			}
+			np.push({ cart: pts[pts.length - 1].cart.clone(), elev: pts[pts.length - 1].elev });
+			pts = np;
+			passes++;
+		}
+		return pts;
+	}
+
+	// Ordered spine of control points {cart, elev} along the feature's long axis.
 	function featureSpine(region) {
 		if (!region || !region.length) return [];
 		if (region.length === 1) return [{ cart: region[0].averagePosition.clone(), elev: region[0].elevation }];
@@ -150,7 +181,7 @@
 		var base = a.averagePosition;
 		for (var i = 0; i < region.length; i++) {
 			var t = region[i];
-			var proj = t.averagePosition.clone().sub(base).dot(axis) / axisLen; // 0..1
+			var proj = t.averagePosition.clone().sub(base).dot(axis) / axisLen;
 			var idx = Math.max(0, Math.min(nb - 1, Math.floor(proj * nb)));
 			sum[idx].add(t.averagePosition); cnt[idx]++;
 			if (t.elevation > elevMax[idx]) elevMax[idx] = t.elevation;
@@ -160,10 +191,9 @@
 			if (cnt[j] === 0) continue;
 			pts.push({ cart: sum[j].multiplyScalar(1 / cnt[j]), elev: elevMax[j] > -Infinity ? elevMax[j] : 0 });
 		}
-		return pts;
+		return smoothSpine(pts);
 	}
 
-	// Resampler over a list of {pos, normal} world points.
 	function makePath(worldPts) {
 		var cum = [0];
 		for (var i = 1; i < worldPts.length; i++) {
@@ -190,15 +220,14 @@
 		return { total: total, at: at };
 	}
 
-	// Build a Group of glyph quads spelling `text` bent along the spine control
-	// points. glyphSize is in world units; floatOff lifts the text above terrain.
+	// Build a Group of glyph quads spelling `text` bent along the spine. Returns
+	// { group, anchor, halfLen, halfUp, normal } or null.
 	function buildCurvedLabel(text, ctrlPts, glyphSize, floatOff, color) {
 		if (!text || !ctrlPts.length) return null;
 		var worldPts = [];
 		for (var i = 0; i < ctrlPts.length; i++) worldPts.push(worldPoint(ctrlPts[i].cart, ctrlPts[i].elev, floatOff));
-		// Guarantee a direction even for a single control point.
 		if (worldPts.length === 1) {
-			var east = new THREE.Vector3(0, 1, 0).cross(worldPts[0].normal);
+			var east = REF_UP.clone().cross(worldPts[0].normal);
 			if (east.lengthSq() < 1e-6) east.set(1, 0, 0); else east.normalize();
 			worldPts = [
 				{ pos: worldPts[0].pos.clone().addScaledVector(east, -glyphSize), normal: worldPts[0].normal },
@@ -206,44 +235,62 @@
 			];
 		}
 		var path = makePath(worldPts);
+
+		// Keep text upright: pick the reading direction whose text-up (bitangent)
+		// points toward planet-north, else the label reads upside-down.
+		var mid = path.at(path.total / 2);
+		var upT = REF_UP.clone().addScaledVector(mid.normal, -REF_UP.dot(mid.normal));
+		if (upT.lengthSq() > 1e-6) {
+			upT.normalize();
+			var btMid = mid.normal.clone().cross(mid.tan).normalize();
+			if (btMid.dot(upT) < 0) { worldPts.reverse(); path = makePath(worldPts); }
+		}
+
 		var advance = glyphSize * 0.62;
 		var textWidth = text.length * advance;
 		var start = (path.total - textWidth) / 2 + advance / 2;
 
 		var group = new THREE.Group();
-		var mat = new THREE.MeshBasicMaterial({
+		var baseMat = new THREE.MeshBasicMaterial({
 			color: color || 0xffffff, transparent: true, depthWrite: false,
 			side: THREE.DoubleSide, opacity: 0.96
 		});
 		var T = new THREE.Vector3(), Bt = new THREE.Vector3(), N = new THREE.Vector3();
 		var basis = new THREE.Matrix4();
+		var minPos = null, maxPos = null, midBt = null;
 		for (var c = 0; c < text.length; c++) {
 			var ch = text.charAt(c);
 			if (ch === " ") continue;
-			var sample = path.at(start + c * advance);
-			N.copy(sample.normal);
-			// Tangent projected into the tangent plane (so glyphs lie flat on surface).
-			T.copy(sample.tan).addScaledVector(N, -sample.tan.dot(N));
+			var s = path.at(start + c * advance);
+			N.copy(s.normal);
+			T.copy(s.tan).addScaledVector(N, -s.tan.dot(N));
 			if (T.lengthSq() < 1e-9) { T.set(1, 0, 0).addScaledVector(N, -N.x); }
 			T.normalize();
 			Bt.copy(N).cross(T).normalize();
 			basis.makeBasis(T, Bt, N);
 			var geo = new THREE.PlaneBufferGeometry(glyphSize, glyphSize);
-			var gmat = mat.clone();
+			var gmat = baseMat.clone();
 			gmat.map = glyphTexture(ch);
 			var mesh = new THREE.Mesh(geo, gmat);
 			mesh.quaternion.setFromRotationMatrix(basis);
-			mesh.position.copy(sample.pos);
+			mesh.position.copy(s.pos);
 			mesh.renderOrder = 1003;
 			group.add(mesh);
+			if (!minPos) { minPos = s.pos.clone(); maxPos = s.pos.clone(); midBt = Bt.clone(); }
+			else { maxPos = s.pos.clone(); }
+			if (c === (text.length >> 1)) midBt = Bt.clone();
 		}
-		return group.children.length ? group : null;
+		if (!group.children.length) return null;
+		var anchor = minPos.clone().add(maxPos).multiplyScalar(0.5);
+		var halfLen = maxPos.clone().sub(minPos).multiplyScalar(0.5);
+		var halfUp = (midBt || new THREE.Vector3(0, 1, 0)).clone().multiplyScalar(glyphSize * 0.6);
+		var normal = path.at(path.total / 2).normal;
+		return { group: group, anchor: anchor, halfLen: halfLen, halfUp: halfUp, normal: normal };
 	}
 
 	// ------------------------------------------------------------------
 	// Feature gathering
 	// ------------------------------------------------------------------
-	// Each entry: { text, region, color }  (region drives spine + size)
 	function gatherLabels(tiles) {
 		var out = [];
 		var totalLand = 0, totalWater = 0;
@@ -251,7 +298,6 @@
 			if (tiles[i].elevation > 0) totalLand++; else totalWater++;
 		}
 
-		// ---- Approach N land/water features ----
 		var data = (typeof featureDetectionData === "function") ? featureDetectionData() : null;
 		var featN = data && data.featuresByApproach ? data.featuresByApproach.N : null;
 		if (featN) {
@@ -260,19 +306,18 @@
 				if (feat._dead || !feat.regionTiles || !feat.regionTiles.length) continue;
 				var size = feat.regionTiles.length;
 				var ref = feat.isLand ? totalLand : totalWater;
-				// Skip tiny nested noise; always keep roots.
 				if (feat.parent && size < Math.max(8, 0.004 * ref)) continue;
 				if (!feat.parent && size < Math.max(4, 0.0015 * ref)) continue;
 				if (!feat._labelName) feat._labelName = properName(feat.id || (f + 1));
 				out.push({
 					text: displayName(feat.classification, feat._labelName),
 					region: feat.regionTiles,
-					color: feat.isLand ? 0xfff4d6 : 0xd6ecff
+					color: feat.isLand ? 0xfff4d6 : 0xd6ecff,
+					priority: size
 				});
 			}
 		}
 
-		// ---- Mountain & hill ranges ----
 		if (typeof computeMountainRanges === "function") {
 			try { computeMountainRanges(tiles); } catch (e) { /* non-fatal */ }
 			var ranges = {};
@@ -292,14 +337,13 @@
 					text: displayName(grp.mountain ? "Mountains" : "Hills",
 						properName(parseInt(key, 10) * 31 + 7)),
 					region: grp.tiles,
-					color: grp.mountain ? 0xffffff : 0xf2e2c0
+					color: grp.mountain ? 0xffffff : 0xf2e2c0,
+					priority: grp.tiles.length
 				});
 			}
 		}
 
-		// ---- Rivers (longest stem per system) ----
 		try { out = out.concat(gatherRivers(tiles)); } catch (e) { /* non-fatal */ }
-
 		return out;
 	}
 
@@ -309,14 +353,11 @@
 		for (var i = 0; i < tiles.length; i++) {
 			var t = tiles[i];
 			if (!t.river || seen.has(t)) continue;
-			// Mouth = river tile that drains to non-river (ocean / sink).
-			if (t.drain && t.drain.river) continue;
-			// Walk upstream choosing the highest-flow source to trace the main stem.
+			if (t.drain && t.drain.river) continue;   // not a mouth
 			var stem = [t], guard = 0, cur = t;
 			seen.add(t);
 			while (guard++ < 2000) {
-				var srcs = cur.sources;
-				var next = null, bestFlow = -1;
+				var srcs = cur.sources, next = null, bestFlow = -1;
 				if (srcs) {
 					for (var s = 0; s < srcs.length; s++) {
 						var sc = srcs[s];
@@ -326,25 +367,21 @@
 					}
 				}
 				if (!next) break;
-				seen.add(next);
-				stem.push(next);
-				cur = next;
+				seen.add(next); stem.push(next); cur = next;
 			}
 			if (stem.length < 5) continue;
-			stem.reverse(); // source -> mouth
+			stem.reverse();
 			rivers.push({
 				text: displayName("River", properName((t.id || i) * 17 + 3)),
 				region: stem,
 				color: 0xbfe8ff,
-				ordered: true
+				ordered: true,
+				priority: stem.length * 6   // rivers punch above their tile count
 			});
 		}
 		return rivers;
 	}
 
-	// ------------------------------------------------------------------
-	// Sizing
-	// ------------------------------------------------------------------
 	function glyphSizeFor(text, pathTotal) {
 		var n = Math.max(1, text.replace(/\s/g, "").length);
 		var fromLen = pathTotal * 0.9 / (n * 0.62);
@@ -370,6 +407,7 @@
 			disposeGroup(labelState.group);
 			labelState.group = null;
 		}
+		placedLabels = [];
 	}
 
 	function rebuildFeatureLabels() {
@@ -385,42 +423,117 @@
 
 		for (var i = 0; i < items.length; i++) {
 			var item = items[i];
-			// Spine: rivers come pre-ordered; everything else gets a fitted spine.
 			var ctrl;
 			if (item.ordered) {
 				ctrl = [];
 				for (var k = 0; k < item.region.length; k++) {
 					ctrl.push({ cart: item.region[k].averagePosition.clone(), elev: item.region[k].elevation });
 				}
+				ctrl = smoothSpine(ctrl);
 			} else {
 				ctrl = featureSpine(item.region);
 			}
 			if (!ctrl.length) continue;
 
-			// Pre-measure spine length (without float) to size glyphs.
 			var probe = [];
 			for (var p = 0; p < ctrl.length; p++) probe.push(worldPoint(ctrl[p].cart, ctrl[p].elev, 0));
 			var pathLen = makePath(probe).total;
 			var gsize = glyphSizeFor(item.text, pathLen);
 			var floatOff = mercator ? 0 : gsize * 0.55 + 4;
 
-			var label = buildCurvedLabel(item.text, ctrl, gsize, floatOff, item.color);
-			if (!label) continue;
+			var built = buildCurvedLabel(item.text, ctrl, gsize, floatOff, item.color);
+			if (!built) continue;
 
 			if (mercator) {
 				for (var o = -1; o <= 1; o++) {
-					var copy = (o === 0) ? label : label.clone();
-					if (o !== 0) copy.position.x += o * MERC_PERIOD;
-					root.add(copy);
+					var grp = (o === 0) ? built.group : built.group.clone();
+					if (o !== 0) grp.position.x += o * MERC_PERIOD;
+					root.add(grp);
+					placedLabels.push({
+						group: grp,
+						anchor: built.anchor.clone().setX(built.anchor.x + o * MERC_PERIOD),
+						halfLen: built.halfLen, halfUp: built.halfUp,
+						normal: built.normal, priority: item.priority || item.region.length
+					});
 				}
 			} else {
-				root.add(label);
+				root.add(built.group);
+				placedLabels.push({
+					group: built.group, anchor: built.anchor, halfLen: built.halfLen,
+					halfUp: built.halfUp, normal: built.normal,
+					priority: item.priority || item.region.length
+				});
 			}
 		}
 
 		if (root.children.length) {
 			scene.add(root);
 			labelState.group = root;
+		}
+		updateFeatureLabelVisibility();
+		if (typeof markRenderActivity === "function") markRenderActivity();
+	}
+
+	// ------------------------------------------------------------------
+	// Per-frame screen-space culling: drop labels that overlap or stack up
+	// (e.g. zoomed-out Mercator). Largest-priority features win; back-of-globe
+	// and off-screen labels are hidden outright.
+	// ------------------------------------------------------------------
+	var _v = new THREE.Vector3();
+	function project(pt, cam, W, H) {
+		_v.copy(pt).project(cam);
+		return { x: (_v.x * 0.5 + 0.5) * W, y: (-_v.y * 0.5 + 0.5) * H, z: _v.z };
+	}
+	function boxesOverlap(a, b, pad) {
+		return !(a.maxX + pad < b.minX || b.maxX + pad < a.minX ||
+			a.maxY + pad < b.minY || b.maxY + pad < a.minY);
+	}
+
+	function updateFeatureLabelVisibility() {
+		if (typeof surfaceRenderMode === "undefined" || surfaceRenderMode !== OVERLAY_ID) return;
+		if (!placedLabels.length || typeof camera === "undefined" || !camera) return;
+		var W = (typeof window !== "undefined") ? window.innerWidth : 1280;
+		var H = (typeof window !== "undefined") ? window.innerHeight : 720;
+		// Degenerate viewport (e.g. not yet laid out): leave labels as-is rather
+		// than projecting against a NaN aspect and hiding everything.
+		if (!(W > 1) || !(H > 1)) return;
+		var mercator = isMercator();
+		var camPos = camera.position;
+		var cand = [];
+
+		for (var i = 0; i < placedLabels.length; i++) {
+			var L = placedLabels[i];
+			// Globe: hide labels on the far hemisphere (normal facing away).
+			if (!mercator) {
+				if (L.normal.dot(camPos.clone().sub(L.anchor)) <= 0) { L.group.visible = false; continue; }
+			}
+			var ac = project(L.anchor, camera, W, H);
+			if (ac.z > 1 || ac.z < -1) { L.group.visible = false; continue; }
+			// Screen AABB from the four label corners.
+			var pts = [
+				project(L.anchor.clone().add(L.halfLen).add(L.halfUp), camera, W, H),
+				project(L.anchor.clone().add(L.halfLen).sub(L.halfUp), camera, W, H),
+				project(L.anchor.clone().sub(L.halfLen).add(L.halfUp), camera, W, H),
+				project(L.anchor.clone().sub(L.halfLen).sub(L.halfUp), camera, W, H)
+			];
+			var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+			for (var c = 0; c < 4; c++) {
+				if (pts[c].x < minX) minX = pts[c].x; if (pts[c].x > maxX) maxX = pts[c].x;
+				if (pts[c].y < minY) minY = pts[c].y; if (pts[c].y > maxY) maxY = pts[c].y;
+			}
+			if (maxX < 0 || minX > W || maxY < 0 || minY > H) { L.group.visible = false; continue; }
+			cand.push({ L: L, box: { minX: minX, maxX: maxX, minY: minY, maxY: maxY }, pri: L.priority });
+		}
+
+		cand.sort(function (a, b) { return b.pri - a.pri; });
+		var accepted = [];
+		for (var k = 0; k < cand.length; k++) {
+			var cur = cand[k], overlap = false;
+			for (var a = 0; a < accepted.length; a++) {
+				if (boxesOverlap(cur.box, accepted[a].box, 2)) { overlap = true; break; }
+			}
+			if (overlap) { cur.L.group.visible = false; }
+			else { cur.L.group.visible = true; accepted.push(cur); }
 		}
 	}
 
@@ -438,13 +551,19 @@
 			"Keeps the terrain colouring but floats a procedurally-named label over " +
 			"every major feature: Approach N land/water features, mountain & hill " +
 			"ranges, and rivers. On the globe the labels are 3D objects that bend " +
-			"along rivers/ranges and scale with feature size.",
+			"along rivers/ranges and scale with feature size. Overlapping / stacked " +
+			"labels are culled per frame (largest features win).",
 			colorFn, "basic", "lazy", "geography");
 	}
 
 	register();
 
 	global.rebuildFeatureLabels = rebuildFeatureLabels;
-	global.__featureLabelsDebug = { gather: function () { return gatherLabels(planet.topology.tiles); }, state: labelState };
+	global.updateFeatureLabelVisibility = updateFeatureLabelVisibility;
+	global.__featureLabelsDebug = {
+		gather: function () { return gatherLabels(planet.topology.tiles); },
+		state: labelState,
+		placed: function () { return placedLabels; }
+	};
 
 })(typeof window !== "undefined" ? window : this);

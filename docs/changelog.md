@@ -23,7 +23,14 @@
   deterministic per feature id (avalanche-mixed seed). Mercator draws the labels
   flat at z=0.6, replicated across the 3 wrap copies. Rebuilt from
   `setSurfaceRenderMode` and both projection-switch paths, next to
-  `rebuildFeatureRoots`.
+  `rebuildFeatureRoots`. Polishing: text is kept **upright** (the reading
+  direction is flipped when the bitangent would point away from planet-north);
+  each spine is **smoothed to a minimum radius of curvature** (`smoothSpine`
+  iterates until no segment bends > ~31°) so text never kinks; and a per-frame
+  **screen-space cull** (`updateFeatureLabelVisibility`, called from `render()`)
+  hides labels that overlap or that stack up when the Mercator map is zoomed out
+  — largest-priority features (rivers boosted) win, back-of-globe and off-screen
+  labels are dropped.
 
 - **Generation performance pass**: (1) *Scheduler* — `SteppedAction` now yields via
   `MessageChannel` instead of `setTimeout(0)` (clamped to ~4ms foreground, throttled

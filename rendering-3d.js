@@ -83,6 +83,9 @@ function render() {
 	// Update FPS counter
 	updateFPS();
 
+	// Cull overlapping / stacked feature labels for the current camera & zoom.
+	if (typeof updateFeatureLabelVisibility === "function") updateFeatureLabelVisibility();
+
 	renderer.render(scene, camera);
 	lastRenderFrameTime = currentRenderFrameTime;
 
