@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<title>PlanGen — Civ Prototype</title>
+	<link rel="stylesheet" href="style.css">
+</head>
+<body>
+	<div id="topbar">
+		<span id="statusSpan">Loading…</span>
+		<button id="endTurnBtn">End Turn ⏵</button>
+		<button id="autoplayBtn">▶ Autoplay</button>
+		<select id="speedSel" title="autoplay speed">
+			<option value="600">slow</option>
+			<option value="150" selected>normal</option>
+			<option value="30">fast</option>
+			<option value="1">max</option>
+		</select>
+		<select id="overlaySel" title="map overlay">
+			<option value="terrain">Terrain</option>
+			<option value="political">Political</option>
+			<option value="food">Food potential</option>
+			<option value="minerals">Minerals</option>
+			<option value="cityPriority">★ City priority</option>
+			<option value="transit">★ Transit corridors</option>
+			<option value="shoreDelta">★ Shore delta</option>
+			<option value="province">Provinces</option>
+			<option value="prices">Prices…</option>
+			<option value="traffic">Trade traffic</option>
+		</select>
+		<select id="commoditySel" style="display:none" title="commodity for price overlay"></select>
+		<label><input type="checkbox" id="routesChk" checked> routes</label>
+		<span class="spacer"></span>
+		<input id="seedInput" value="12345" size="9" title="game seed">
+		<button id="newGameBtn">New game</button>
+		<label class="filebtn">Load map<input type="file" id="mapFile" accept=".json"></label>
+	</div>
+	<div id="content">
+		<div id="mapWrap"><canvas id="mapCanvas"></canvas></div>
+		<div id="sidebar">
+			<div id="tabs">
+				<button data-tab="info" class="active">Info</button>
+				<button data-tab="city">City</button>
+				<button data-tab="players">Players</button>
+				<button data-tab="tuning">Tuning</button>
+				<button data-tab="log">Log</button>
+			</div>
+			<div id="tabBody"><div class="hint">Loading map…</div></div>
+		</div>
+	</div>
+
+	<script src="config.js"></script>
+	<script src="mapdata.js"></script>
+	<script src="ai.js"></script>
+	<script src="trade.js"></script>
+	<script src="engine.js"></script>
+	<script src="render.js"></script>
+	<script src="ui.js"></script>
+	<script src="main.js"></script>
+</body>
+</html>

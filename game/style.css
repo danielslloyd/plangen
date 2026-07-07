@@ -1,0 +1,62 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: #0b1520; color: #dde5ee;
+	font: 13px/1.45 system-ui, sans-serif; }
+
+#topbar { display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+	background: #14202e; border-bottom: 1px solid #253549; flex-wrap: wrap; }
+#topbar .spacer { flex: 1; }
+#statusSpan { font-weight: 600; min-width: 90px; }
+
+button, select, input[type=text], input:not([type]) {
+	background: #223247; color: #dde5ee; border: 1px solid #35507a;
+	border-radius: 4px; padding: 4px 9px; font: inherit; cursor: pointer; }
+button:hover { background: #2c4260; }
+button:disabled { opacity: 0.4; cursor: default; }
+button.sm { padding: 1px 6px; font-size: 11px; }
+.filebtn { position: relative; overflow: hidden; display: inline-block;
+	background: #223247; border: 1px solid #35507a; border-radius: 4px;
+	padding: 4px 9px; cursor: pointer; }
+.filebtn input { position: absolute; left: 0; top: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
+
+#content { display: flex; height: calc(100% - 41px); }
+#mapWrap { flex: 1; position: relative; }
+#mapCanvas { display: block; cursor: crosshair; }
+#sidebar { width: 340px; display: flex; flex-direction: column;
+	background: #101c2a; border-left: 1px solid #253549; }
+#tabs { display: flex; }
+#tabs button { flex: 1; border-radius: 0; border: none;
+	border-bottom: 2px solid transparent; background: #14202e; }
+#tabs button.active { border-bottom-color: #6fa8ff; background: #1a2a3d; }
+#tabBody { flex: 1; overflow-y: auto; padding: 10px; }
+
+h3 { margin: 4px 0 6px; font-size: 14px; }
+h4 { margin: 12px 0 4px; font-size: 12.5px; color: #9fb6d0;
+	border-bottom: 1px solid #253549; }
+hr { border: none; border-top: 1px solid #253549; }
+.hint { color: #8ba0b8; font-size: 12px; margin: 6px 0; }
+.sub { color: #8ba0b8; font-weight: normal; font-size: 11.5px; }
+.chip { display: inline-block; width: 11px; height: 11px; border-radius: 3px;
+	margin-right: 3px; border: 1px solid rgba(255,255,255,0.4); }
+
+table.kv td { padding: 1px 8px 1px 0; }
+table.kv td:first-child { color: #8ba0b8; }
+table.market { width: 100%; border-collapse: collapse; font-size: 12px; }
+table.market th { text-align: left; color: #8ba0b8; font-weight: normal; }
+table.market td, table.market th { padding: 2px 4px; border-bottom: 1px solid #1c2a3c; }
+table.market tr.unknown td { opacity: 0.55; }
+
+.route { padding: 3px 5px; margin: 2px 0; background: #16273a; border-radius: 4px;
+	cursor: pointer; }
+.route:hover { background: #1d3450; }
+
+.player { padding: 6px; margin-bottom: 8px; background: #14202e; border-radius: 6px; }
+.player.dead { opacity: 0.45; }
+
+label.slider { display: flex; align-items: center; gap: 6px; margin: 3px 0;
+	font-size: 12px; color: #b7c7da; }
+label.slider input[type=range] { flex: 1; }
+label.slider span { min-width: 34px; text-align: right; }
+
+details { margin: 6px 0; }
+summary { cursor: pointer; color: #9fb6d0; }
+.log { font-size: 12px; color: #b7c7da; }
