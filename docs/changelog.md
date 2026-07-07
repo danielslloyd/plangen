@@ -2,6 +2,19 @@
 
 > Deep-dive doc. CLAUDE.md links here. Newest first.
 
+- **Game map export + civ-style game prototype**: new `plangen-game-map`
+  format (`docs/game-export-format.md`) with locked tile/edge geometry and
+  extensible struct-of-arrays layers (terrain, food, minerals, strategic
+  layers, provinces, per-edge river-crossing/movement data). Exported by
+  `game-export.js` ("Export Game Map" button in the Save/Load panel);
+  `maps/sample-map.json` is a committed 20-subdivision example. `game/` holds
+  a dependency-free playable prototype (see `game/README.md`): cities that
+  fortify their surrounding edges, roads/bridges on edges, supply/demand
+  commodity prices, micromanaged trade routes with tolls & subsidies,
+  region-native crops spreading via trade, pirate/bandit camps on remote
+  high-traffic route segments, eras & combat, and fully slider-tunable rules
+  (`CONFIG_SCHEMA`) and AI personalities (`AI_PERSONALITY_SCHEMA`).
+
 - **Tuning-panel overhaul**: (1) Layer-color pickers recolor on `change` (final
   color only), not on every hue crossed while dragging. (2) Every tuning panel
   gained a **"Save as defaults (copy code)"** button that copies a paste-ready
