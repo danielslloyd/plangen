@@ -164,9 +164,12 @@ function aiMoveUnits(pl, myCities, myUnits) {
 	var enemies = G.players.filter(function (o) { return o.alive && atWar(pl.id, o.id); });
 	var enemyCities = G.cities.filter(function (c) { return enemies.some(function (e) { return e.id === c.owner; }); });
 
-	var missions = { settle: 0, clearCamps: 0, attack: 0, garrison: 0 };
+	var missions = { settle: 0, clearCamps: 0, attack: 0, garrison: 0, naval: 0, air: 0 };
 
 	myUnits.forEach(function (u) {
+		var dom = UNIT_TYPES[u.type].domain;
+		if (dom === "sea") { missions.naval++; aiNavalUnit(pl, u, enemyCities, problemCamps); return; }
+		if (dom === "air") { missions.air++; aiAirUnit(pl, u, enemyCities); return; }
 		if (u.type === "settler") {
 			var target = aiBestSettleSite(pl, u);
 			missions.settle++;
@@ -203,14 +206,85 @@ function aiMoveUnits(pl, myCities, myUnits) {
 		if (open.length && u.tile !== open[0].tile) { missions.garrison++; moveUnitTowards(u, open[0].tile); }
 	});
 
-	if (missions.settle + missions.clearCamps + missions.attack + missions.garrison > 0) {
+	if (missions.settle + missions.clearCamps + missions.attack + missions.garrison + missions.naval + missions.air > 0) {
 		var parts = [];
 		if (missions.settle) parts.push(missions.settle + " settling");
 		if (missions.clearCamps) parts.push(missions.clearCamps + " clearing camps");
 		if (missions.attack) parts.push(missions.attack + " attacking");
 		if (missions.garrison) parts.push(missions.garrison + " garrisoning");
+		if (missions.naval) parts.push(missions.naval + " at sea");
+		if (missions.air) parts.push(missions.air + " air");
 		aiLogGoal(pl, "movement", parts.join(", "), missions);
 	}
+}
+
+// Naval AI: hunt enemy ships, bombard coastal enemy cities, shell camps
+// that sit near the water; otherwise hold station.
+function aiNavalUnit(pl, u, enemyCities, problemCamps) {
+	var target = -1, td = Infinity;
+	G.units.forEach(function (x) {
+		if (x.owner === pl.id || UNIT_TYPES[x.type].domain !== "sea" || !atWar(pl.id, x.owner)) return;
+		var d = M.distTiles(u.tile, x.tile);
+		if (d < td) { td = d; target = x.tile; }
+	});
+	if (target < 0) {
+		var cc = null, cd = Infinity;
+		enemyCities.forEach(function (c) {
+			if (adjacentWaterTile(c.tile) < 0) return; // landlocked
+			var d = M.distTiles(u.tile, c.tile);
+			if (d < cd) { cd = d; cc = c; }
+		});
+		if (cc) target = cc.tile;
+	}
+	if (target < 0 && problemCamps.length) {
+		var camp = null, kd = Infinity;
+		problemCamps.forEach(function (cp) {
+			if (adjacentWaterTile(cp.tile) < 0) return;
+			var d = M.distTiles(u.tile, cp.tile);
+			if (d < kd && d < 20) { kd = d; camp = cp; }
+		});
+		if (camp) target = camp.tile;
+	}
+	if (target >= 0) moveUnitTowards(u, target);
+}
+
+// Air AI: strike the strongest enemy in range (prefer intruders on our own
+// soil), else the enemy city in range; otherwise rebase toward the front.
+function aiAirUnit(pl, u, enemyCities) {
+	if (u.moves <= 0) return;
+	var A = GameConfig.air;
+	var best = -1, bestScore = 0;
+	G.units.forEach(function (x) {
+		if (x.owner === pl.id || !atWar(pl.id, x.owner)) return;
+		var d = M.distTiles(u.tile, x.tile);
+		if (d > A.strikeRange) return;
+		var s = effStrength(x) + (G.owner[x.tile] === pl.id ? 25 : 0);
+		if (s > bestScore) { bestScore = s; best = x.tile; }
+	});
+	if (best < 0) {
+		var cityScore = u.type === "bomber" ? 30 : 8;
+		enemyCities.forEach(function (c) {
+			if (M.distTiles(u.tile, c.tile) > A.strikeRange) return;
+			if (cityScore > bestScore) { bestScore = cityScore; best = c.tile; }
+		});
+	}
+	if (best >= 0) { airStrike(u, best); return; }
+
+	// nothing in range: rebase to the own city closest to the nearest enemy city
+	if (!enemyCities.length) return;
+	var myCities = G.cities.filter(function (c) { return c.owner === pl.id; });
+	var bestCity = null, bestD = Infinity;
+	myCities.forEach(function (c) {
+		if (c.id === u.base) return;
+		if (M.distTiles(u.tile, c.tile) > A.ferryRange) return;
+		enemyCities.forEach(function (ec) {
+			var d = M.distTiles(c.tile, ec.tile);
+			if (d < bestD) { bestD = d; bestCity = c; }
+		});
+	});
+	var curD = Infinity;
+	enemyCities.forEach(function (ec) { curD = Math.min(curD, M.distTiles(u.tile, ec.tile)); });
+	if (bestCity && bestD < curD) airRebase(u, bestCity.id);
 }
 
 function aiBestSettleSite(pl, settler) {
@@ -225,28 +299,56 @@ function aiBestSettleSite(pl, settler) {
 	return best;
 }
 
+// Strongest buildable unit of a domain from this city's available list.
+function aiBestUnit(avail, domain) {
+	var best = null, bestStr = -1;
+	avail.forEach(function (t) {
+		var def = UNIT_TYPES[t];
+		if (!def || !def.combat || def.domain !== domain) return;
+		if (unitStrength(t) > bestStr) { bestStr = unitStrength(t); best = t; }
+	});
+	return best;
+}
+
 function aiProduction(pl, myCities, myUnits) {
 	var a = pl.ai;
-	var settlers = myUnits.filter(function (u) { return u.type === "settler"; }).length;
-	var soldiers = myUnits.filter(function (u) { return UNIT_TYPES[u.type].combat; }).length;
-	var wantSoldiers = Math.ceil(myCities.length * (0.6 + a.military * 1.4)) + (Object.keys(G.wars).length ? 2 : 0);
+	var settlers = 0, soldiers = 0, ships = 0, planes = 0;
+	myUnits.forEach(function (u) {
+		var def = UNIT_TYPES[u.type];
+		if (u.type === "settler") settlers++;
+		else if (def.domain === "sea") ships++;
+		else if (def.domain === "air") planes++;
+		else if (def.combat) soldiers++;
+	});
+	var atWarNow = Object.keys(G.wars).some(function (k) { return k.split("|").indexOf("" + pl.id) >= 0; });
+	var wantSoldiers = Math.ceil(myCities.length * (0.6 + a.military * 1.4)) + (atWarNow ? 2 : 0);
+	var wantShips = Math.round(myCities.filter(cityIsCoastal).length * (0.25 + a.military * 0.3 + a.trade * 0.15));
+	var wantPlanes = pl.era >= 2 ? Math.ceil(myCities.length * a.military * 0.7) : 0;
 	var wantSettler = settlers === 0 && myCities.length < 2 + a.expansion * 6 &&
 		myUnits.length < GameConfig.units.maxUnitsPerPlayer;
 
 	var queued = [];
+	var unitBudgetLeft = function () { return myUnits.length + queued.length < GameConfig.units.maxUnitsPerPlayer; };
 
 	myCities.forEach(function (city) {
 		if (city.producing) return;
 		var avail = availableProduction(city);
-		var atWarNow = Object.keys(G.wars).some(function (k) { return k.split("|").indexOf("" + pl.id) >= 0; });
 
 		function setProd(item) { city.producing = item; queued.push(city.name + ":" + item); }
 
 		if (wantSettler && avail.indexOf("settler") >= 0 && city.pop >= 2) { setProd("settler"); wantSettler = false; return; }
-		if (soldiers < wantSoldiers && myUnits.length < GameConfig.units.maxUnitsPerPlayer) {
-			setProd((pl.era >= 1 && avail.indexOf("legion") >= 0) ? "legion" : "militia");
-			soldiers++;
-			return;
+		if (soldiers < wantSoldiers && unitBudgetLeft()) {
+			var land = aiBestUnit(avail, "land");
+			if (land) { setProd(land); soldiers++; return; }
+		}
+		if (planes < wantPlanes && unitBudgetLeft()) {
+			var airType = avail.indexOf("bomber") >= 0 && (planes % 2 === 1) ? "bomber" :
+				avail.indexOf("fighter") >= 0 ? "fighter" : null;
+			if (airType) { setProd(airType); planes++; return; }
+		}
+		if (ships < wantShips && unitBudgetLeft()) {
+			var sea = aiBestUnit(avail, "sea");
+			if (sea) { setProd(sea); ships++; return; }
 		}
 		if (atWarNow && !city.buildings.walls) { setProd("walls"); return; }
 		if (a.trade > 0.4 && !city.buildings.market) { setProd("market"); return; }
@@ -256,9 +358,12 @@ function aiProduction(pl, myCities, myUnits) {
 	});
 
 	aiLogGoal(pl, "production",
-		"soldiers " + soldiers + "/" + wantSoldiers + (wantSettler ? ", wants settler" : "") +
+		"army " + soldiers + "/" + wantSoldiers + ", navy " + ships + "/" + wantShips +
+		(pl.era >= 2 ? ", air " + planes + "/" + wantPlanes : "") +
+		(wantSettler ? ", wants settler" : "") +
 		(queued.length ? " — queued " + queued.join(", ") : " — nothing queued"),
-		{ soldiers: soldiers, wantSoldiers: wantSoldiers, settlers: settlers, wantSettler: wantSettler, queued: queued });
+		{ soldiers: soldiers, wantSoldiers: wantSoldiers, ships: ships, wantShips: wantShips,
+		  planes: planes, wantPlanes: wantPlanes, settlers: settlers, wantSettler: wantSettler, queued: queued });
 }
 
 function aiTradeRoutes(pl, myCities) {

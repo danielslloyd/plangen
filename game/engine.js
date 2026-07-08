@@ -20,21 +20,45 @@ var CITY_NAMES = ["Ur", "Kish", "Thebes", "Argos", "Tyre", "Byblos", "Nineveh", 
 	"Mycenae", "Knossos", "Carthage", "Cumae", "Tanis", "Lagash", "Byzantion", "Sparta", "Veii", "Sidon",
 	"Akkad", "Uruk", "Larsa", "Mari", "Ebla", "Ugarit", "Gordium", "Sardis", "Miletus", "Rhodes"];
 
+// Unit roster across the three combat eras. `era` is the minimum era to
+// build. `domain` is land/sea/air. `needs` drives the supply system:
+// food is eaten every turn, ammo is spent per attack, fuel per move.
 var UNIT_TYPES = {
-	settler: { name: "Settler", combat: false, icon: "⚑" },
-	militia: { name: "Militia", combat: true, era: 0, icon: "⚔" },
-	legion:  { name: "Legion",  combat: true, era: 1, icon: "✠" }
+	settler:      { name: "Settler",       combat: false, era: 0, domain: "land", icon: "⚑", needs: { food: 0.5 } },
+	// Classical: armies march on their stomachs.
+	militia:      { name: "Militia",       combat: true,  era: 0, domain: "land", icon: "⚔", needs: { food: 1 } },
+	legion:       { name: "Legion",        combat: true,  era: 0, domain: "land", icon: "✠", needs: { food: 1.5 } },
+	trireme:      { name: "Trireme",       combat: true,  era: 0, domain: "sea",  icon: "⛵", needs: { food: 1 } },
+	// Napoleonic: powder and shot join the wagon train.
+	lineInfantry: { name: "Line Infantry", combat: true,  era: 1, domain: "land", icon: "♟", needs: { food: 1.5, ammo: 1 } },
+	cavalry:      { name: "Cavalry",       combat: true,  era: 1, domain: "land", icon: "♞", needs: { food: 2, ammo: 0.5 } },
+	frigate:      { name: "Frigate",       combat: true,  era: 1, domain: "sea",  icon: "⚓", needs: { food: 1, ammo: 1 } },
+	// WW2: food, ammo and fuel — and the air war.
+	infantry:     { name: "Infantry",      combat: true,  era: 2, domain: "land", icon: "✚", needs: { food: 2, ammo: 1.5 } },
+	armor:        { name: "Armor",         combat: true,  era: 2, domain: "land", icon: "▣", needs: { food: 2, ammo: 2, fuel: 2 } },
+	destroyer:    { name: "Destroyer",     combat: true,  era: 2, domain: "sea",  icon: "♜", needs: { food: 2, ammo: 1.5, fuel: 2 } },
+	fighter:      { name: "Fighter",       combat: true,  era: 2, domain: "air",  icon: "✈", needs: { food: 1, ammo: 2, fuel: 3 } },
+	bomber:       { name: "Bomber",        combat: true,  era: 2, domain: "air",  icon: "💣", needs: { food: 1, ammo: 3, fuel: 4 } }
 };
 function unitCost(type) {
-	var u = GameConfig.units;
-	return type === "settler" ? u.settlerCost : type === "militia" ? u.militiaCost : u.legionCost;
+	if (type === "settler") return GameConfig.units.settlerCost;
+	var s = GameConfig.units.stats[type];
+	return s ? s.cost : 50;
 }
 function unitStrength(type) {
-	var u = GameConfig.units;
-	return type === "militia" ? u.militiaStrength : type === "legion" ? u.legionStrength : 0;
+	var s = GameConfig.units.stats[type];
+	return s ? s.str : 0;
+}
+// Per-turn budget: land/sea use move points scaled by the type's speed;
+// air units get one mission per turn.
+function unitMoveBudget(type) {
+	var def = UNIT_TYPES[type];
+	if (def.domain === "air") return 1;
+	var s = GameConfig.units.stats[type];
+	return Math.round(GameConfig.units.movePoints * (s && s.moves ? s.moves : 1));
 }
 
-var ERA_NAMES = ["Ancient", "Classical", "Imperial"];
+var ERA_NAMES = ["Classical", "Napoleonic", "WW2"];
 
 // ---------------------------------------------------------------------------
 // Game creation
@@ -394,9 +418,7 @@ function cityEconomyTurn(city) {
 
 function productionCost(item) {
 	var B = GameConfig.build;
-	if (item === "settler") return unitCost("settler");
-	if (item === "militia") return unitCost("militia");
-	if (item === "legion") return unitCost("legion");
+	if (UNIT_TYPES[item]) return unitCost(item);
 	if (item === "walls") return B.wallsCost;
 	if (item === "market") return B.marketCost;
 	if (item === "granary") return B.granaryCost;
@@ -408,16 +430,27 @@ function completeProduction(city, item) {
 		city.buildings[item] = true;
 		gameLog(city.name + " completes " + item);
 	} else {
-		spawnUnit(city.owner, item, city.tile);
-		gameLog(city.name + " trains a " + UNIT_TYPES[item].name);
+		var u = spawnUnit(city.owner, item, city.tile);
+		if (u) gameLog(city.name + " trains a " + UNIT_TYPES[item].name);
 	}
 	city.producing = null;
 }
 
+// Buildable items: units of the player's era (and the era before — older
+// designs go obsolete), sea units only in coastal cities, plus buildings.
+function cityIsCoastal(city) { return adjacentWaterTile(city.tile) >= 0; }
+
 function availableProduction(city) {
 	var pl = G.players[city.owner];
-	var items = ["settler", "militia"];
-	if (pl.era >= 1) items.push("legion");
+	var items = ["settler"];
+	var coastal = cityIsCoastal(city);
+	Object.keys(UNIT_TYPES).forEach(function (t) {
+		var def = UNIT_TYPES[t];
+		if (!def.combat) return;
+		if (def.era > pl.era || def.era < pl.era - 1) return;
+		if (def.domain === "sea" && !coastal) return;
+		items.push(t);
+	});
 	if (!city.buildings.walls) items.push("walls");
 	if (!city.buildings.market) items.push("market");
 	if (!city.buildings.granary) items.push("granary");
@@ -428,8 +461,29 @@ function availableProduction(city) {
 // Units, movement, combat
 // ---------------------------------------------------------------------------
 
+// Nearest water tile for launching ships (the tile itself if already water).
+function adjacentWaterTile(tile) {
+	if (M.isWater(tile)) return tile;
+	var nb = M.neighbors[tile];
+	for (var k = 0; k < nb.length; k++) if (M.isWater(nb[k])) return nb[k];
+	return -1;
+}
+
 function spawnUnit(owner, type, tile) {
-	var u = { id: G.nextId++, owner: owner, type: type, tile: tile, hp: 100, moves: GameConfig.units.movePoints };
+	var def = UNIT_TYPES[type];
+	if (def.domain === "sea") {
+		var w = adjacentWaterTile(tile);
+		if (w < 0) return null;
+		tile = w;
+	}
+	var u = {
+		id: G.nextId++, owner: owner, type: type, tile: tile, hp: 100,
+		moves: unitMoveBudget(type),
+		base: def.domain === "air" ? G.cityAt[tile] : -1,  // air units live at a city
+		stepsMoved: 0, attacksMade: 0,
+		supply: { food: true, ammo: true, fuel: true },
+		supplyDist: 0
+	};
 	G.units.push(u);
 	return u;
 }
@@ -439,9 +493,10 @@ function removeUnit(u) {
 }
 function unitsAt(tile) { return G.units.filter(function (u) { return u.tile === tile; }); }
 
-// Movement cost for a LAND unit stepping from a->b (game rules, tunable).
-function stepCost(a, b) {
+// Movement cost stepping a->b, by movement domain (game rules, tunable).
+function stepCost(a, b, domain) {
 	var mv = GameConfig.movement;
+	if (domain === "sea") return M.isWater(b) ? mv.seaCost : Infinity;
 	if (!M.isPassable(b)) return Infinity;
 	var ter = M.layer("terrain")[b];
 	var c = mv.flatCost;
@@ -456,10 +511,11 @@ function stepCost(a, b) {
 	return c;
 }
 
-// Unit movement pathfinding (land only). Enemy-held tiles block pathing
-// except as the final (attack) step.
-function unitPathfind(start, goal, owner) {
-	return dijkstraPath(start, goal, stepCost, function (t) {
+// Unit movement pathfinding (land or sea domain). Enemy-held tiles block
+// pathing except as the final (attack) step.
+function unitPathfind(start, goal, owner, domain) {
+	domain = domain || "land";
+	return dijkstraPath(start, goal, function (a, b) { return stepCost(a, b, domain); }, function (t) {
 		var us = unitsAt(t);
 		if (us.length && us[0].owner !== owner) return true;
 		if (G.campAt[t] >= 0) return true;
@@ -467,16 +523,42 @@ function unitPathfind(start, goal, owner) {
 	});
 }
 
+// Can this unit end up standing on tile t (after winning a fight there)?
+function unitCanOccupy(u, t) {
+	var domain = UNIT_TYPES[u.type].domain;
+	if (domain === "sea") return M.isWater(t);
+	if (domain === "land") return M.isPassable(t);
+	return false;
+}
+
 // Move a unit as far along the path to target as this turn's points allow.
-// Attacks if the last reachable step is an enemy/camp/city tile.
+// Attacks if the last reachable step is an enemy/camp/city tile. Sea units
+// aiming at a coastal land target sail to an adjacent water tile and
+// bombard from there.
 function moveUnitTowards(u, target) {
-	var pf = unitPathfind(u.tile, target, u.owner);
+	var def = UNIT_TYPES[u.type];
+	if (def.domain === "air") return false; // air units fly missions (airStrike/airRebase)
+
+	var bombardTarget = -1;
+	if (def.domain === "sea" && !M.isWater(target)) {
+		bombardTarget = target;
+		var w = -1, wd = Infinity;
+		M.neighbors[target].forEach(function (n) {
+			if (!M.isWater(n)) return;
+			var d = M.distTiles(u.tile, n);
+			if (d < wd) { wd = d; w = n; }
+		});
+		if (w < 0) return false; // landlocked target
+		target = w;
+	}
+
+	var pf = unitPathfind(u.tile, target, u.owner, def.domain);
 	if (!pf) return false;
 	var path = pf.path;
-	var fullMoves = GameConfig.units.movePoints;
+	var fullMoves = unitMoveBudget(u.type);
 	for (var i = 1; i < path.length; i++) {
 		var next = path[i];
-		var c = stepCost(u.tile, next);
+		var c = stepCost(u.tile, next, def.domain);
 		// A unit with a full move budget may always take one step, even if the
 		// step costs more than the budget (otherwise river-ringed capitals trap
 		// their own units forever).
@@ -497,6 +579,17 @@ function moveUnitTowards(u, target) {
 
 		u.moves -= c;
 		u.tile = next;
+		u.stepsMoved++; // fuel consumption
+	}
+
+	// naval bombardment of the adjacent coastal target
+	if (bombardTarget >= 0 && u.moves > 0 && M.neighbors[u.tile].indexOf(bombardTarget) >= 0) {
+		var foes = unitsAt(bombardTarget).filter(function (x) { return x.owner !== u.owner && atWar(u.owner, x.owner); });
+		var cid = G.cityAt[bombardTarget];
+		var campId2 = G.campAt[bombardTarget];
+		if (campId2 >= 0) attackCamp(u, G.camps.find(function (cp) { return cp.id === campId2; }));
+		else if (foes.length) attackUnit(u, foes[0]);
+		else if (cid >= 0 && atWar(u.owner, G.cities[cid].owner)) attackCity(u, G.cities[cid]);
 	}
 	return true;
 }
@@ -525,9 +618,19 @@ function combatDamage(strA, strD) {
 	return Math.max(1, Math.round(base * spread));
 }
 
+// Effective strength: health-scaled, and halved-ish when the unit needs
+// ammunition it isn't getting (classical units don't care).
+function effStrength(u) {
+	var s = unitStrength(u.type) * (u.hp / 100 * 0.5 + 0.5);
+	var needs = UNIT_TYPES[u.type].needs || {};
+	if (needs.ammo && u.supply && !u.supply.ammo) s *= GameConfig.supply.noAmmoPenalty;
+	return s;
+}
+
 function attackUnit(att, def) {
-	var strA = unitStrength(att.type) * (att.hp / 100 * 0.5 + 0.5);
-	var strD = unitStrength(def.type) * (def.hp / 100 * 0.5 + 0.5) * combatModifiers(def.tile, att);
+	att.attacksMade++;
+	var strA = effStrength(att);
+	var strD = effStrength(def) * combatModifiers(def.tile, att);
 	if (strD <= 0) strD = 1; // settlers etc.
 	def.hp -= combatDamage(strA, strD);
 	att.hp -= combatDamage(strD, strA) * 0.7;
@@ -535,21 +638,26 @@ function attackUnit(att, def) {
 		var tile = def.tile;
 		removeUnit(def);
 		gameLog(G.players[att.owner].name + " destroys a " + UNIT_TYPES[def.type].name);
-		if (att.hp > 0 && unitsAt(tile).length === 0 && G.cityAt[tile] < 0) att.tile = tile;
+		if (att.hp > 0 && unitsAt(tile).length === 0 && G.cityAt[tile] < 0 && unitCanOccupy(att, tile)) att.tile = tile;
 	}
 	if (att.hp <= 0) removeUnit(att);
 }
 
 function attackCity(att, city) {
 	var C = GameConfig.city;
-	var strA = unitStrength(att.type) * (att.hp / 100 * 0.5 + 0.5);
+	att.attacksMade++;
+	var strA = effStrength(att);
 	var strD = (C.cityBaseStrength + C.cityStrengthPerPop * city.pop) * combatModifiers(city.tile, att);
 	var defUnits = unitsAt(city.tile).filter(function (x) { return x.owner === city.owner && unitStrength(x.type) > 0; });
 	if (defUnits.length) { attackUnit(att, defUnits[0]); return; }
 	city.hp -= combatDamage(strA, strD);
 	att.hp -= combatDamage(strD, strA) * 0.5;
 	if (att.hp <= 0) { removeUnit(att); return; }
-	if (city.hp <= 0) captureCity(att.owner, city, att);
+	if (city.hp <= 0) {
+		// only land forces can take a city; ships hold it at the brink
+		if (UNIT_TYPES[att.type].domain === "land") captureCity(att.owner, city, att);
+		else city.hp = 1;
+	}
 }
 
 function captureCity(newOwner, city, unit) {
@@ -561,6 +669,18 @@ function captureCity(newOwner, city, unit) {
 	city.producing = null;
 	city.subsidies = {};
 	if (unit) unit.tile = city.tile;
+	// air units based here scramble to another friendly base or are lost
+	G.units.slice().forEach(function (u) {
+		if (UNIT_TYPES[u.type].domain !== "air" || u.base !== city.id || u.owner === newOwner) return;
+		var alt = null, altD = Infinity;
+		G.cities.forEach(function (c2) {
+			if (c2.owner !== u.owner || c2.id === city.id) return;
+			var d = M.distTiles(u.tile, c2.tile);
+			if (d <= GameConfig.air.ferryRange && d < altD) { altD = d; alt = c2; }
+		});
+		if (alt) { u.base = alt.id; u.tile = alt.tile; }
+		else { removeUnit(u); gameLog("Air unit lost with the fall of " + city.name); }
+	});
 	// routes touching the city break
 	G.routes = G.routes.filter(function (r) { return r.from !== city.id && r.to !== city.id; });
 	if (old.capital === city.id) {
@@ -572,7 +692,8 @@ function captureCity(newOwner, city, unit) {
 }
 
 function attackCamp(att, camp) {
-	var strA = unitStrength(att.type) * (att.hp / 100 * 0.5 + 0.5);
+	att.attacksMade++;
+	var strA = effStrength(att);
 	var strD = camp.strength;
 	camp.strength -= combatDamage(strA, strD) / 10;
 	att.hp -= combatDamage(strD, strA) * 0.5;
@@ -582,8 +703,83 @@ function attackCamp(att, camp) {
 		G.players[att.owner].gold += camp.loot;
 		G.campAt[camp.tile] = -1;
 		G.camps.splice(G.camps.indexOf(camp), 1);
-		att.tile = camp.tile;
+		if (unitCanOccupy(att, camp.tile)) att.tile = camp.tile;
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Air missions: strike within range of the base, rebase between cities.
+// One mission per turn (u.moves acts as the mission budget).
+// ---------------------------------------------------------------------------
+
+function airStrike(u, targetTile) {
+	var A = GameConfig.air;
+	if (u.moves <= 0) return false;
+	if (M.distTiles(u.tile, targetTile) > A.strikeRange) return false;
+
+	// interception: an enemy fighter based in range of the target may engage
+	var interceptor = null;
+	for (var i = 0; i < G.units.length; i++) {
+		var x = G.units[i];
+		if (x.type === "fighter" && x.owner !== u.owner && atWar(u.owner, x.owner) &&
+			M.distTiles(x.tile, targetTile) <= A.strikeRange) { interceptor = x; break; }
+	}
+	u.moves = 0;
+	u.attacksMade++;
+	if (interceptor && G.rng() < A.interceptChance) {
+		gameLog(UNIT_TYPES[u.type].name + " intercepted by enemy fighters!");
+		var strI = effStrength(interceptor), strU = effStrength(u);
+		u.hp -= combatDamage(strI, strU);
+		interceptor.hp -= combatDamage(strU, strI) * (u.type === "fighter" ? 1 : 0.4);
+		if (interceptor.hp <= 0) removeUnit(interceptor);
+		if (u.hp <= 0) { removeUnit(u); return true; }
+		if (u.type === "bomber") return true; // bombers driven off by the dogfight
+	}
+
+	var strA = effStrength(u);
+	var defended = false;
+	var foes = unitsAt(targetTile).filter(function (x) { return x.owner !== u.owner && atWar(u.owner, x.owner); });
+	var cid = G.cityAt[targetTile];
+	var hostileCity = cid >= 0 && atWar(u.owner, G.cities[cid].owner);
+	var campId = G.campAt[targetTile];
+
+	if (foes.length) {
+		defended = true;
+		var def = foes.reduce(function (best, x) { return effStrength(x) > effStrength(best) ? x : best; });
+		def.hp -= combatDamage(strA, effStrength(def) * 0.8);
+		if (def.hp <= 0) { removeUnit(def); gameLog(G.players[u.owner].name + " air strike destroys a " + UNIT_TYPES[def.type].name); }
+	} else if (hostileCity) {
+		defended = true;
+		var city = G.cities[cid];
+		var mult = u.type === "bomber" ? A.bomberCityBonus : 1;
+		var strD = GameConfig.city.cityBaseStrength + GameConfig.city.cityStrengthPerPop * city.pop;
+		city.hp = Math.max(1, city.hp - combatDamage(strA * mult, strD)); // air can't capture
+	} else if (campId >= 0) {
+		var camp = G.camps.find(function (cp) { return cp.id === campId; });
+		camp.strength -= combatDamage(strA, camp.strength) / 10;
+		if (camp.strength <= 0) {
+			gameLog(G.players[u.owner].name + " bombs out a " + camp.kind + " camp");
+			G.campAt[camp.tile] = -1;
+			G.camps.splice(G.camps.indexOf(camp), 1);
+		}
+	} else {
+		return true; // nothing there; wasted sortie
+	}
+	if (defended) {
+		u.hp -= A.aaDamage * (0.5 + G.rng());
+		if (u.hp <= 0) { removeUnit(u); gameLog("A " + UNIT_TYPES[u.type].name + " is lost to flak."); }
+	}
+	return true;
+}
+
+function airRebase(u, cityId) {
+	var city = G.cities[cityId];
+	if (!city || city.owner !== u.owner) return false;
+	if (M.distTiles(u.tile, city.tile) > GameConfig.air.ferryRange) return false;
+	u.base = cityId;
+	u.tile = city.tile;
+	u.moves = 0;
+	return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -624,12 +820,53 @@ function buildRoadPath(playerId, fromTile, toTile) {
 }
 
 // ---------------------------------------------------------------------------
+// Supply lines: every unit draws food (always), ammo (per attack made) and
+// fuel (per movement) from the nearest friendly city. Delivery cost rises
+// with supply-line length; lines can't run through enemy territory. Units
+// out of range starve: attrition, no ammo, little fuel.
+// ---------------------------------------------------------------------------
+
+function supplyTurn(pl, myUnits) {
+	var S = GameConfig.supply;
+	var seeds = [];
+	G.cities.forEach(function (c) { if (c.owner === pl.id) seeds.push(c.tile); });
+	var dist = null;
+	if (seeds.length) {
+		dist = M.bfsDistance(seeds, {
+			domain: function (t) {
+				var ow = G.owner[t];
+				return !(ow >= 0 && ow !== pl.id && atWar(ow, pl.id));
+			}
+		});
+	}
+	var cost = 0;
+	myUnits.forEach(function (u) {
+		var needs = UNIT_TYPES[u.type].needs || {};
+		var d = dist ? dist[u.tile] : -1;
+		var reachable = d >= 0 && d <= S.maxRange;
+		u.supplyDist = reachable ? d : -1;
+		if (!reachable) {
+			u.supply = {
+				food: !needs.food, ammo: !needs.ammo, fuel: !needs.fuel
+			};
+			return;
+		}
+		var mult = 1 + d * S.perHop;
+		if (needs.food) cost += needs.food * S.foodCost * mult;
+		if (needs.ammo && u.attacksMade > 0) cost += needs.ammo * u.attacksMade * S.ammoCost * mult;
+		if (needs.fuel && u.stepsMoved > 0) cost += needs.fuel * Math.min(1.5, u.stepsMoved / 4) * S.fuelCost * mult;
+		u.supply = { food: true, ammo: true, fuel: true };
+	});
+	return cost;
+}
+
+// ---------------------------------------------------------------------------
 // Eras & science
 // ---------------------------------------------------------------------------
 
 function updateEra(pl) {
 	var T = GameConfig.tech;
-	var newEra = pl.science >= T.imperialCost ? 2 : pl.science >= T.classicalCost ? 1 : 0;
+	var newEra = pl.science >= T.ww2Cost ? 2 : pl.science >= T.napoleonicCost ? 1 : 0;
 	if (newEra > pl.era) {
 		pl.era = newEra;
 		gameLog(pl.name + " enters the " + ERA_NAMES[newEra] + " era!");
@@ -663,7 +900,7 @@ function endTurn() {
 	// 4b. Diplomacy bookkeeping: tribute payments, offer expiry
 	diplomacyTurn();
 
-	// 5. Upkeep, healing, era, elimination
+	// 5. Upkeep + supply settlement, attrition, healing, era, elimination
 	G.players.forEach(function (pl) {
 		if (!pl.alive) return;
 		var myUnits = G.units.filter(function (u) { return u.owner === pl.id; });
@@ -671,6 +908,7 @@ function endTurn() {
 		myUnits.forEach(function (u) {
 			upkeep += u.type === "settler" ? GameConfig.units.settlerMaintenance : GameConfig.units.unitMaintenance;
 		});
+		upkeep += supplyTurn(pl, myUnits); // sets u.supply flags, returns delivery cost
 		pl.gold -= upkeep;
 		if (pl.gold < 0) {
 			// disband to solvency
@@ -679,8 +917,25 @@ function endTurn() {
 			pl.gold = 0;
 		}
 		myUnits.forEach(function (u) {
-			u.moves = GameConfig.units.movePoints;
-			if (G.owner[u.tile] === pl.id) u.hp = Math.min(100, u.hp + GameConfig.units.healPerTurnFriendly);
+			if (G.units.indexOf(u) < 0) return; // disbanded above
+			// starvation attrition for cut-off units
+			if (!u.supply.food) {
+				u.hp -= GameConfig.supply.attritionPerTurn;
+				if (u.hp <= 0) {
+					removeUnit(u);
+					gameLog(pl.name + "'s " + UNIT_TYPES[u.type].name + " starves (out of supply)");
+					return;
+				}
+			}
+			// next turn's budget: air = 1 mission; no fuel = crawling pace
+			var budget = unitMoveBudget(u.type);
+			if (!u.supply.fuel) budget = Math.max(1, Math.round(budget * GameConfig.supply.noFuelPenalty));
+			u.moves = budget;
+			u.stepsMoved = 0;
+			u.attacksMade = 0;
+			if (G.owner[u.tile] === pl.id && u.supply.food) {
+				u.hp = Math.min(100, u.hp + GameConfig.units.healPerTurnFriendly);
+			}
 		});
 		updateEra(pl);
 		pl.score = computeScore(pl);

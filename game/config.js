@@ -58,21 +58,53 @@ var GameConfig = {
 	},
 
 	tech: {
-		classicalCost: 220,      // accumulated science to reach Classical era
-		imperialCost: 600        // a further era to keep long games interesting
+		napoleonicCost: 350,     // accumulated science to reach the Napoleonic era
+		ww2Cost: 1000            // ... and the WW2 era
 	},
 
 	units: {
-		movePoints: 12,           // movement budget per turn (edge costs below)
+		movePoints: 12,           // base movement budget per turn (× type moves factor)
 		settlerCost: 40,
-		militiaCost: 25,
-		legionCost: 45,
-		militiaStrength: 10,
-		legionStrength: 17,
 		settlerMaintenance: 0.5,  // gold upkeep per turn
 		unitMaintenance: 1.0,
-		maxUnitsPerPlayer: 18,
-		healPerTurnFriendly: 15
+		maxUnitsPerPlayer: 24,
+		healPerTurnFriendly: 15,
+		// per-type cost / strength / speed factor (era & needs live in UNIT_TYPES)
+		stats: {
+			militia:      { cost: 25,  str: 10, moves: 1.0 },
+			legion:       { cost: 45,  str: 17, moves: 1.0 },
+			lineInfantry: { cost: 60,  str: 27, moves: 1.0 },
+			cavalry:      { cost: 70,  str: 22, moves: 1.6 },
+			infantry:     { cost: 80,  str: 40, moves: 1.0 },
+			armor:        { cost: 120, str: 58, moves: 1.7 },
+			trireme:      { cost: 40,  str: 12, moves: 1.4 },
+			frigate:      { cost: 75,  str: 28, moves: 1.7 },
+			destroyer:    { cost: 120, str: 50, moves: 2.0 },
+			fighter:      { cost: 100, str: 32, moves: 0 },
+			bomber:       { cost: 130, str: 42, moves: 0 }
+		}
+	},
+
+	// Supply lines: every unit draws its needs from the nearest friendly city.
+	// Delivering 1 unit of a resource costs its base price plus a per-hop
+	// surcharge — long supply lines are expensive; cut ones starve the army.
+	supply: {
+		foodCost: 0.15,          // gold per unit of food delivered
+		ammoCost: 0.35,          // gold per unit of ammunition
+		fuelCost: 0.45,          // gold per unit of fuel
+		perHop: 0.10,            // +10% delivery cost per supply-line hop
+		maxRange: 22,            // hops beyond which units are out of supply
+		attritionPerTurn: 12,    // hp lost per turn without food
+		noAmmoPenalty: 0.45,     // strength multiplier when ammunition ran out
+		noFuelPenalty: 0.35      // movement multiplier when fuel ran out
+	},
+
+	air: {
+		strikeRange: 9,          // tiles an air unit can strike from its base
+		ferryRange: 25,          // tiles it can rebase between friendly cities
+		aaDamage: 12,            // flak damage taken striking a defended tile
+		interceptChance: 0.45,   // enemy fighter in range intercepts a strike
+		bomberCityBonus: 1.6     // bomber strength multiplier vs cities
 	},
 
 	movement: {
@@ -82,6 +114,7 @@ var GameConfig = {
 		forestExtra: 1,
 		riverNoBridgeCost: 10,   // stepping across/onto river without a bridge
 		roadFactor: 0.5,         // multiplies edge cost when a road exists
+		seaCost: 2,              // per water edge for naval units
 		impassableMountains: false
 	},
 
@@ -210,22 +243,56 @@ var CONFIG_SCHEMA = [
 	{ g: "Yields", p: "yields.prodHills", min: 0, max: 4, step: 0.1 },
 	{ g: "Yields", p: "yields.sciencePerPop", min: 0, max: 5, step: 0.1 },
 
-	{ g: "Tech", p: "tech.classicalCost", min: 50, max: 1000, step: 10 },
-	{ g: "Tech", p: "tech.imperialCost", min: 200, max: 3000, step: 25 },
+	{ g: "Tech", p: "tech.napoleonicCost", min: 50, max: 2000, step: 25 },
+	{ g: "Tech", p: "tech.ww2Cost", min: 200, max: 5000, step: 50 },
 
 	{ g: "Units", p: "units.movePoints", min: 4, max: 30, step: 1 },
 	{ g: "Units", p: "units.settlerCost", min: 10, max: 120, step: 5 },
-	{ g: "Units", p: "units.militiaCost", min: 10, max: 100, step: 5 },
-	{ g: "Units", p: "units.legionCost", min: 15, max: 150, step: 5 },
-	{ g: "Units", p: "units.militiaStrength", min: 4, max: 30, step: 1 },
-	{ g: "Units", p: "units.legionStrength", min: 6, max: 50, step: 1 },
 	{ g: "Units", p: "units.maxUnitsPerPlayer", min: 4, max: 60, step: 1 },
+	{ g: "Units", p: "units.stats.militia.cost", min: 10, max: 150, step: 5 },
+	{ g: "Units", p: "units.stats.militia.str", min: 4, max: 40, step: 1 },
+	{ g: "Units", p: "units.stats.legion.cost", min: 10, max: 200, step: 5 },
+	{ g: "Units", p: "units.stats.legion.str", min: 4, max: 50, step: 1 },
+	{ g: "Units", p: "units.stats.lineInfantry.cost", min: 10, max: 250, step: 5 },
+	{ g: "Units", p: "units.stats.lineInfantry.str", min: 10, max: 60, step: 1 },
+	{ g: "Units", p: "units.stats.cavalry.cost", min: 10, max: 250, step: 5 },
+	{ g: "Units", p: "units.stats.cavalry.str", min: 10, max: 60, step: 1 },
+	{ g: "Units", p: "units.stats.infantry.cost", min: 20, max: 300, step: 5 },
+	{ g: "Units", p: "units.stats.infantry.str", min: 15, max: 80, step: 1 },
+	{ g: "Units", p: "units.stats.armor.cost", min: 30, max: 400, step: 10 },
+	{ g: "Units", p: "units.stats.armor.str", min: 20, max: 120, step: 2 },
+	{ g: "Units", p: "units.stats.trireme.cost", min: 10, max: 150, step: 5 },
+	{ g: "Units", p: "units.stats.trireme.str", min: 4, max: 40, step: 1 },
+	{ g: "Units", p: "units.stats.frigate.cost", min: 20, max: 250, step: 5 },
+	{ g: "Units", p: "units.stats.frigate.str", min: 10, max: 60, step: 1 },
+	{ g: "Units", p: "units.stats.destroyer.cost", min: 30, max: 400, step: 10 },
+	{ g: "Units", p: "units.stats.destroyer.str", min: 20, max: 120, step: 2 },
+	{ g: "Units", p: "units.stats.fighter.cost", min: 30, max: 400, step: 10 },
+	{ g: "Units", p: "units.stats.fighter.str", min: 10, max: 80, step: 2 },
+	{ g: "Units", p: "units.stats.bomber.cost", min: 30, max: 400, step: 10 },
+	{ g: "Units", p: "units.stats.bomber.str", min: 10, max: 100, step: 2 },
+
+	{ g: "Supply", p: "supply.foodCost", min: 0, max: 1, step: 0.05 },
+	{ g: "Supply", p: "supply.ammoCost", min: 0, max: 2, step: 0.05 },
+	{ g: "Supply", p: "supply.fuelCost", min: 0, max: 2, step: 0.05 },
+	{ g: "Supply", p: "supply.perHop", min: 0, max: 0.5, step: 0.01 },
+	{ g: "Supply", p: "supply.maxRange", min: 4, max: 60, step: 1 },
+	{ g: "Supply", p: "supply.attritionPerTurn", min: 0, max: 40, step: 1 },
+	{ g: "Supply", p: "supply.noAmmoPenalty", min: 0.1, max: 1, step: 0.05 },
+	{ g: "Supply", p: "supply.noFuelPenalty", min: 0.1, max: 1, step: 0.05 },
+
+	{ g: "Air", p: "air.strikeRange", min: 3, max: 25, step: 1 },
+	{ g: "Air", p: "air.ferryRange", min: 5, max: 60, step: 1 },
+	{ g: "Air", p: "air.aaDamage", min: 0, max: 40, step: 1 },
+	{ g: "Air", p: "air.interceptChance", min: 0, max: 1, step: 0.05 },
+	{ g: "Air", p: "air.bomberCityBonus", min: 1, max: 4, step: 0.1 },
 
 	{ g: "Movement", p: "movement.flatCost", min: 1, max: 10, step: 1 },
 	{ g: "Movement", p: "movement.hillsCost", min: 1, max: 15, step: 1 },
 	{ g: "Movement", p: "movement.mountainCost", min: 2, max: 30, step: 1 },
 	{ g: "Movement", p: "movement.riverNoBridgeCost", min: 0, max: 30, step: 1 },
 	{ g: "Movement", p: "movement.roadFactor", min: 0.1, max: 1, step: 0.05 },
+	{ g: "Movement", p: "movement.seaCost", min: 1, max: 10, step: 0.5 },
 
 	{ g: "Build", p: "build.roadCostGold", min: 1, max: 30, step: 1 },
 	{ g: "Build", p: "build.bridgeCostGold", min: 2, max: 80, step: 2 },

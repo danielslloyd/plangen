@@ -375,6 +375,12 @@ function drawUnits(ctx) {
 				ctx.fillStyle = "#000"; ctx.fillRect(x - 5, y - 9, 10, 2);
 				ctx.fillStyle = "#3d3"; ctx.fillRect(x - 5, y - 9, 10 * u.hp / 100, 2);
 			}
+			// out-of-supply marker
+			if (u.supply && (!u.supply.food || !u.supply.ammo || !u.supply.fuel)) {
+				ctx.font = "bold 9px sans-serif";
+				ctx.fillStyle = "#ff5544";
+				ctx.fillText("!", x + 7, y - 5);
+			}
 		});
 	});
 }
@@ -403,7 +409,20 @@ function drawSelection(ctx) {
 	}
 	if (R.hoverTile >= 0) outlineTile(ctx, R.hoverTile, "rgba(255,255,255,0.5)", 1.5);
 	if (R.selectedTile >= 0) outlineTile(ctx, R.selectedTile, "#ffffff", 2);
-	if (R.selectedUnit) outlineTile(ctx, R.selectedUnit.tile, "#ffe97f", 2);
+	if (R.selectedUnit) {
+		outlineTile(ctx, R.selectedUnit.tile, "#ffe97f", 2);
+		// strike-range ring for air units
+		if (UNIT_TYPES[R.selectedUnit.type].domain === "air") {
+			var p = tileScreen(R.selectedUnit.tile);
+			ctx.strokeStyle = "rgba(255,233,127,0.7)";
+			ctx.lineWidth = 1.5;
+			ctx.setLineDash([6, 5]);
+			ctx.beginPath();
+			ctx.arc(p[0], p[1], GameConfig.air.strikeRange * M.hopDeg * R.view.scale, 0, Math.PI * 2);
+			ctx.stroke();
+			ctx.setLineDash([]);
+		}
+	}
 }
 
 function outlineTile(ctx, t, color, width) {

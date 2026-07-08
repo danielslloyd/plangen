@@ -179,8 +179,27 @@ function handleTileClick(t) {
 	var units = unitsAt(t);
 	var myUnits = units.filter(function (u) { return u.owner === h; });
 
+	// air unit orders: click a friendly city to rebase, a valid target to strike
+	if (R.selectedUnit && R.selectedUnit.owner === h &&
+		UNIT_TYPES[R.selectedUnit.type].domain === "air" && t !== R.selectedUnit.tile) {
+		var au = R.selectedUnit;
+		var cid = G.cityAt[t];
+		if (cid >= 0 && G.cities[cid].owner === h) {
+			if (!airRebase(au, cid)) gameLog("Out of ferry range.");
+		} else {
+			var hasTarget = G.campAt[t] >= 0 ||
+				unitsAt(t).some(function (x) { return x.owner !== h && atWar(h, x.owner); }) ||
+				(cid >= 0 && atWar(h, G.cities[cid].owner));
+			if (!hasTarget) gameLog("No target there.");
+			else if (!airStrike(au, t)) gameLog("Out of strike range (or no mission left this turn).");
+		}
+		R.dirty = true; refreshUI();
+		return;
+	}
+
 	// order a selected human unit to move/attack
-	if (R.selectedUnit && R.selectedUnit.owner === h && t !== R.selectedUnit.tile && !myUnits.length) {
+	if (R.selectedUnit && R.selectedUnit.owner === h && t !== R.selectedUnit.tile && !myUnits.length &&
+		UNIT_TYPES[R.selectedUnit.type].domain !== "air") {
 		moveUnitTowards(R.selectedUnit, t);
 		R.dirty = true; refreshUI();
 		return;
@@ -239,12 +258,28 @@ function renderInfoTab() {
 
 	if (R.selectedUnit) {
 		var u = R.selectedUnit;
-		html += "<h3>" + UNIT_TYPES[u.type].name + " (" + esc(G.players[u.owner].name) + ")</h3>" +
-			"<div>HP " + Math.round(u.hp) + " · moves " + fmtNum(u.moves, 0) + "</div>";
+		var def = UNIT_TYPES[u.type];
+		html += "<h3>" + def.name + " (" + esc(G.players[u.owner].name) + ")</h3>" +
+			"<div>HP " + Math.round(u.hp) +
+			(def.domain === "air" ? " · missions " + fmtNum(u.moves, 0) : " · moves " + fmtNum(u.moves, 0)) +
+			" · " + def.domain + "</div>";
+		// supply status
+		var needs = def.needs || {};
+		var supBits = [];
+		if (needs.food) supBits.push((u.supply.food ? "🌾" : "<span class='warn'>🌾✗</span>"));
+		if (needs.ammo) supBits.push((u.supply.ammo ? "💥" : "<span class='warn'>💥✗</span>"));
+		if (needs.fuel) supBits.push((u.supply.fuel ? "⛽" : "<span class='warn'>⛽✗</span>"));
+		if (supBits.length) {
+			html += "<div>supply: " + supBits.join(" ") +
+				(u.supplyDist >= 0 ? " <span class='sub'>(line: " + u.supplyDist + " hops)</span>"
+					: " <span class='warn'>OUT OF SUPPLY</span>") + "</div>";
+		}
 		if (u.owner === h && u.type === "settler") {
 			html += "<button id='foundBtn'>Found city here</button>";
 		}
-		html += "<div class='hint'>Click a tile to move/attack.</div><hr>";
+		html += "<div class='hint'>" + (def.domain === "air"
+			? "Click an enemy in range to strike; click your city to rebase."
+			: "Click a tile to move/attack.") + "</div><hr>";
 	}
 
 	var t = R.hoverTile >= 0 ? R.hoverTile : R.selectedTile;
