@@ -24,7 +24,7 @@ function generatePlanetTectonicPlates(topology, plateCount, oceanicRate, random,
 				randomUnitVector(random),
 				random.realInclusive(-Math.PI / 30, Math.PI / 30),
 				random.realInclusive(-Math.PI / 30, Math.PI / 30),
-				oceanic ? random.realInclusive(-0.8, -0.3) : random.realInclusive(0.1, 0.5),
+				oceanic ? random.realInclusive(-0.8, -0.3) : random.realInclusive(0.1, 0.25),
 				oceanic,
 				corner);
 
@@ -377,6 +377,9 @@ function groupBodies(planet) {
 function erodeElevation(planet, action) {
 	let tiles = planet.topology.tiles
 	let watersheds = planet.topology.watersheds
+	// Monotonic id for leveled-bowl groups; survives recursive newerDrain calls
+	// so every basin filled at any point stays a lake candidate for formLakes.
+	let bowlGroupCounter = 0;
 
 	ctime("groupBodies");
 	groupBodies(planet);
@@ -403,6 +406,12 @@ function erodeElevation(planet, action) {
 	newerDrain();
 	ctimeEnd("newerDrain");
 
+	// River erosion & deposition after flows are known
+	ctime("riverErosionDeposition");
+	riverErosionDeposition();
+	ctimeEnd("riverErosionDeposition");
+	validateDrainage(tiles.filter(t => t.elevation > 0), 'After riverErosionDeposition');
+
 	// Redirect parallel rivers after drainage is established
 	ctime("redirectParallelRivers");
 	for (let i = 0; i < 2; i++) {
@@ -414,6 +423,11 @@ function erodeElevation(planet, action) {
 	ctime("validateDrainageFlow");
 	validateDrainageFlow(planet.topology);
 	ctimeEnd("validateDrainageFlow");
+
+	// Decide which filled bowls plausibly hold standing water
+	ctime("formLakes");
+	formLakes();
+	ctimeEnd("formLakes");
 
 	ctime("reMoisture");
 	reMoisture()
@@ -539,6 +553,156 @@ function erodeElevation(planet, action) {
 		return uphillCount;
 	}
 
+	// Lake formation: every bowl that bowlFill leveled is a candidate basin
+	// (tagged with tile.bowlGroup). After the final drainage/flow pass, a basin
+	// keeps standing water where the water budget supports it: total inflow
+	// (local runoff + rivers entering from outside) vs evaporation over the
+	// lake area (warmer = more evaporation). Plenty of inflow => an open lake
+	// with an outlet ('filled'); marginal inflow => a closed endorheic lake
+	// ('kept no drain'); too dry => the basin stays dry land as before.
+	// Terrain elevations are untouched (the leveled fill stays), so the
+	// drainage network remains valid; tile.lake drives biome ('lake'),
+	// water rendering, and ocean-like navigation in path-finding.js.
+	function formLakes() {
+		const runoffFraction = 0.1;     // matches newerDrain
+		const evapRatio = 0.25;         // evaporation per tile vs mean rainfall
+		const outletRatio = 2.0;        // inflow/evap needed for an open lake
+		const endorheicRatio = 1.0;     // enough to sustain a closed lake
+		const maxLakeTiles = 12;        // basins larger than this stay dry land
+
+		let land = tiles.filter(t => t.elevation > 0);
+		let groups = new Map();
+		for (let t of land) {
+			t.lake = undefined;
+			if (t.bowlGroup !== undefined) {
+				if (!groups.has(t.bowlGroup)) groups.set(t.bowlGroup, []);
+				groups.get(t.bowlGroup).push(t);
+			}
+		}
+		planet.lakes = [];
+		if (typeof generateLakes !== "undefined" && !generateLakes) return;
+		if (groups.size === 0) return;
+
+		let meanRain = land.reduce((s, t) => s + (t.rain || 0), 0) / land.length || 1;
+		let lakeId = 0;
+		for (let groupTiles of groups.values()) {
+			let set = new Set(groupTiles);
+			let inflow = 0;
+			let evap = 0;
+			for (let t of groupTiles) {
+				inflow += (t.rain || 0) * runoffFraction;
+				if (t.sources) {
+					for (let s of t.sources) {
+						if (!set.has(s)) inflow += s.outflow || 0;
+					}
+				}
+				evap += evapRatio * meanRain * (0.5 + Math.max(0, Math.min(1, t.temperature || 0)));
+			}
+			let ratio = evap > 0 ? inflow / evap : 0;
+			if (ratio < endorheicRatio) continue;
+			if (groupTiles.length > maxLakeTiles) continue;
+
+			let outlet;
+			for (let t of groupTiles) {
+				if (t.drain && !set.has(t.drain)) { outlet = t.drain; break; }
+			}
+			let open = ratio >= outletRatio && outlet;
+			let lake = {
+				id: ++lakeId,
+				log: open ? 'filled' : 'kept no drain',
+				tiles: groupTiles,
+				shore: [],
+				sources: [],
+				outflow: 0,
+				drain: open ? outlet : undefined
+			};
+			lake.surface = Math.max(...groupTiles.map(t => t.elevation));
+			for (let t of groupTiles) t.lake = lake;
+			planet.lakes.push(lake);
+		}
+
+		// When two lakes are adjacent, keep only the higher one: drop the lower
+		// lake (its tiles revert to dry land) so neighbouring lakes never merge
+		// into one stepped water body.
+		let removed = true;
+		while (removed) {
+			removed = false;
+			for (let lake of planet.lakes) {
+				let lset = new Set(lake.tiles);
+				for (let t of lake.tiles) {
+					for (let n of t.tiles) {
+						if (n.lake && n.lake !== lake && !lset.has(n)) {
+							let drop = lake.surface >= n.lake.surface ? n.lake : lake;
+							for (let dt of drop.tiles) dt.lake = undefined;
+							planet.lakes = planet.lakes.filter(l => l !== drop);
+							removed = true;
+							break;
+						}
+					}
+					if (removed) break;
+				}
+				if (removed) break;
+			}
+		}
+		console.log('formLakes: kept ' + planet.lakes.length + ' lakes from ' + groups.size + ' candidate basins');
+	}
+
+	// River erosion & deposition: fast-flowing water on steep slopes carves the
+	// channel down; when that water reaches flat terrain its carrying capacity
+	// drops and the excess sediment is dropped. Stream-power style: capacity is
+	// proportional to flow * local slope. Elevation changes are capped so every
+	// tile stays strictly above its drain and below its sources, keeping the
+	// drainage network valid without a recalculation.
+	function riverErosionDeposition() {
+		const erosionRate = 0.25;   // fraction of unused capacity carved per pass
+		const depositionRate = 0.5; // fraction of excess load dropped per pass
+		const capacityK = 4;        // sediment capacity per unit of (flow * slope)
+		const passes = 3;
+
+		let land = tiles.filter(t => t.elevation > 0);
+		let maxOutflow = Math.max(...land.map(t => t.outflow || 0));
+		if (!(maxOutflow > 0)) return;
+
+		for (let pass = 0; pass < passes; pass++) {
+			// highest first so sediment is handed downstream within one pass
+			land.sort((a, b) => b.elevation - a.elevation);
+			for (let t of land) t.sedimentLoad = 0;
+			for (let t of land) {
+				if (!t.drain) continue;
+				if (t.bowlGroup !== undefined) continue; // keep leveled lake beds flat
+				// slope proxy, clamped at sea level so coastal tiles draining
+				// into deep ocean don't get runaway capacity
+				let delta = t.elevation - Math.max(t.drain.elevation, 0);
+				if (delta <= 0) continue;
+				let flow = (t.outflow || 0) / maxOutflow;
+				let capacity = capacityK * flow * delta;
+				let load = t.sedimentLoad;
+				if (load > capacity) {
+					// flat or slow water: deposit the excess, staying below sources
+					let deposit = (load - capacity) * depositionRate;
+					if (t.sources && t.sources.length > 0) {
+						let minSource = Math.min(...t.sources.map(s => s.elevation));
+						deposit = Math.min(deposit, Math.max(0, (minSource - t.elevation) * 0.5));
+					}
+					t.elevation += deposit;
+					load -= deposit;
+					t.sediment = (t.sediment || 0) + deposit;
+				} else {
+					// steep, fast water: erode toward capacity, staying above the drain
+					let erode = (capacity - load) * erosionRate;
+					let floor = Math.max(t.drain.elevation, 0) + delta * 0.25;
+					erode = Math.min(erode, Math.max(0, t.elevation - floor));
+					t.elevation -= erode;
+					load += erode;
+					t.sediment = (t.sediment || 0) - erode;
+				}
+				if (t.drain.elevation > 0) {
+					t.drain.sedimentLoad = (t.drain.sedimentLoad || 0) + load;
+				}
+			}
+		}
+	}
+
 	function randomLocalMax() {
 		let modifiedTiles = [];
 
@@ -547,7 +711,7 @@ function erodeElevation(planet, action) {
 			tiles[i].tiles.sort((a, b) => parseFloat(a.elevation) - parseFloat(b.elevation));
 		}
 		for (let i = tiles.length - 1; i >= 0; i--) {
-			if (tiles[i].elevation > 0) {
+			if (tiles[i].elevation > 0 && tiles[i].bowlGroup === undefined) { // never bump a leveled lake bed
 				if (tiles[i].elevation > tiles[i].tiles[0].elevation) { //if not local min
 					if (tiles[i].elevation < tiles[i].tiles[tiles[i].tiles.length - 1].elevation) { //if not local max
 						//console.log('try')
@@ -814,9 +978,11 @@ function erodeElevation(planet, action) {
 			let order = findMouthOrder(lake,bowlEscapeRoute.routeA);
 			const step = (maxE-minE)/(lake.tiles.length+1);
 			let j = 1;
+			let bowlGroupId = ++bowlGroupCounter;
 			//console.log('step',step);
 			for (o of order) {
 				for (t of o) {
+					t.bowlGroup = bowlGroupId;
 					t.sediment = 0;
 					var eOld = t.elevation;
 					t.elevation = minE+(step*(j+.0000000001*t.id));

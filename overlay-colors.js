@@ -93,11 +93,16 @@ function setOverlayPaletteValue(overlayId, key, index, hex) {
 // SLOT DEFINITIONS  (defaults mirror the original hard-coded overlay colours)
 // ============================================================================
 
+// Hypsometric tint: cool blues for the sea floor, a green→gold→umber→snow
+// ramp for land (calculateElevationColor blends these as ordered stops).
 defineOverlayColors("elevation", [
-	{ key: "oceanShallow", label: "Ocean shallow", def: "#224488" },
-	{ key: "oceanDeep",    label: "Ocean deep",    def: "#000044" },
-	{ key: "landLow",      label: "Land low",      def: "#4b2f20" },
-	{ key: "landHigh",     label: "Land high",     def: "#ffffff" }
+	{ key: "oceanDeep",    label: "Ocean deep",    def: "#0a1a3c" },
+	{ key: "oceanShallow", label: "Ocean shallow", def: "#3d6ea8" },
+	{ key: "landLowland",  label: "Land lowland",  def: "#3f7d4f" },
+	{ key: "landPlain",    label: "Land plain",    def: "#9fb35a" },
+	{ key: "landUpland",   label: "Land upland",   def: "#b9924e" },
+	{ key: "landMontane",  label: "Land montane",  def: "#7a5236" },
+	{ key: "landPeak",     label: "Land peak",     def: "#ffffff" }
 ]);
 
 defineOverlayColors("temperature", [
@@ -107,9 +112,13 @@ defineOverlayColors("temperature", [
 	{ key: "warmHigh", label: "Hottest", def: "#ff0000" }
 ]);
 
+// Rainfall map (data source: tile.rain). Land ramps parched tan → grassy
+// green → lush teal; ocean is a flat muted blue so the land reads clearly.
 defineOverlayColors("moisture", [
-	{ key: "dry", label: "Dry", def: "#8b4513" },
-	{ key: "wet", label: "Wet", def: "#00ff00" }
+	{ key: "ocean",    label: "Ocean",         def: "#33485e" },
+	{ key: "dry",      label: "Arid",          def: "#d8c9a0" },
+	{ key: "mid",      label: "Moderate",      def: "#7cb342" },
+	{ key: "wet",      label: "Wet",           def: "#1f6f5c" }
 ]);
 
 defineOverlayColors("plates", [

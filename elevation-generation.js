@@ -459,7 +459,31 @@ function calculateElevationDisplacements(topology, action) {
 			corner.elevationDisplacement = 0;
 		}
 	}
-	
+
+	// Flatten lakes: every lake tile and every corner touching that lake sit at
+	// the lake's surface elevation, so the water reads as a level plane in 3D.
+	var lakeSurface = new Map(); // lake object -> surface displacement
+	for (var i = 0; i < topology.tiles.length; ++i) {
+		var tile = topology.tiles[i];
+		if (!tile.lake) continue;
+		var d = elevationMultiplier * Math.max(tile.elevation, 0);
+		if (!lakeSurface.has(tile.lake) || d > lakeSurface.get(tile.lake)) lakeSurface.set(tile.lake, d);
+	}
+	if (lakeSurface.size > 0) {
+		for (var i = 0; i < topology.tiles.length; ++i) {
+			var tile = topology.tiles[i];
+			if (tile.lake) tile.elevationDisplacement = lakeSurface.get(tile.lake);
+		}
+		for (var i = 0; i < topology.corners.length; ++i) {
+			var corner = topology.corners[i];
+			var best = -1;
+			for (var j = 0; j < corner.tiles.length; ++j) {
+				if (corner.tiles[j].lake) best = Math.max(best, lakeSurface.get(corner.tiles[j].lake));
+			}
+			if (best >= 0) corner.elevationDisplacement = best;
+		}
+	}
+
 	// Calculate displacement values for borders (average of connected corners)
 	for (var i = 0; i < topology.borders.length; ++i) {
 		var border = topology.borders[i];
@@ -586,10 +610,17 @@ function reshapeElevationDistribution(tiles) {
 	// Apply exponential distribution to sorted tiles (preserves relative order)
 	for (var i = 0; i < landTiles.length; ++i) {
 		var percentile = i / (landTiles.length - 1); // 0 to 1 range
+		// Sharpen peaks: raising the percentile to a power > 1 pulls the bulk of the
+		// land down toward the flat lowland end of the curve and reserves the steep
+		// top of the exponential for only the highest few percent of tiles, so the
+		// tallest tiles spike up well above their neighbours instead of forming a
+		// broad high plateau. peakSharpness = 1 reproduces the old distribution.
+		var sharpness = (typeof peakSharpness === "number" && peakSharpness > 0) ? peakSharpness : 1;
+		var p = Math.pow(percentile, sharpness);
 		// Exponential formula: y = (e^(Px) - 1) / (e^P - 1)
 		// Higher P = steeper curve (more low elevations, fewer high)
 		// Lower P = gentler curve (more even distribution)
-		var reshapedElevation = (Math.exp(elevationExponent * percentile) - 1) / (Math.exp(elevationExponent) - 1);
+		var reshapedElevation = (Math.exp(elevationExponent * p) - 1) / (Math.exp(elevationExponent) - 1);
 		landTiles[i].tile.elevation = reshapedElevation;
 	}
 }

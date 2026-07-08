@@ -276,8 +276,9 @@ function setDistances(planet, action, sailingCostConstant) {
 		let reverseCost = 100;
 
 		const isRiver = tile => tile.river === true;
-		const isOcean = tile => tile.elevation < 0;
-		const isLand = tile => tile.elevation >= 0 && !tile.river;
+		// Lakes are navigable open water: treat them exactly like ocean
+		const isOcean = tile => tile.elevation < 0 || !!tile.lake;
+		const isLand = tile => tile.elevation >= 0 && !tile.river && !tile.lake;
 
 		const fromIsRiver = isRiver(fromTile);
 		const toIsRiver = isRiver(toTile);
@@ -321,7 +322,7 @@ function setDistances(planet, action, sailingCostConstant) {
 		else if ((fromIsRiver && toIsLand) || (fromIsLand && toIsRiver)) {
 			cost = reverseCost = 30;
 		}
-		else if (fromTile.elevation > 0 && toTile.elevation > 0) {
+		else if (fromIsLand && toIsLand && fromTile.elevation > 0 && toTile.elevation > 0) {
             if (deltaElevation <= 0) {
                 cost = 5 + 1000 * Math.pow(deltaElevation, 2);
                 reverseCost = 5 + 4000 * Math.pow(deltaElevation, 2);

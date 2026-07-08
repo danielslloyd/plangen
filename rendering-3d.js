@@ -83,6 +83,9 @@ function render() {
 	// Update FPS counter
 	updateFPS();
 
+	// Cull overlapping / stacked feature labels for the current camera & zoom.
+	if (typeof updateFeatureLabelVisibility === "function") updateFeatureLabelVisibility();
+
 	renderer.render(scene, camera);
 	lastRenderFrameTime = currentRenderFrameTime;
 
@@ -176,7 +179,36 @@ function updateCamera() {
 		camera.top = mercatorCameraY + actualViewSize;
 		camera.bottom = mercatorCameraY - actualViewSize;
 
+		// Raised Mercator: enable the shadow-casting sun and dim the flat
+		// ambient so cast shadows read; the light tracks the camera pan.
+		if (window.mercatorShadowLight) {
+			var wantShadow = !!useElevationDisplacement;
+			window.mercatorShadowLight.visible = wantShadow;
+			if (wantShadow) {
+				// Sun direction from the user-set azimuth/elevation sliders
+				var sunAzRad = (typeof mercatorSunAzimuth !== "undefined" ? mercatorSunAzimuth : 135) * Math.PI / 180;
+				var sunElRad = (typeof mercatorSunElevation !== "undefined" ? mercatorSunElevation : 46) * Math.PI / 180;
+				var sunDist = 36;
+				var sunHoriz = sunDist * Math.cos(sunElRad);
+				window.mercatorShadowLight.position.set(
+					mercatorCameraX + Math.cos(sunAzRad) * sunHoriz,
+					mercatorCameraY + Math.sin(sunAzRad) * sunHoriz,
+					Math.max(sunDist * Math.sin(sunElRad), 2));
+				window.mercatorShadowLight.target.position.set(mercatorCameraX, mercatorCameraY, 0);
+				window.mercatorShadowLight.target.updateMatrixWorld();
+			}
+			if (window.ambientLight && !window.orbitingSunLight) {
+				window.ambientLight.intensity = wantShadow ? 0.45 : 0.8;
+			}
+		}
+
 	} else {
+		if (window.mercatorShadowLight) {
+			window.mercatorShadowLight.visible = false;
+			if (window.ambientLight && !window.orbitingSunLight && window.ambientLight.intensity === 0.45) {
+				window.ambientLight.intensity = 0.8;
+			}
+		}
 		// Globe 3D mode - use perspective camera
 		if (!(camera instanceof THREE.PerspectiveCamera)) {
 			// Switch to perspective camera
@@ -535,7 +567,7 @@ function buildCoastlineOutlineObject() {
 	var period = Math.PI * 4.0, half = period / 2;
 	var positions = [];
 
-	function isLandTile(t) { return t.elevation > 0; }
+	function isLandTile(t) { return t.elevation > 0 && !t.lake; } // lakes count as water so they get outlined too
 	function projC(corner) {
 		if (mercator) {
 			var m = cartesianToMercator(corner.position, mercatorCenterLat, mercatorCenterLon);
@@ -1051,6 +1083,7 @@ function activateCachedRenderData(cacheEntry) {
 
 	// Feature root/node markers are projection-specific - rebuild for the new view.
 	if (typeof rebuildFeatureRoots === "function") rebuildFeatureRoots();
+	if (typeof rebuildFeatureLabels === "function") rebuildFeatureLabels();
 	if (typeof rebuildPlateOutline === "function") rebuildPlateOutline();
 }
 
@@ -1106,6 +1139,7 @@ function applyProjectionStateChange(previousCacheKey) {
 			}
 
 			if (typeof rebuildFeatureRoots === "function") rebuildFeatureRoots();
+			if (typeof rebuildFeatureLabels === "function") rebuildFeatureLabels();
 			if (typeof rebuildPlateOutline === "function") rebuildPlateOutline();
 		})
 		.execute();
