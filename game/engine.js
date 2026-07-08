@@ -60,6 +60,8 @@ function newGame(seed) {
 		traffic: new Float32Array(M.n),
 		annexed: {},                              // tile -> playerId (occupation/diplomacy overrides)
 		occupation: {},                           // tile -> {by, turns} hostile occupation in progress
+		tributes: [],                             // ongoing per-turn payments (diplomacy)
+		offers: [],                               // pending deals awaiting the human player
 		wars: {},                                 // "a|b" -> turnsAtWar
 		log: [],
 		nextId: 1,
@@ -655,6 +657,9 @@ function endTurn() {
 
 	// 4. Trade (prices, routes, tolls, subsidies, knowledge, pirates)
 	tradeTurn();
+
+	// 4b. Diplomacy bookkeeping: tribute payments, offer expiry
+	diplomacyTurn();
 
 	// 5. Upkeep, healing, era, elimination
 	G.players.forEach(function (pl) {

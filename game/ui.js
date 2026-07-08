@@ -8,8 +8,17 @@ var UI = {
 	autoplayTimer: null,
 	humanId: function () { return GameConfig.setup.humanPlayer; },
 	isHumanCity: function (c) { return c && c.owner === GameConfig.setup.humanPlayer; },
-	roadTargetMode: null // city id when picking a road destination
+	roadTargetMode: null, // city id when picking a road destination
+	deal: null,           // deal being built in the Diplomacy tab
+	dealPick: null        // 'give'|'get' while picking tiles on the map
 };
+
+function uiResetDeal(partnerId) {
+	var h = UI.humanId();
+	UI.deal = makeDeal(h, partnerId);
+	if (h >= 0 && partnerId >= 0 && atWar(h, partnerId)) UI.deal.peace = true;
+	UI.dealPick = null;
+}
 
 function $id(x) { return document.getElementById(x); }
 function el(html) {
@@ -130,6 +139,23 @@ function toggleAutoplay() {
 function handleTileClick(t) {
 	var h = UI.humanId();
 
+	// diplomacy tile picking: toggle tiles in the offer
+	if (UI.tab === "diplo" && UI.dealPick && UI.deal) {
+		var side = UI.dealPick === "give" ? UI.deal.give : UI.deal.get;
+		var mustOwn = UI.dealPick === "give" ? h : UI.deal.to;
+		if (G.owner[t] === mustOwn && G.cityAt[t] < 0) {
+			var i = side.tiles.indexOf(t);
+			if (i >= 0) side.tiles.splice(i, 1); else side.tiles.push(t);
+			R.dirty = true;
+			refreshUI();
+		} else {
+			gameLog(UI.dealPick === "give" ? "You can only offer your own non-city tiles."
+				: "You can only request the partner's non-city tiles.");
+			refreshUI();
+		}
+		return;
+	}
+
 	// pending "new route" / "road to" target picks
 	if (R.routeCreateFrom !== null) {
 		var cid = G.cityAt[t];
@@ -188,10 +214,18 @@ function refreshUI() {
 	if (G.winner !== null) status += " — " + G.players[G.winner].name + " WINS";
 	$id("statusSpan").textContent = status;
 
+	// offer badge on the Diplomacy tab
+	var diploBtn = document.querySelector("#tabs button[data-tab=diplo]");
+	if (diploBtn) {
+		var n = G.offers.filter(function (o) { return o.deal.to === UI.humanId(); }).length;
+		diploBtn.textContent = n ? "Diplomacy (" + n + ")" : "Diplomacy";
+	}
+
 	var body = $id("tabBody");
 	if (UI.tab === "info") renderInfoTab();
 	else if (UI.tab === "city") renderCityTab();
 	else if (UI.tab === "players") renderPlayersTab();
+	else if (UI.tab === "diplo") renderDiploTab();
 	else if (UI.tab === "tuning") renderTuningTab();
 	else if (UI.tab === "log") {
 		body.innerHTML = "<div class='log'>" + G.log.slice().reverse().map(esc).join("<br>") + "</div>";
@@ -415,6 +449,140 @@ function renderPlayersTab() {
 		G.players.forEach(function (p) { p.isHuman = p.id === GameConfig.setup.humanPlayer; });
 		refreshUI();
 	};
+}
+
+// ---------------------------------------------------------------------------
+// Diplomacy tab: incoming offers, deal builder with map tile-picking, tribute
+// status, and relations overview.
+// ---------------------------------------------------------------------------
+
+function renderDiploTab() {
+	var body = $id("tabBody");
+	var h = UI.humanId();
+	var html = "";
+
+	if (h < 0) {
+		html += "<div class='hint'>Spectating — no diplomacy. Active tributes:</div>";
+		html += diploTributeList();
+		body.innerHTML = html;
+		return;
+	}
+	var me = G.players[h];
+
+	// --- incoming offers ---
+	var myOffers = G.offers.filter(function (o) { return o.deal.to === h; });
+	if (myOffers.length) {
+		html += "<h4>Incoming offers</h4>";
+		myOffers.forEach(function (o, i) {
+			var from = G.players[o.deal.from];
+			html += "<div class='offer'><span class='chip' style='background:" + from.color + "'></span><b>" +
+				esc(from.name) + "</b>: " + esc(dealSummary(o.deal)) +
+				(o.deal.threat ? " <span class='warn'>⚠ refusing may mean war</span>" : "") +
+				"<div><button class='sm offerAcc' data-i='" + i + "'>Accept</button> " +
+				"<button class='sm offerRej' data-i='" + i + "'>Reject</button></div></div>";
+		});
+	}
+
+	// --- partner picker ---
+	var partners = G.players.filter(function (p) { return p.alive && p.id !== h; });
+	if (!partners.length) { body.innerHTML = html + "<div class='hint'>No one left to talk to.</div>"; return; }
+	if (!UI.deal || UI.deal.from !== h || !G.players[UI.deal.to] || !G.players[UI.deal.to].alive ||
+		UI.deal.to === h) {
+		uiResetDeal(partners[0].id);
+	}
+	var partner = G.players[UI.deal.to];
+
+	html += "<h4>Negotiate</h4><label>with <select id='diploPartner'>";
+	partners.forEach(function (p) {
+		html += "<option value='" + p.id + "'" + (p.id === UI.deal.to ? " selected" : "") + ">" + esc(p.name) + "</option>";
+	});
+	html += "</select></label>";
+
+	var war = atWar(h, partner.id);
+	var myP = Math.round(playerPower(h)), thP = Math.round(playerPower(partner.id));
+	html += "<div class='sub'>" + (war ? "⚔ AT WAR" : "at peace") + " · power " + myP + " vs " + thP + "</div>";
+
+	// --- deal builder ---
+	html += "<div class='dealbox'><div class='dealcol'><b>You give</b>" + dealSideEditor("give", UI.deal.give) + "</div>" +
+		"<div class='dealcol'><b>You get</b>" + dealSideEditor("get", UI.deal.get) + "</div></div>";
+	if (war) html += "<label><input type='checkbox' id='dealPeace' " + (UI.deal.peace ? "checked" : "") + "> peace treaty</label>";
+	html += "<div><button id='dealPropose'>Propose deal</button> <button id='dealClear' class='sm'>Clear</button></div>";
+	if (UI.dealHint) html += "<div class='hint'>" + esc(UI.dealHint) + "</div>";
+
+	// --- tributes & wars ---
+	html += "<h4>Active tributes</h4>" + diploTributeList();
+
+	body.innerHTML = html;
+
+	// wire
+	var ps = $id("diploPartner");
+	if (ps) ps.onchange = function () { uiResetDeal(+this.value); UI.dealHint = null; R.dirty = true; refreshUI(); };
+	var pc = $id("dealPeace");
+	if (pc) pc.onchange = function () { UI.deal.peace = this.checked; };
+	body.querySelectorAll(".dealNum").forEach(function (inp) {
+		inp.onchange = function () {
+			var side = inp.dataset.side === "give" ? UI.deal.give : UI.deal.get;
+			side[inp.dataset.k] = Math.max(0, +inp.value || 0);
+		};
+	});
+	body.querySelectorAll(".pickBtn").forEach(function (b) {
+		b.onclick = function () {
+			UI.dealPick = UI.dealPick === b.dataset.side ? null : b.dataset.side;
+			refreshUI();
+		};
+	});
+	body.querySelectorAll(".clearTiles").forEach(function (b) {
+		b.onclick = function () {
+			(b.dataset.side === "give" ? UI.deal.give : UI.deal.get).tiles = [];
+			R.dirty = true; refreshUI();
+		};
+	});
+	var pd = $id("dealPropose");
+	if (pd) pd.onclick = function () {
+		if (atWar(h, UI.deal.to)) UI.deal.peace = true;
+		var res = proposeDeal(UI.deal);
+		if (res.status === "accepted") UI.dealHint = partner.name + " accepts!";
+		else if (res.status === "pending") UI.dealHint = "Offer delivered.";
+		else if (res.invalid) UI.dealHint = "Invalid deal (check tile ownership).";
+		else UI.dealHint = partner.name + " refuses — they'd want roughly " + Math.ceil(res.deficit) + "g more value.";
+		if (res.status !== "rejected") uiResetDeal(UI.deal.to);
+		R._fillsKey = ""; R.dirty = true;
+		refreshUI();
+	};
+	var dc = $id("dealClear");
+	if (dc) dc.onclick = function () { uiResetDeal(UI.deal.to); UI.dealHint = null; R.dirty = true; refreshUI(); };
+	body.querySelectorAll(".offerAcc, .offerRej").forEach(function (b) {
+		b.onclick = function () {
+			var offers = G.offers.filter(function (o) { return o.deal.to === h; });
+			var o = offers[+b.dataset.i];
+			if (o) resolveOffer(o, b.classList.contains("offerAcc"));
+			R._fillsKey = ""; R.dirty = true;
+			refreshUI();
+		};
+	});
+}
+
+function dealSideEditor(sideName, side) {
+	var picking = UI.dealPick === sideName;
+	var html = "<label class='dealrow'>gold <input class='dealNum' data-side='" + sideName +
+		"' data-k='gold' type='number' min='0' value='" + (side.gold || 0) + "'></label>";
+	html += "<label class='dealrow'>tribute/turn <input class='dealNum' data-side='" + sideName +
+		"' data-k='tributePerTurn' type='number' min='0' value='" + (side.tributePerTurn || 0) + "'></label>";
+	html += "<label class='dealrow'>for turns <input class='dealNum' data-side='" + sideName +
+		"' data-k='tributeTurns' type='number' min='0' value='" + (side.tributeTurns || 0) + "'></label>";
+	html += "<div class='dealrow'>tiles: " + side.tiles.length +
+		" <button class='sm pickBtn" + (picking ? " active" : "") + "' data-side='" + sideName + "'>" +
+		(picking ? "✓ picking… (click map)" : "pick on map") + "</button>" +
+		(side.tiles.length ? " <button class='sm clearTiles' data-side='" + sideName + "'>✕</button>" : "") + "</div>";
+	return html;
+}
+
+function diploTributeList() {
+	if (!G.tributes.length) return "<div class='hint'>none</div>";
+	return G.tributes.map(function (tr) {
+		return "<div class='sub'>" + esc(G.players[tr.from].name) + " → " + esc(G.players[tr.to].name) +
+			": " + tr.amount + "g/turn, " + tr.turnsLeft + " turns left</div>";
+	}).join("");
 }
 
 function renderTuningTab() {

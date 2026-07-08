@@ -57,6 +57,17 @@ label.slider { display: flex; align-items: center; gap: 6px; margin: 3px 0;
 label.slider input[type=range] { flex: 1; }
 label.slider span { min-width: 34px; text-align: right; }
 
+.offer { padding: 6px; margin: 4px 0; background: #1b2c40; border: 1px solid #35507a;
+	border-radius: 6px; }
+.warn { color: #ffb37f; font-size: 11.5px; }
+.dealbox { display: flex; gap: 8px; margin: 6px 0; }
+.dealcol { flex: 1; background: #14202e; border-radius: 6px; padding: 6px; }
+.dealrow { display: flex; align-items: center; gap: 4px; margin: 3px 0; font-size: 12px;
+	color: #b7c7da; }
+.dealrow input[type=number] { width: 58px; background: #223247; color: #dde5ee;
+	border: 1px solid #35507a; border-radius: 4px; padding: 2px 4px; font: inherit; }
+button.pickBtn.active { background: #3d6a3d; border-color: #62a662; }
+
 details { margin: 6px 0; }
 summary { cursor: pointer; color: #9fb6d0; }
 .log { font-size: 12px; color: #b7c7da; }

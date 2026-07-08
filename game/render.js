@@ -396,6 +396,11 @@ function drawCamps(ctx) {
 }
 
 function drawSelection(ctx) {
+	// deal-builder tile highlights (Diplomacy tab)
+	if (typeof UI !== "undefined" && UI.tab === "diplo" && UI.deal) {
+		UI.deal.give.tiles.forEach(function (t) { outlineTile(ctx, t, "#ff7d6b", 3); });
+		UI.deal.get.tiles.forEach(function (t) { outlineTile(ctx, t, "#7dff8a", 3); });
+	}
 	if (R.hoverTile >= 0) outlineTile(ctx, R.hoverTile, "rgba(255,255,255,0.5)", 1.5);
 	if (R.selectedTile >= 0) outlineTile(ctx, R.selectedTile, "#ffffff", 2);
 	if (R.selectedUnit) outlineTile(ctx, R.selectedUnit.tile, "#ffe97f", 2);

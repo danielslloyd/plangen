@@ -103,11 +103,19 @@ function aiTakeTurn(pl) {
 	if (!myCities.length && !myUnits.length) { pl.alive = false; return; }
 
 	aiWarPeace(pl, myCities, myUnits);
+	aiDiplomacy(pl);
 	aiMoveUnits(pl, myCities, myUnits);
 	aiProduction(pl, myCities, myUnits);
 	aiTradeRoutes(pl, myCities);
 	aiTollsAndSubsidies(pl, myCities);
 	aiBuildRoads(pl, myCities);
+}
+
+// Record a notable AI decision (goal) — picked up by the structured turn log.
+function aiLogGoal(pl, kind, text) {
+	if (!G) return;
+	G._aiGoals = G._aiGoals || [];
+	G._aiGoals.push({ turn: G.turn, player: pl.id, kind: kind, text: text });
 }
 
 function playerPower(pid) {
@@ -125,8 +133,8 @@ function aiWarPeace(pl, myCities, myUnits) {
 		if (other.id === pl.id || !other.alive) return;
 		var theirPower = playerPower(other.id);
 		if (atWar(pl.id, other.id)) {
-			// sue for peace when clearly losing
-			if (myPower < theirPower * 0.6 && G.rng() < 0.3) makePeace(pl.id, other.id);
+			// peace now comes through diplomacy (aiDiplomacy offers tribute),
+			// or the long-stalemate auto-peace in endTurn.
 			return;
 		}
 		// consider war: strong enough, aggressive enough, and borders near

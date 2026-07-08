@@ -29,6 +29,17 @@ var GameConfig = {
 		captureRazePop: 0.5      // pop fraction kept when captured
 	},
 
+	diplomacy: {
+		tileValueScale: 2.5,     // gold value multiplier for a ceded tile's yields
+		peaceBaseValue: 25,      // baseline value of peace to a war-weary side
+		tributeDiscount: 0.7,    // present value per gold of promised future tribute
+		acceptMarginBase: 1.1,   // AI accepts when value received >= given * margin
+		offerCooldown: 8,        // turns between AI offers to the same player
+		offerExpiry: 6,          // turns a pending offer stays on the table
+		demandChance: 0.05,      // per-turn chance an aggressive stronger AI demands tribute
+		threatWeight: 60         // value of avoiding war with a stronger power
+	},
+
 	territory: {
 		occupationTurnsToFlip: 4,   // turns a hostile unit must hold a tile to annex it
 		occupationDecay: 1          // occupation progress lost per turn unguarded
@@ -182,6 +193,13 @@ var CONFIG_SCHEMA = [
 	{ g: "City", p: "city.wallsDefenseBonus", min: 0, max: 2, step: 0.05 },
 	{ g: "City", p: "city.cityBaseStrength", min: 2, max: 30, step: 1 },
 	{ g: "City", p: "city.cityHealPerTurn", min: 0, max: 30, step: 1 },
+
+	{ g: "Diplomacy", p: "diplomacy.tileValueScale", min: 0.5, max: 10, step: 0.25 },
+	{ g: "Diplomacy", p: "diplomacy.peaceBaseValue", min: 0, max: 150, step: 5 },
+	{ g: "Diplomacy", p: "diplomacy.tributeDiscount", min: 0.1, max: 1, step: 0.05 },
+	{ g: "Diplomacy", p: "diplomacy.acceptMarginBase", min: 1, max: 2, step: 0.05 },
+	{ g: "Diplomacy", p: "diplomacy.demandChance", min: 0, max: 0.3, step: 0.01 },
+	{ g: "Diplomacy", p: "diplomacy.threatWeight", min: 0, max: 200, step: 5 },
 
 	{ g: "Territory", p: "territory.occupationTurnsToFlip", min: 1, max: 15, step: 1 },
 	{ g: "Territory", p: "territory.occupationDecay", min: 0, max: 5, step: 1 },
