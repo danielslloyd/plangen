@@ -29,6 +29,11 @@ var GameConfig = {
 		captureRazePop: 0.5      // pop fraction kept when captured
 	},
 
+	territory: {
+		occupationTurnsToFlip: 4,   // turns a hostile unit must hold a tile to annex it
+		occupationDecay: 1          // occupation progress lost per turn unguarded
+	},
+
 	yields: {
 		foodPerCalorie: 3.0,     // food yield multiplier on tile 'calories' (0..~1300 scaled)
 		prodTimber: 3.0,         // production per timber suitability
@@ -177,6 +182,9 @@ var CONFIG_SCHEMA = [
 	{ g: "City", p: "city.wallsDefenseBonus", min: 0, max: 2, step: 0.05 },
 	{ g: "City", p: "city.cityBaseStrength", min: 2, max: 30, step: 1 },
 	{ g: "City", p: "city.cityHealPerTurn", min: 0, max: 30, step: 1 },
+
+	{ g: "Territory", p: "territory.occupationTurnsToFlip", min: 1, max: 15, step: 1 },
+	{ g: "Territory", p: "territory.occupationDecay", min: 0, max: 5, step: 1 },
 
 	{ g: "Yields", p: "yields.foodPerCalorie", min: 0.5, max: 8, step: 0.1 },
 	{ g: "Yields", p: "yields.prodTimber", min: 0, max: 8, step: 0.1 },

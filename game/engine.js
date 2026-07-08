@@ -58,6 +58,8 @@ function newGame(seed) {
 		campAt: new Int16Array(M.n).fill(-1),
 		roads: new Uint8Array(M.nEdges),          // 0 none, 1 road, 2 road+bridge
 		traffic: new Float32Array(M.n),
+		annexed: {},                              // tile -> playerId (occupation/diplomacy overrides)
+		occupation: {},                           // tile -> {by, turns} hostile occupation in progress
 		wars: {},                                 // "a|b" -> turnsAtWar
 		log: [],
 		nextId: 1,
@@ -234,10 +236,62 @@ function recomputeTerritory() {
 			q.push(t);
 		}
 	}
+	// Annexation overrides (occupation flips, ceded territory): the tile belongs
+	// to the annexing player and is administered by their nearest city.
+	Object.keys(G.annexed).forEach(function (key) {
+		var t = +key, pid = G.annexed[key];
+		var pl = G.players[pid];
+		var myCities = G.cities.filter(function (c) { return c.owner === pid; });
+		if (!pl || !pl.alive || !myCities.length) { delete G.annexed[key]; return; }
+		if (G.owner[t] === pid) { delete G.annexed[key]; return; } // natural claim now
+		var bestC = myCities[0], bestD = Infinity;
+		myCities.forEach(function (c) {
+			var d = M.distTiles(t, c.tile);
+			if (d < bestD) { bestD = d; bestC = c; }
+		});
+		G.owner[t] = pid;
+		G.ownerCity[t] = bestC.id;
+	});
 	G.cities.forEach(function (c) { c.territory = []; });
 	for (var t2 = 0; t2 < M.n; t2++) {
 		if (G.ownerCity[t2] >= 0) G.cities[G.ownerCity[t2]].territory.push(t2);
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Occupation: hostile combat units standing on enemy land slowly annex it.
+// Progress decays when unguarded. City tiles flip only via capture.
+// ---------------------------------------------------------------------------
+
+function occupationTurn() {
+	var C = GameConfig.territory;
+	var held = {};
+	var flipped = false;
+	G.units.forEach(function (u) {
+		if (!UNIT_TYPES[u.type].combat) return;
+		var t = u.tile;
+		var ow = G.owner[t];
+		if (ow < 0 || ow === u.owner || !atWar(u.owner, ow)) return;
+		if (G.cityAt[t] >= 0) return;
+		if (held[t]) return; // one unit per tile counts
+		held[t] = true;
+		var oc = G.occupation[t];
+		if (!oc || oc.by !== u.owner) oc = G.occupation[t] = { by: u.owner, turns: 0 };
+		oc.turns++;
+		if (oc.turns >= C.occupationTurnsToFlip) {
+			G.annexed[t] = u.owner;
+			delete G.occupation[t];
+			gameLog(G.players[u.owner].name + " annexes a tile from " + G.players[ow].name);
+			flipped = true;
+		}
+	});
+	Object.keys(G.occupation).forEach(function (t) {
+		if (held[t]) return;
+		var oc = G.occupation[t];
+		oc.turns -= C.occupationDecay;
+		if (oc.turns <= 0) delete G.occupation[t];
+	});
+	if (flipped) recomputeTerritory();
 }
 
 // Food value of a tile for a given player: best food commodity they know how
@@ -591,15 +645,18 @@ function endTurn() {
 		if (pl.alive && !pl.isHuman) aiTakeTurn(pl);
 	});
 
-	// 2. Economy
+	// 2. Occupation: hostile units annex the ground they hold
+	occupationTurn();
+
+	// 3. Economy
 	G.cities.forEach(function (city) {
 		if (G.players[city.owner].alive) cityEconomyTurn(city);
 	});
 
-	// 3. Trade (prices, routes, tolls, subsidies, knowledge, pirates)
+	// 4. Trade (prices, routes, tolls, subsidies, knowledge, pirates)
 	tradeTurn();
 
-	// 4. Upkeep, healing, era, elimination
+	// 5. Upkeep, healing, era, elimination
 	G.players.forEach(function (pl) {
 		if (!pl.alive) return;
 		var myUnits = G.units.filter(function (u) { return u.owner === pl.id; });

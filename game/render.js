@@ -172,6 +172,7 @@ function draw() {
 
 	if (G) {
 		drawTerritoryBorders(ctx);
+		if (R.overlay === "political") drawContestedTiles(ctx);
 		drawRivers(ctx);
 		drawRoads(ctx);
 		if (R.showRoutes) drawRoutes(ctx);
@@ -230,6 +231,45 @@ function drawTerritoryBorders(ctx) {
 			ctx.setLineDash([]);
 		}
 	}
+}
+
+// Contested tiles (hostile occupation in progress) get fat diagonal hatching
+// in the occupier's color; stripes densify as the flip approaches.
+function drawContestedTiles(ctx) {
+	var keys = Object.keys(G.occupation);
+	if (!keys.length) return;
+	var need = GameConfig.territory.occupationTurnsToFlip;
+	keys.forEach(function (key) {
+		var t = +key, oc = G.occupation[key];
+		var lat = M.latLon[t * 2], lonC = M.latLon[t * 2 + 1];
+		var d = wrapLon(lonC - R.view.lonC);
+		var poly = M.polys[t];
+		// polygon path + screen bounds
+		var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+		ctx.save();
+		ctx.beginPath();
+		for (var k = 0; k < poly.length; k++) {
+			var x = projX(d + (poly[k][0] - lonC)), y = projY(poly[k][1]);
+			if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+			if (x < minX) minX = x; if (x > maxX) maxX = x;
+			if (y < minY) minY = y; if (y > maxY) maxY = y;
+		}
+		ctx.closePath();
+		if (maxX < 0 || minX > R.canvas.width || maxY < 0 || minY > R.canvas.height) { ctx.restore(); return; }
+		ctx.clip();
+		var prog = Math.min(1, oc.turns / need);
+		ctx.strokeStyle = G.players[oc.by].color;
+		ctx.globalAlpha = 0.55 + 0.4 * prog;
+		ctx.lineWidth = Math.max(2.5, R.view.scale * 0.32);
+		var gap = Math.max(6, R.view.scale * (1.6 - 0.8 * prog));
+		ctx.beginPath();
+		for (var s = minX - (maxY - minY); s < maxX; s += gap) {
+			ctx.moveTo(s, maxY);
+			ctx.lineTo(s + (maxY - minY), minY);
+		}
+		ctx.stroke();
+		ctx.restore();
+	});
 }
 
 function drawRivers(ctx) {

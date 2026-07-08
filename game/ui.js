@@ -222,6 +222,12 @@ function renderInfoTab() {
 		html += row("temp / moist", fmtNum(M.layer("temperature")[t], 2) + " / " + fmtNum(M.layer("moisture")[t], 2));
 		var ow = G.owner[t];
 		html += row("owner", ow >= 0 ? esc(G.players[ow].name) : "—");
+		if (G.occupation[t]) {
+			var oc = G.occupation[t];
+			html += row("⚠ contested", esc(G.players[oc.by].name) + " occupying (" + oc.turns + "/" +
+				GameConfig.territory.occupationTurnsToFlip + ")");
+		}
+		if (G.annexed[t] !== undefined) html += row("annexed", "yes (by " + esc(G.players[G.annexed[t]].name) + ")");
 		html += row("province", M.layer("province")[t] || "—");
 		COMMODITIES.forEach(function (cm) {
 			var v = M.layer(cm.layer)[t];
