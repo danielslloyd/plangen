@@ -227,9 +227,7 @@ function refreshUI() {
 	else if (UI.tab === "players") renderPlayersTab();
 	else if (UI.tab === "diplo") renderDiploTab();
 	else if (UI.tab === "tuning") renderTuningTab();
-	else if (UI.tab === "log") {
-		body.innerHTML = "<div class='log'>" + G.log.slice().reverse().map(esc).join("<br>") + "</div>";
-	}
+	else if (UI.tab === "log") renderLogTab();
 }
 
 function fmtNum(v, d) { return (+v).toFixed(d === undefined ? 1 : d); }
@@ -583,6 +581,30 @@ function diploTributeList() {
 		return "<div class='sub'>" + esc(G.players[tr.from].name) + " → " + esc(G.players[tr.to].name) +
 			": " + tr.amount + "g/turn, " + tr.turnsLeft + " turns left</div>";
 	}).join("");
+}
+
+function renderLogTab() {
+	var body = $id("tabBody");
+	var html = "<div><button id='dlLogBtn' class='sm'>⬇ Download game log (JSON)</button> " +
+		"<span class='sub'>" + (G.replay ? G.replay.turns.length : 0) + " turns recorded</span></div>";
+
+	// recent AI goals, newest turn first
+	if (G.replay && G.replay.turns.length) {
+		html += "<h4>AI goals (recent turns)</h4>";
+		G.replay.turns.slice(-3).reverse().forEach(function (entry) {
+			if (!entry.goals.length) return;
+			html += "<div class='sub'><b>Turn " + entry.turn + "</b></div>";
+			entry.goals.forEach(function (g) {
+				var pl = G.players[g.player];
+				html += "<div class='goal'><span class='chip' style='background:" + pl.color + "'></span>" +
+					"<span class='goalkind'>" + esc(g.kind) + "</span> " + esc(g.text) + "</div>";
+			});
+		});
+	}
+
+	html += "<h4>Events</h4><div class='log'>" + G.log.slice().reverse().map(esc).join("<br>") + "</div>";
+	body.innerHTML = html;
+	$id("dlLogBtn").onclick = downloadGameLog;
 }
 
 function renderTuningTab() {

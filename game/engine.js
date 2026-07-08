@@ -87,6 +87,7 @@ function newGame(seed) {
 		});
 	}
 
+	initReplay();
 	placeStartingPositions(rng);
 	G.players.forEach(function (pl) { initNativeKnowledge(pl); });
 	recomputeTerritory();
@@ -97,6 +98,7 @@ function newGame(seed) {
 function gameLog(msg) {
 	G.log.push("[T" + G.turn + "] " + msg);
 	if (G.log.length > GameConfig.ui.logLength) G.log.shift();
+	if (G._turnEvents) G._turnEvents.push(msg); // structured replay log
 }
 
 function warKey(a, b) { return Math.min(a, b) + "|" + Math.max(a, b); }
@@ -694,6 +696,7 @@ function endTurn() {
 	});
 
 	checkVictory();
+	recordTurnLog();
 }
 
 function computeScore(pl) {

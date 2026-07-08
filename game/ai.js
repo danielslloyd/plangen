@@ -111,11 +111,12 @@ function aiTakeTurn(pl) {
 	aiBuildRoads(pl, myCities);
 }
 
-// Record a notable AI decision (goal) — picked up by the structured turn log.
-function aiLogGoal(pl, kind, text) {
+// Record a notable AI decision (goal) — picked up by the structured turn log
+// (gamelog.js). `data` is optional machine-readable detail for AI tuning.
+function aiLogGoal(pl, kind, text, data) {
 	if (!G) return;
 	G._aiGoals = G._aiGoals || [];
-	G._aiGoals.push({ turn: G.turn, player: pl.id, kind: kind, text: text });
+	G._aiGoals.push({ turn: G.turn, player: pl.id, kind: kind, text: text, data: data || null });
 }
 
 function playerPower(pid) {
@@ -142,7 +143,11 @@ function aiWarPeace(pl, myCities, myUnits) {
 			var near = G.cities.some(function (c) {
 				return c.owner === other.id && myCities.some(function (mc) { return M.distTiles(mc.tile, c.tile) < 14; });
 			});
-			if (near) declareWar(pl.id, other.id);
+			if (near) {
+				declareWar(pl.id, other.id);
+				aiLogGoal(pl, "war", "declared war on " + other.name,
+					{ target: other.id, myPower: Math.round(myPower), theirPower: Math.round(theirPower) });
+			}
 		}
 	});
 }
@@ -159,9 +164,12 @@ function aiMoveUnits(pl, myCities, myUnits) {
 	var enemies = G.players.filter(function (o) { return o.alive && atWar(pl.id, o.id); });
 	var enemyCities = G.cities.filter(function (c) { return enemies.some(function (e) { return e.id === c.owner; }); });
 
+	var missions = { settle: 0, clearCamps: 0, attack: 0, garrison: 0 };
+
 	myUnits.forEach(function (u) {
 		if (u.type === "settler") {
 			var target = aiBestSettleSite(pl, u);
+			missions.settle++;
 			if (target === u.tile) {
 				foundCity(pl.id, u.tile, u);
 			} else if (target >= 0) {
@@ -177,13 +185,14 @@ function aiMoveUnits(pl, myCities, myUnits) {
 			var camp = problemCamps.reduce(function (best, c) {
 				return M.distTiles(u.tile, c.tile) < M.distTiles(u.tile, best.tile) ? c : best;
 			});
-			if (M.distTiles(u.tile, camp.tile) < 16) { moveUnitTowards(u, camp.tile); return; }
+			if (M.distTiles(u.tile, camp.tile) < 16) { missions.clearCamps++; moveUnitTowards(u, camp.tile); return; }
 		}
 		// 2. war: attack nearest enemy city / defend
 		if (enemyCities.length) {
 			var tgt = enemyCities.reduce(function (best, c) {
 				return M.distTiles(u.tile, c.tile) < M.distTiles(u.tile, best.tile) ? c : best;
 			});
+			missions.attack++;
 			moveUnitTowards(u, tgt.tile);
 			return;
 		}
@@ -191,8 +200,17 @@ function aiMoveUnits(pl, myCities, myUnits) {
 		var open = myCities.filter(function (c) {
 			return !unitsAt(c.tile).some(function (x) { return x.owner === pl.id && UNIT_TYPES[x.type].combat; });
 		});
-		if (open.length && u.tile !== open[0].tile) moveUnitTowards(u, open[0].tile);
+		if (open.length && u.tile !== open[0].tile) { missions.garrison++; moveUnitTowards(u, open[0].tile); }
 	});
+
+	if (missions.settle + missions.clearCamps + missions.attack + missions.garrison > 0) {
+		var parts = [];
+		if (missions.settle) parts.push(missions.settle + " settling");
+		if (missions.clearCamps) parts.push(missions.clearCamps + " clearing camps");
+		if (missions.attack) parts.push(missions.attack + " attacking");
+		if (missions.garrison) parts.push(missions.garrison + " garrisoning");
+		aiLogGoal(pl, "movement", parts.join(", "), missions);
+	}
 }
 
 function aiBestSettleSite(pl, settler) {
@@ -215,23 +233,32 @@ function aiProduction(pl, myCities, myUnits) {
 	var wantSettler = settlers === 0 && myCities.length < 2 + a.expansion * 6 &&
 		myUnits.length < GameConfig.units.maxUnitsPerPlayer;
 
+	var queued = [];
+
 	myCities.forEach(function (city) {
 		if (city.producing) return;
 		var avail = availableProduction(city);
 		var atWarNow = Object.keys(G.wars).some(function (k) { return k.split("|").indexOf("" + pl.id) >= 0; });
 
-		if (wantSettler && avail.indexOf("settler") >= 0 && city.pop >= 2) { city.producing = "settler"; wantSettler = false; return; }
+		function setProd(item) { city.producing = item; queued.push(city.name + ":" + item); }
+
+		if (wantSettler && avail.indexOf("settler") >= 0 && city.pop >= 2) { setProd("settler"); wantSettler = false; return; }
 		if (soldiers < wantSoldiers && myUnits.length < GameConfig.units.maxUnitsPerPlayer) {
-			city.producing = (pl.era >= 1 && avail.indexOf("legion") >= 0) ? "legion" : "militia";
+			setProd((pl.era >= 1 && avail.indexOf("legion") >= 0) ? "legion" : "militia");
 			soldiers++;
 			return;
 		}
-		if (atWarNow && !city.buildings.walls) { city.producing = "walls"; return; }
-		if (a.trade > 0.4 && !city.buildings.market) { city.producing = "market"; return; }
-		if (!city.buildings.granary && city.pop >= 4) { city.producing = "granary"; return; }
-		if (!city.buildings.walls && a.military > 0.5) { city.producing = "walls"; return; }
+		if (atWarNow && !city.buildings.walls) { setProd("walls"); return; }
+		if (a.trade > 0.4 && !city.buildings.market) { setProd("market"); return; }
+		if (!city.buildings.granary && city.pop >= 4) { setProd("granary"); return; }
+		if (!city.buildings.walls && a.military > 0.5) { setProd("walls"); return; }
 		// nothing pressing: idle (production converts to gold)
 	});
+
+	aiLogGoal(pl, "production",
+		"soldiers " + soldiers + "/" + wantSoldiers + (wantSettler ? ", wants settler" : "") +
+		(queued.length ? " — queued " + queued.join(", ") : " — nothing queued"),
+		{ soldiers: soldiers, wantSoldiers: wantSoldiers, settlers: settlers, wantSettler: wantSettler, queued: queued });
 }
 
 function aiTradeRoutes(pl, myCities) {
@@ -271,7 +298,11 @@ function aiTradeRoutes(pl, myCities) {
 				var best = -Infinity;
 				COMMODITIES.forEach(function (cm) { best = Math.max(best, routeMargin(r, cm.id)); });
 				if (best < GameConfig.trade.minRouteMargin * a.trade) removeRoute(r);
-				else break;
+				else {
+					aiLogGoal(pl, "trade", "opened route " + city.name + " → " + G.cities[candidates[i].c.id].name,
+						{ from: city.id, to: candidates[i].c.id, margin: best });
+					break;
+				}
 			}
 		}
 	});
@@ -295,7 +326,11 @@ function aiTollsAndSubsidies(pl, myCities) {
 				if (cm.demandGroup !== "food") return;
 				if ((city.prices[cm.id] || 0) > bestPrice) { bestPrice = city.prices[cm.id]; best = cm.id; }
 			});
-			if (best) city.subsidies[best] = a.subsidyBias * T.subsidyMax * 0.6;
+			if (best) {
+				city.subsidies[best] = a.subsidyBias * T.subsidyMax * 0.6;
+				aiLogGoal(pl, "famine", city.name + " is short on food — subsidizing " + best,
+					{ city: city.id, commodity: best });
+			}
 		}
 		// learning: subsidize an unknown crop to attract imports (tech via trade)
 		if (city.id === pl.capital) {
