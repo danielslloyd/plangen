@@ -2,6 +2,22 @@
 
 > Deep-dive doc. CLAUDE.md links here. Newest first.
 
+- **Game prototype: eras, supply, diplomacy, occupation, turn log** (all in
+  `game/`, see `game/README.md`): (1) three combat eras — Classical →
+  Napoleonic → WW2 — with a full land/sea/air roster (per-type stats in
+  `GameConfig.units.stats`, slider-tunable); (2) **supply lines**: food every
+  turn, ammo per attack, fuel per movement, delivered from the nearest
+  friendly city at a per-hop cost, with attrition/strength/movement penalties
+  out of range; (3) **naval** bombardment (land forces capture) and **air**
+  units based at cities flying ranged strike missions with interception and
+  flak; (4) **diplomacy**: two-sided deals (gold, tile-by-tile territory via
+  map picker, per-turn tribute, peace), AI valuation with counter-offer
+  hints, AI-initiated tribute-for-peace and extortion-under-threat; (5)
+  **occupation**: hostile units annex tiles after N turns, contested tiles
+  hatch-rendered on the political map; (6) **structured turn log** with AI
+  goals/priorities, downloadable JSON for AI tuning; (7) UI: player strip,
+  event toasts, Diplomacy tab, richer status bar.
+
 - **Game map export + civ-style game prototype**: new `plangen-game-map`
   format (`docs/game-export-format.md`) with locked tile/edge geometry and
   extensible struct-of-arrays layers (terrain, food, minerals, strategic

@@ -13,19 +13,65 @@ use **Load map** to open any other exported game map (PlanGen → Save/Load pane
 
 ## The game
 
-- **Turns**: all AI players act, then economy, then trade. `End Turn` or
-  `Autoplay` (speed selector). Default: you are Player 1; pick "spectate" in
-  the Players tab to watch AIs only.
+- **Turns**: all AI players act, then occupation, economy, trade, diplomacy.
+  `End Turn` or `Autoplay` (speed selector). Default: you are Player 1; pick
+  "spectate" in the Players tab to watch AIs only.
 - **Cities** claim territory (radius tunable), work their best tiles
   (pop × tilesPerPop), grow on food surplus, and produce units/buildings.
   A city **fortifies every edge of its tile** — any attack into the city tile
   crosses a fortified edge and suffers the fortify (+walls) defense bonus.
+- **Occupation**: hostile combat units standing on enemy land accumulate
+  occupation each turn; after `territory.occupationTurnsToFlip` turns the tile
+  is annexed. In-progress occupation renders as **fat hatching** on the
+  political overlay (denser as the flip nears); unguarded progress decays.
 - **Roads & bridges** are built with gold on edges; edges flagged `riverCross`
   in the map need a (more expensive) bridge. Roads cut movement cost and make
   trade routes cheaper.
-- **Eras**: science accumulates → Ancient → Classical (unlocks Legions) →
-  Imperial. Combat becomes decisive as eras advance.
+- **Eras**: science accumulates → **Classical → Napoleonic → WW2**. Each era
+  brings a stronger unit roster and heavier logistics (see Supply).
 - **Victory**: last player standing, or highest score at the turn limit.
+
+## Combat, eras & supply
+
+- **Classical**: militia, legions, triremes — armies need **food**.
+- **Napoleonic**: line infantry, cavalry, frigates — food **+ ammunition**.
+- **WW2**: infantry, armor, destroyers, fighters, bombers — food + ammo
+  **+ fuel**. Obsolete designs (two eras back) leave production.
+- **Supply lines**: every unit draws its needs from the nearest friendly city
+  via a supply line that cannot cross enemy territory. Food is consumed every
+  turn, ammo per attack, fuel per movement; delivery cost rises per hop
+  (`supply.perHop`), so deep offensives are expensive. Units beyond
+  `supply.maxRange` starve: attrition each turn, an ammo strength penalty and
+  a fuel movement penalty. Unsupplied units show a red **!**; the Info panel
+  shows the supply state and line length.
+- **Naval**: ships path over water from coastal cities, hunt enemy fleets and
+  bombard coastal cities/camps — but only land forces can capture a city.
+- **Air**: fighters/bombers are **based at cities** and fly one mission per
+  turn within a strike range (dashed ring when selected): strikes suffer flak
+  and possible fighter interception; bombers hit cities hardest. Click a
+  friendly city to rebase; losing the base scrambles or destroys the wing.
+
+## Diplomacy
+
+- The Diplomacy tab builds two-sided deals: **gold**, **tile-by-tile
+  territory** (pick tiles on the map — red = you give, green = you get),
+  **tribute** (gold per turn for N turns) and **peace**. Warring players can
+  only talk peace.
+- AIs value deals with their own personality and geography, accept above a
+  margin, and rejections come with a "they'd want ~Xg more" hint for
+  counter-offers. Losing/war-weary AIs proactively buy peace with tribute;
+  aggressive stronger AIs **extort tribute under threat of war** — refusing
+  may start one. Incoming offers queue on the tab (badge) and expire.
+- Tributes pay out each turn and are cancelled by war between the parties.
+
+## Turn log (for AI tuning)
+
+Every game records a structured replay: personalities and config at start,
+then per-turn player snapshots (gold, science, era, score, power, cities,
+pop, tiles, units, routes, knowledge), every **AI goal** (war declarations,
+unit missions, production wants, trade routes, famine subsidies, diplomacy)
+with machine-readable data, and the turn's events. The Log tab shows recent
+goals and downloads the whole thing as JSON (~2KB/turn).
 
 ## Trade (the core loop)
 
@@ -71,17 +117,20 @@ use **Load map** to open any other exported game map (PlanGen → Save/Load pane
 |---|---|
 | `config.js` | GameConfig + COMMODITIES + tuning schema |
 | `mapdata.js` | map decoding, derived geometry, shared Dijkstra |
-| `engine.js` | state, cities, yields, movement, combat, eras, turn driver |
+| `engine.js` | state, cities, yields, movement domains, combat, supply, eras, occupation, turn driver |
 | `trade.js` | prices, routes, tolls, subsidies, knowledge spread, camps |
-| `ai.js` | personalities, site scoring, per-turn decisions |
-| `render.js` | canvas map, overlays (terrain/political/food/strategic/prices/traffic) |
-| `ui.js` | panels, tabs, interactions |
+| `diplomacy.js` | deals, valuation, tribute, AI peace/extortion |
+| `gamelog.js` | structured replay log + JSON export |
+| `ai.js` | personalities, site scoring, per-turn decisions, naval/air missions |
+| `render.js` | canvas map, overlays, contested hatching, deal highlights |
+| `ui.js` | panels, tabs, diplomacy builder, player strip, toasts |
 | `main.js` | bootstrap |
 
 ## Known prototype simplifications
 
-- Land-only military (no navies); trade is amphibious.
-- One melee unit line; no ranged/siege.
+- No troop transports: land units can't cross water (trade is amphibious).
+- Air units have no fuel-range escort model; interception is probabilistic.
 - Cities all-capture on HP 0 (no razing choice).
 - Prices are flow-based (no warehousing/stockpiles).
 - Wars auto-peace after 40 turns of stalemate.
+- City tiles can't be traded in deals (capture only).
