@@ -117,6 +117,57 @@ function doEndTurn() {
 	endTurn();
 	R._fillsKey = ""; R.dirty = true;
 	refreshUI();
+	showTurnToasts();
+}
+
+// ---------------------------------------------------------------------------
+// Player strip & toast notifications
+// ---------------------------------------------------------------------------
+
+function renderPlayerStrip() {
+	var strip = $id("playerStrip");
+	if (!strip) return;
+	var html = "";
+	G.players.forEach(function (pl) {
+		var wars = G.players.filter(function (o) { return o.id !== pl.id && atWar(pl.id, o.id); });
+		var cities = G.cities.filter(function (c) { return c.owner === pl.id; }).length;
+		html += "<div class='pchip" + (pl.alive ? "" : " dead") + "' data-p='" + pl.id + "' title='" +
+			esc(pl.name) + " — " + ERA_NAMES[pl.era] + ", score " + pl.score +
+			(wars.length ? ", at war with " + wars.map(function (w) { return w.name; }).join(", ") : "") + "'>" +
+			"<span class='chip' style='background:" + pl.color + "'></span>" +
+			esc(pl.name) + (pl.id === UI.humanId() ? " 👤" : "") +
+			" <span class='sub'>" + cities + "🏛 " + pl.score + "pt" + (wars.length ? " ⚔" : "") + "</span></div>";
+	});
+	strip.innerHTML = html;
+	strip.querySelectorAll(".pchip").forEach(function (d) {
+		d.onclick = function () {
+			var pl = G.players[+d.dataset.p];
+			var cap = G.cities[pl.capital];
+			if (cap) {
+				R.view.lonC = M.latLon[cap.tile * 2 + 1];
+				R.view.latC = M.latLon[cap.tile * 2];
+				R.dirty = true;
+			}
+		};
+	});
+}
+
+var TOAST_PATTERN = /declares war|captures|eliminated|enters the|Deal agreed|offers a deal|wins|annexes a tile|Tribute .* cancelled|starves \(out of supply\)/;
+
+function showTurnToasts() {
+	var wrap = $id("toasts");
+	if (!wrap || !G.replay || !G.replay.turns.length) return;
+	var entry = G.replay.turns[G.replay.turns.length - 1];
+	entry.events.filter(function (ev) { return TOAST_PATTERN.test(ev); }).slice(-4).forEach(function (ev) {
+		var d = document.createElement("div");
+		d.className = "toast";
+		d.textContent = ev;
+		wrap.appendChild(d);
+		setTimeout(function () { d.classList.add("fade"); }, 3500);
+		setTimeout(function () { d.remove(); }, 4300);
+	});
+	// cap the stack
+	while (wrap.children.length > 6) wrap.firstChild.remove();
 }
 
 function toggleAutoplay() {
@@ -230,8 +281,14 @@ function handleTileClick(t) {
 function refreshUI() {
 	if (!G) return;
 	var status = "Turn " + G.turn;
+	var h = UI.humanId();
+	if (h >= 0 && G.players[h]) {
+		var me = G.players[h];
+		status += " · " + ERA_NAMES[me.era] + " · 💰" + Math.round(me.gold) + " · 🔬" + Math.round(me.science);
+	}
 	if (G.winner !== null) status += " — " + G.players[G.winner].name + " WINS";
 	$id("statusSpan").textContent = status;
+	renderPlayerStrip();
 
 	// offer badge on the Diplomacy tab
 	var diploBtn = document.querySelector("#tabs button[data-tab=diplo]");

@@ -1,6 +1,13 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: #0b1520; color: #dde5ee;
 	font: 13px/1.45 system-ui, sans-serif; }
+body { display: flex; flex-direction: column; }
+#topbar, #playerStrip { flex-shrink: 0; }
+
+::-webkit-scrollbar { width: 9px; }
+::-webkit-scrollbar-track { background: #101c2a; }
+::-webkit-scrollbar-thumb { background: #2b405c; border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: #35507a; }
 
 #topbar { display: flex; align-items: center; gap: 8px; padding: 6px 10px;
 	background: #14202e; border-bottom: 1px solid #253549; flex-wrap: wrap; }
@@ -11,6 +18,8 @@ button, select, input[type=text], input:not([type]) {
 	background: #223247; color: #dde5ee; border: 1px solid #35507a;
 	border-radius: 4px; padding: 4px 9px; font: inherit; cursor: pointer; }
 button:hover { background: #2c4260; }
+#endTurnBtn { background: #2c5a35; border-color: #4a8a58; font-weight: 600; }
+#endTurnBtn:hover { background: #367042; }
 button:disabled { opacity: 0.4; cursor: default; }
 button.sm { padding: 1px 6px; font-size: 11px; }
 .filebtn { position: relative; overflow: hidden; display: inline-block;
@@ -18,7 +27,24 @@ button.sm { padding: 1px 6px; font-size: 11px; }
 	padding: 4px 9px; cursor: pointer; }
 .filebtn input { position: absolute; left: 0; top: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
 
-#content { display: flex; height: calc(100% - 41px); }
+#playerStrip { display: flex; gap: 6px; padding: 4px 10px; background: #0f1926;
+	border-bottom: 1px solid #1d2c3f; flex-wrap: wrap; }
+.pchip { display: flex; align-items: center; gap: 4px; padding: 2px 8px;
+	background: #16233310; border: 1px solid #24374e; border-radius: 12px;
+	font-size: 11.5px; cursor: pointer; transition: background 0.15s; }
+.pchip:hover { background: #1d3450; }
+.pchip.dead { opacity: 0.4; text-decoration: line-through; }
+
+#toasts { position: absolute; left: 12px; bottom: 12px; z-index: 5;
+	display: flex; flex-direction: column; gap: 5px; pointer-events: none;
+	max-width: 46%; }
+.toast { background: rgba(16,28,42,0.92); border: 1px solid #35507a;
+	border-left: 3px solid #6fa8ff; border-radius: 5px; padding: 5px 10px;
+	font-size: 12px; color: #dde5ee; box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+	opacity: 1; transition: opacity 0.8s; }
+.toast.fade { opacity: 0; }
+
+#content { display: flex; flex: 1; min-height: 0; }
 #mapWrap { flex: 1; position: relative; }
 #mapCanvas { display: block; cursor: crosshair; }
 #sidebar { width: 340px; display: flex; flex-direction: column;
