@@ -2,105 +2,18 @@
 
 > Deep-dive doc. CLAUDE.md links here. Newest first.
 
-- **Pointier mountains + "Labels" overlay**: (1) *Elevation* — new
-  `peakSharpness` global (default 2.5) applied in
-  `reshapeElevationDistribution` (`elevation-generation.js`): each land tile's
-  rank percentile is raised to this power *before* the exponential reshaping
-  curve, so the bulk of land is pushed into the flat lowland band and only the
-  top few percent reach the steep top of the curve. Mountains become pointy
-  spikes instead of broad high plateaus; `peakSharpness = 1` reproduces the old
-  distribution. (2) *Labels overlay* (`feature-labels.js`, new): a selectable
-  overlay "Labels (named features)" that keeps the terrain colouring and floats a
-  procedurally-named label over every major feature. Feature sources are
-  independent of the active colour overlay: **Approach N** land/water features
-  (`featureDetectionData().featuresByApproach.N`), mountain/hill ranges
-  (`computeMountainRanges` → `tile._rangeId`), and rivers (traced upstream along
-  `tile.drain`/`tile.sources`, longest stem per system). Each label is built as
-  real 3D geometry — one textured quad per glyph laid flat in the surface's
-  tangent plane — so on the globe the text floats above the terrain as scene
-  objects (occluded by mountains in front) and **bends along the feature's spine**
-  (rivers/ranges/peninsulas). Glyph size scales with feature size; names are
-  deterministic per feature id (avalanche-mixed seed). Mercator draws the labels
-  flat at z=0.6, replicated across the 3 wrap copies. Rebuilt from
-  `setSurfaceRenderMode` and both projection-switch paths, next to
-  `rebuildFeatureRoots`. Polishing: text is kept **upright** (the reading
-  direction is flipped when the bitangent would point away from planet-north);
-  each spine is **smoothed to a minimum radius of curvature** (`smoothSpine`
-  iterates until no segment bends > ~31°) so text never kinks; and a per-frame
-  **screen-space cull** (`updateFeatureLabelVisibility`, called from `render()`)
-  hides labels that overlap or that stack up when the Mercator map is zoomed out
-  — largest-priority features (rivers boosted) win, back-of-globe and off-screen
-  labels are dropped.
-
-- **Generation performance pass**: (1) *Scheduler* — `SteppedAction` now yields via
-  `MessageChannel` instead of `setTimeout(0)` (clamped to ~4ms foreground, throttled
-  to >=1s in background tabs → ~8x slower); `unbrokenInterval` 16→30ms halves the
-  yield count. (2) *Weather* — air heat/moisture propagation dedupes its frontier
-  (`_heatQueued`/`_moistQueued`) and rebuilds it in place instead of
-  `splice(0,count)`; moisture −60%, heat −65% at degree 60. (3) *Transit Centrality*
-  (heaviest analysis, ~4.7s@20 / ~13s@60) split into `computeStrategicA_begin/step/end`
-  and driven a few mouth-pairs per `SteppedAction` slice so the globe stays responsive
-  instead of freezing in one call. (4) *Mesh cache* — the subdivided/distorted/relaxed
-  mesh for degrees 20/40/60 is loaded from `meshes/mesh-N.json` (`mesh-cache.js`)
-  rather than generated (~3x faster mesh+topology: d60 1.6s→0.45s). `useCustomMesh`
-  forces live generation; `node scripts/generate-meshes.js` regenerates the files.
-
-- **Lakes off by default, prettier elevation/rainfall maps, feature pruning,
-  straighter Narrow Channels**: (1) `generateLakes` now defaults **false**.
-  (2) *Elevation Map*: hypsometric green→gold→umber→snow land ramp (sqrt-eased)
-  + eased blue sea floor (new editable slots in overlay-colors.js;
-  `_lerpColorStops` helper). (3) *Moisture Map → "Rainfall Map"*: data source
-  switched to `tile.rain` (normalized to wettest land tile), arid-tan→green→teal
-  ramp, flat muted-blue ocean. (4) **Removed Features C (lobes), H (bioregions),
-  J (min-water-boundary plate clone), M (balanced watershed provinces)** and all
-  now-unused code: `computeLobesForBody`, `computeBioregions`, the
-  `minWaterBoundary` min-cut block in `computePlateProvinces`,
-  `computeBalancedWatershedProvinces`/`balancedWatershedConfig`, their CONFIG
-  keys (`lobeEdgeWater/lobeMinSize/climateBands/climateMinSize`), UI slider rows
-  + bindings, and deferred-id/finishGroup wiring. Remaining feature overlays:
-  A, B, E, N, K, L. (5) *Narrow Channels*: route trace replaced the jagged BFS
-  parent-tree walk with steepest-descent on the distance field, tie-broken by
-  alignment with a fixed outward heading — routes now cross straits directly
-  instead of meandering across open water.
-
-- **Lake tuning, flat 3D lakes, lake coastlines, mercator sun sliders**:
-  (1) `generateLakes` (planet-generator.js, default true, NOT in UI) skips
-  `formLakes` entirely when false. (2) Fewer/smaller lakes: `outletRatio`
-  1.0→2.0, `endorheicRatio` 0.45→1.0, new `maxLakeTiles = 12` cap in
-  `formLakes`. (3) `calculateElevationDisplacements` flattens each lake to its
-  surface (max tile elevation × multiplier) for tiles AND adjacent corners
-  (shared corners between two lakes take the higher surface); borders inherit
-  via the existing corner average. (4) Coastline outline treats lake tiles as
-  water (`isLandTile` in `buildCoastlineOutlineObject`), so lakes are outlined.
-  (5) Raised-Mercator sun position sliders (`mercatorSunAzimuthSlider` /
-  `mercatorSunElevationSlider`, Overlay Display Options) drive
-  `mercatorSunAzimuth`/`mercatorSunElevation` (degrees); `updateCamera`
-  converts to the shadow-light offset (distance 36, z clamped ≥ 2).
-
-- **Lakes, erosion/deposition, raised-mercator shadows, Approach N**:
-  (1) *Elevation*: continental plate base elevation narrowed to 0.1–0.25
-  (was 0.1–0.5) to kill high-plateau continents; new `riverErosionDeposition()`
-  in `erodeElevation` (stream-power style: capacity = flow × slope; under
-  capacity carves, over capacity deposits; caps keep every tile between its
-  sources and drain so drainage stays valid; net change on `tile.sediment`).
-  (2) *Lakes*: `bowlFill` tags leveled basins (`tile.bowlGroup`); after final
-  flows `formLakes()` keeps standing water where inflow (runoff + entering
-  rivers) beats evaporation (temperature-weighted): open lakes (`log:
-  'filled'`, with outlet) or endorheic (`'kept no drain'`). `tile.lake` drives
-  biome `lake`, water rendering, and ocean-like navigation (path-finding
-  `isOcean` includes lakes; lake-lake edges use sailing costs).
-  (3) *Raised Mercator*: real shadow mapping — `renderer.shadowMap` enabled
-  (PCFSoft), `window.mercatorShadowLight` (NW directional, camera-tracking,
-  4096 shadow map) toggled in `updateCamera`; surface mesh copies
-  cast/receiveShadow only in raised mercator; ambient dims to 0.45 there.
-  (4) *Approach N* (`tile.hierarchyN`, overlay `featSplitN`): plate provinces
-  with SPLIT cohesion merge — `mergeByCohesion` now accepts `{land, water}`
-  strengths (defaults land 15, ocean 90; sliders locked 0–50 / 80–100, step 1)
-  — plus land-province nesting: provinces are cut where `|shore| <=
-  splitNeckWidth`; non-trunk parts become nested peninsula/headland/cape
-  features and short wall runs joining 2+ parts (capped at `(2w+1)*4` tiles)
-  become explicit Isthmus features. `splitMinPart` merges tiny parts into
-  siblings. Sliders in the new `fdGroup data-approach="N"`.
+- **Game map export + civ-style game prototype**: new `plangen-game-map`
+  format (`docs/game-export-format.md`) with locked tile/edge geometry and
+  extensible struct-of-arrays layers (terrain, food, minerals, strategic
+  layers, provinces, per-edge river-crossing/movement data). Exported by
+  `game-export.js` ("Export Game Map" button in the Save/Load panel);
+  `maps/sample-map.json` is a committed 20-subdivision example. `game/` holds
+  a dependency-free playable prototype (see `game/README.md`): cities that
+  fortify their surrounding edges, roads/bridges on edges, supply/demand
+  commodity prices, micromanaged trade routes with tolls & subsidies,
+  region-native crops spreading via trade, pirate/bandit camps on remote
+  high-traffic route segments, eras & combat, and fully slider-tunable rules
+  (`CONFIG_SCHEMA`) and AI personalities (`AI_PERSONALITY_SCHEMA`).
 
 - **Tuning-panel overhaul**: (1) Layer-color pickers recolor on `change` (final
   color only), not on every hue crossed while dragging. (2) Every tuning panel

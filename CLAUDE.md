@@ -31,6 +31,10 @@ realistic terrain, weather, biomes, and resources. Three.js for rendering; a
 
 ## Deep-dive docs (read on demand)
 
+- `docs/game-export-format.md` — the `plangen-game-map` export format
+  (`game-export.js`, "Export Game Map" button) consumed by the civ-style game
+  prototype in `game/` (see `game/README.md`; sample map in `maps/`; open
+  `http://localhost:8765/game/index.html`).
 - `docs/rendering.md` — projection/view modes, render-data cache, mercator
   wrapping, plate/coastline outlines.
 - `docs/feature-detection.md` — the A/B/E/N feature overlays, tuning sliders,
