@@ -411,6 +411,24 @@ function drawSelection(ctx) {
 	if (R.selectedTile >= 0) outlineTile(ctx, R.selectedTile, "#ffffff", 2);
 	if (R.selectedUnit) {
 		outlineTile(ctx, R.selectedUnit.tile, "#ffe97f", 2);
+		// supply line to the nearest friendly city (green ok, red cut)
+		var su = R.selectedUnit;
+		if (UNIT_TYPES[su.type].domain !== "air" && (UNIT_TYPES[su.type].needs || {}).food) {
+			var src = null, sd = Infinity;
+			G.cities.forEach(function (c) {
+				if (c.owner !== su.owner) return;
+				var d = M.distTiles(su.tile, c.tile);
+				if (d < sd) { sd = d; src = c; }
+			});
+			if (src && src.tile !== su.tile) {
+				var seg = tileSegment(su.tile, src.tile);
+				ctx.strokeStyle = su.supplyDist >= 0 ? "rgba(125,255,138,0.75)" : "rgba(255,90,80,0.85)";
+				ctx.lineWidth = 1.5;
+				ctx.setLineDash([3, 5]);
+				ctx.beginPath(); ctx.moveTo(seg[0], seg[1]); ctx.lineTo(seg[2], seg[3]); ctx.stroke();
+				ctx.setLineDash([]);
+			}
+		}
 		// strike-range ring for air units
 		if (UNIT_TYPES[R.selectedUnit.type].domain === "air") {
 			var p = tileScreen(R.selectedUnit.tile);
