@@ -406,6 +406,8 @@ function drawSelection(ctx) {
 	if (typeof UI !== "undefined" && UI.tab === "diplo" && UI.deal) {
 		UI.deal.give.tiles.forEach(function (t) { outlineTile(ctx, t, "#ff7d6b", 3); });
 		UI.deal.get.tiles.forEach(function (t) { outlineTile(ctx, t, "#7dff8a", 3); });
+		(UI.deal.give.cities || []).forEach(function (cid) { if (G.cities[cid]) outlineTile(ctx, G.cities[cid].tile, "#ff3b2b", 4); });
+		(UI.deal.get.cities || []).forEach(function (cid) { if (G.cities[cid]) outlineTile(ctx, G.cities[cid].tile, "#3bff5a", 4); });
 	}
 	if (R.hoverTile >= 0) outlineTile(ctx, R.hoverTile, "rgba(255,255,255,0.5)", 1.5);
 	if (R.selectedTile >= 0) outlineTile(ctx, R.selectedTile, "#ffffff", 2);

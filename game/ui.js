@@ -190,18 +190,22 @@ function toggleAutoplay() {
 function handleTileClick(t) {
 	var h = UI.humanId();
 
-	// diplomacy tile picking: toggle tiles in the offer
+	// diplomacy tile picking: toggle tiles (or whole cities) in the offer
 	if (UI.tab === "diplo" && UI.dealPick && UI.deal) {
 		var side = UI.dealPick === "give" ? UI.deal.give : UI.deal.get;
 		var mustOwn = UI.dealPick === "give" ? h : UI.deal.to;
-		if (G.owner[t] === mustOwn && G.cityAt[t] < 0) {
+		var cidHere = G.cityAt[t];
+		if (cidHere >= 0 && G.cities[cidHere].owner === mustOwn) {
+			var ci = side.cities.indexOf(cidHere);
+			if (ci >= 0) side.cities.splice(ci, 1); else side.cities.push(cidHere);
+			R.dirty = true; refreshUI();
+		} else if (G.owner[t] === mustOwn && cidHere < 0) {
 			var i = side.tiles.indexOf(t);
 			if (i >= 0) side.tiles.splice(i, 1); else side.tiles.push(t);
-			R.dirty = true;
-			refreshUI();
+			R.dirty = true; refreshUI();
 		} else {
-			gameLog(UI.dealPick === "give" ? "You can only offer your own non-city tiles."
-				: "You can only request the partner's non-city tiles.");
+			gameLog(UI.dealPick === "give" ? "Pick your own tiles or cities to offer."
+				: "Pick the partner's tiles or cities to request.");
 			refreshUI();
 		}
 		return;
@@ -624,7 +628,8 @@ function renderDiploTab() {
 	});
 	body.querySelectorAll(".clearTiles").forEach(function (b) {
 		b.onclick = function () {
-			(b.dataset.side === "give" ? UI.deal.give : UI.deal.get).tiles = [];
+			var side = b.dataset.side === "give" ? UI.deal.give : UI.deal.get;
+			side.tiles = []; side.cities = [];
 			R.dirty = true; refreshUI();
 		};
 	});
@@ -661,10 +666,12 @@ function dealSideEditor(sideName, side) {
 		"' data-k='tributePerTurn' type='number' min='0' value='" + (side.tributePerTurn || 0) + "'></label>";
 	html += "<label class='dealrow'>for turns <input class='dealNum' data-side='" + sideName +
 		"' data-k='tributeTurns' type='number' min='0' value='" + (side.tributeTurns || 0) + "'></label>";
+	var cityNames = (side.cities || []).map(function (cid) { return G.cities[cid] ? G.cities[cid].name : "?"; }).join(", ");
 	html += "<div class='dealrow'>tiles: " + side.tiles.length +
+		(side.cities && side.cities.length ? " · cities: " + esc(cityNames) : "") +
 		" <button class='sm pickBtn" + (picking ? " active" : "") + "' data-side='" + sideName + "'>" +
-		(picking ? "✓ picking… (click map)" : "pick on map") + "</button>" +
-		(side.tiles.length ? " <button class='sm clearTiles' data-side='" + sideName + "'>✕</button>" : "") + "</div>";
+		(picking ? "✓ picking… (tiles/cities)" : "pick on map") + "</button>" +
+		(side.tiles.length || (side.cities && side.cities.length) ? " <button class='sm clearTiles' data-side='" + sideName + "'>✕</button>" : "") + "</div>";
 	return html;
 }
 

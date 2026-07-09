@@ -11,7 +11,7 @@
 //   G.offers   = [{ deal, turn }]                    (pending, human recipient)
 
 function emptyDealSide() {
-	return { gold: 0, tiles: [], tributePerTurn: 0, tributeTurns: 0 };
+	return { gold: 0, tiles: [], cities: [], tributePerTurn: 0, tributeTurns: 0 };
 }
 
 function makeDeal(from, to) {
@@ -42,6 +42,19 @@ function dealTileValue(pl, t) {
 	return v * admin * D.tileValueScale;
 }
 
+// Gold-denominated worth of a whole city (population, buildings, and the
+// territory it administers). Cities are worth far more than loose tiles.
+function dealCityValue(pl, cityId) {
+	var city = G.cities[cityId];
+	if (!city) return 0;
+	var v = 60 + city.pop * 25;
+	v += (city.buildings.walls ? 40 : 0) + (city.buildings.market ? 35 : 0) + (city.buildings.granary ? 25 : 0);
+	if (city.id === G.players[city.owner].capital) v += 80; // capitals are prized
+	// the land it works
+	(city.territory || []).forEach(function (t) { if (G.cityAt[t] < 0) v += dealTileValue(pl, t) * 0.25; });
+	return v;
+}
+
 function dealSideValue(pl, side) {
 	var D = GameConfig.diplomacy;
 	var v = side.gold || 0;
@@ -49,6 +62,7 @@ function dealSideValue(pl, side) {
 		v += side.tributePerTurn * side.tributeTurns * D.tributeDiscount;
 	}
 	(side.tiles || []).forEach(function (t) { v += dealTileValue(pl, t); });
+	(side.cities || []).forEach(function (cid) { v += dealCityValue(pl, cid); });
 	return v;
 }
 
@@ -104,6 +118,18 @@ function dealValid(deal) {
 	(deal.get.tiles || []).forEach(function (t) {
 		if (G.owner[t] !== deal.to || G.cityAt[t] >= 0) ok = false;
 	});
+	// city cessions: the city must belong to the giver, and no side may cede
+	// away its very last city.
+	function checkCities(giverId, list) {
+		var owned = G.cities.filter(function (c) { return c.owner === giverId; }).length;
+		(list || []).forEach(function (cid) {
+			var c = G.cities[cid];
+			if (!c || c.owner !== giverId) ok = false;
+		});
+		if ((list || []).length >= owned) ok = false; // must keep at least one city
+	}
+	checkCities(deal.from, deal.give.cities);
+	checkCities(deal.to, deal.get.cities);
 	if (atWar(deal.from, deal.to) && !deal.peace) ok = false;
 	return ok;
 }
@@ -111,6 +137,9 @@ function dealValid(deal) {
 function dealSideSummary(side, fromName) {
 	var bits = [];
 	if (side.gold > 0) bits.push(side.gold + "g");
+	if ((side.cities || []).length) {
+		bits.push((side.cities || []).map(function (cid) { return G.cities[cid] ? G.cities[cid].name : "?"; }).join(" & "));
+	}
 	if ((side.tiles || []).length) bits.push(side.tiles.length + " tile" + (side.tiles.length > 1 ? "s" : ""));
 	if (side.tributePerTurn > 0 && side.tributeTurns > 0) {
 		bits.push(side.tributePerTurn + "g/turn ×" + side.tributeTurns);
@@ -137,8 +166,29 @@ function transferDealSide(fromPl, toPl, side) {
 			delete G.occupation[t];
 		}
 	});
+	(side.cities || []).forEach(function (cid) { cedeCity(cid, toPl.id); });
 	if (side.tributePerTurn > 0 && side.tributeTurns > 0) {
 		G.tributes.push({ from: fromPl.id, to: toPl.id, amount: side.tributePerTurn, turnsLeft: side.tributeTurns });
+	}
+}
+
+// Peaceful handover of a city (population and buildings intact, unlike a
+// wartime capture). Clears prior annexation of the old owner's nearby tiles.
+function cedeCity(cityId, newOwnerId) {
+	var city = G.cities[cityId];
+	if (!city || city.owner === newOwnerId) return;
+	var old = G.players[city.owner];
+	city.producing = null;
+	city.subsidies = {};
+	// annexed tiles held by the old owner around here revert to normal claim
+	Object.keys(G.annexed).forEach(function (t) { if (G.annexed[t] === old.id) delete G.annexed[t]; });
+	city.owner = newOwnerId;
+	G.routes = G.routes.filter(function (r) { return r.from !== cityId && r.to !== cityId; });
+	gameLog(old.name + " cedes " + city.name + " to " + G.players[newOwnerId].name);
+	if (old.capital === cityId) {
+		var remaining = G.cities.filter(function (c) { return c.owner === old.id; });
+		if (remaining.length) old.capital = remaining[0].id;
+		else { old.alive = false; gameLog(old.name + " has been eliminated (ceded last city)!"); }
 	}
 }
 
