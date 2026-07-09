@@ -104,11 +104,30 @@ function aiTakeTurn(pl) {
 
 	aiWarPeace(pl, myCities, myUnits);
 	aiDiplomacy(pl);
+	aiDesigns(pl);
 	aiMoveUnits(pl, myCities, myUnits);
 	aiProduction(pl, myCities, myUnits);
 	aiTradeRoutes(pl, myCities);
 	aiTollsAndSubsidies(pl, myCities);
 	aiBuildRoads(pl, myCities);
+}
+
+// Set ship/plane designs from personality, once per era reached. Aggressive
+// players favour firepower; traders/expansionists favour speed/range.
+function aiDesigns(pl) {
+	if (pl._designedEra === pl.era) return;
+	pl._designedEra = pl.era;
+	var a = pl.ai;
+	var power = 1 + (a.aggression + a.military) * 0.35;   // ~1.0 .. 1.7
+	var speed = 1 + (a.trade + a.expansion) * 0.25;
+	designableTypes().forEach(function (t) {
+		if (UNIT_TYPES[t].era !== pl.era) return;
+		var cls = UNIT_TYPES[t].design;
+		if (cls === "plane") setDesign(pl, t, clampAttr(speed), clampAttr(power));      // a=range, b=power
+		else if (cls === "carrier") setDesign(pl, t, clampAttr(speed), clampAttr(power));// a=speed, b=airwing
+		else setDesign(pl, t, clampAttr(speed), clampAttr(power));                       // ship a=speed b=power
+	});
+	pl.retool = {}; // designing at era start shouldn't self-penalize
 }
 
 // Record a notable AI decision (goal) — picked up by the structured turn log
@@ -182,6 +201,23 @@ function aiMoveUnits(pl, myCities, myUnits) {
 			return;
 		}
 		if (!UNIT_TYPES[u.type].combat) return;
+
+		// 0. WW2 infantry: train elite variants (militaristic AIs, when flush)
+		if (UNIT_TYPES[u.type].trainable && !u.training && pl.gold > 90 && a.military > 0.4 && G.rng() < 0.4) {
+			trainUnit(u, G.rng() < 0.5 ? "amphibious" : "airborne");
+		}
+		// 0b. airborne infantry: drop next to an enemy city in range
+		if (u.training === "airborne" && u.moves > 0 && enemyCities.length && u.supply.fuel) {
+			var near = enemyCities.filter(function (c) { return M.distTiles(u.tile, c.tile) <= GameConfig.amphibious.paradropRange; })
+				.sort(function (x, y) { return M.distTiles(u.tile, x.tile) - M.distTiles(u.tile, y.tile); })[0];
+			if (near) {
+				var lz = M.neighbors[near.tile].filter(function (n) {
+					return M.isPassable(n) && G.cityAt[n] < 0 && unitsAt(n).length === 0 &&
+						M.distTiles(u.tile, n) <= GameConfig.amphibious.paradropRange;
+				})[0];
+				if (lz !== undefined && airborneDrop(u, lz)) { missions.attack++; return; }
+			}
+		}
 
 		// 1. clear problem camps (braver AIs go earlier)
 		if (problemCamps.length && (u.hp > 50) && G.rng() > a.riskAversion * 0.4) {
@@ -310,6 +346,17 @@ function aiBestUnit(avail, domain) {
 	return best;
 }
 
+// A land unit with combined-arms variety: a siege piece every third build to
+// crack cities, an (often trainable) infantry every fourth for numbers and
+// airborne/amphibious roles, otherwise the heavy hitter.
+function aiPickLand(avail, soldiers) {
+	var siege = avail.filter(function (t) { return UNIT_TYPES[t] && UNIT_TYPES[t].siege; })[0];
+	var infantry = avail.filter(function (t) { return UNIT_TYPES[t] && UNIT_TYPES[t].trainable; })[0];
+	if (siege && soldiers % 3 === 2) return siege;
+	if (infantry && soldiers % 4 === 1) return infantry;
+	return aiBestUnit(avail, "land");
+}
+
 function aiProduction(pl, myCities, myUnits) {
 	var a = pl.ai;
 	var settlers = 0, soldiers = 0, ships = 0, planes = 0;
@@ -338,7 +385,7 @@ function aiProduction(pl, myCities, myUnits) {
 
 		if (wantSettler && avail.indexOf("settler") >= 0 && city.pop >= 2) { setProd("settler"); wantSettler = false; return; }
 		if (soldiers < wantSoldiers && unitBudgetLeft()) {
-			var land = aiBestUnit(avail, "land");
+			var land = aiPickLand(avail, soldiers);
 			if (land) { setProd(land); soldiers++; return; }
 		}
 		if (planes < wantPlanes && unitBudgetLeft()) {
@@ -347,7 +394,11 @@ function aiProduction(pl, myCities, myUnits) {
 			if (airType) { setProd(airType); planes++; return; }
 		}
 		if (ships < wantShips && unitBudgetLeft()) {
-			var sea = aiBestUnit(avail, "sea");
+			// one carrier for an air-capable navy, otherwise the best warship
+			var hasCarrier = myUnits.some(function (x) { return x.type === "carrier"; }) ||
+				queued.some(function (q) { return /:carrier$/.test(q); });
+			var sea = (avail.indexOf("carrier") >= 0 && !hasCarrier && ships >= 1 && a.military > 0.4) ?
+				"carrier" : aiBestUnit(avail, "sea");
 			if (sea) { setProd(sea); ships++; return; }
 		}
 		if (atWarNow && !city.buildings.walls) { setProd("walls"); return; }

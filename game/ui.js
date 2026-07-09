@@ -10,7 +10,8 @@ var UI = {
 	isHumanCity: function (c) { return c && c.owner === GameConfig.setup.humanPlayer; },
 	roadTargetMode: null, // city id when picking a road destination
 	deal: null,           // deal being built in the Diplomacy tab
-	dealPick: null        // 'give'|'get' while picking tiles on the map
+	dealPick: null,       // 'give'|'get' while picking tiles on the map
+	dropMode: false       // airborne paradrop targeting mode
 };
 
 function uiResetDeal(partnerId) {
@@ -234,13 +235,25 @@ function handleTileClick(t) {
 	var units = unitsAt(t);
 	var myUnits = units.filter(function (u) { return u.owner === h; });
 
-	// air unit orders: click a friendly city to rebase, a valid target to strike
+	// airborne paradrop mode: an airborne infantry drops onto the clicked tile
+	if (R.selectedUnit && R.selectedUnit.owner === h && UI.dropMode &&
+		R.selectedUnit.training === "airborne" && t !== R.selectedUnit.tile) {
+		if (!airborneDrop(R.selectedUnit, t)) gameLog("Can't drop there (range/occupied/terrain).");
+		else UI.dropMode = false;
+		R.dirty = true; refreshUI();
+		return;
+	}
+
+	// air unit orders: click a friendly city/carrier to rebase, a target to strike
 	if (R.selectedUnit && R.selectedUnit.owner === h &&
 		UNIT_TYPES[R.selectedUnit.type].domain === "air" && t !== R.selectedUnit.tile) {
 		var au = R.selectedUnit;
 		var cid = G.cityAt[t];
+		var carrierHere = unitsAt(t).find(function (x) { return x.owner === h && UNIT_TYPES[x.type].airbase; });
 		if (cid >= 0 && G.cities[cid].owner === h) {
 			if (!airRebase(au, cid)) gameLog("Out of ferry range.");
+		} else if (carrierHere) {
+			if (!airRebaseCarrier(au, carrierHere)) gameLog("Out of ferry range.");
 		} else {
 			var hasTarget = G.campAt[t] >= 0 ||
 				unitsAt(t).some(function (x) { return x.owner !== h && atWar(h, x.owner); }) ||
@@ -306,6 +319,7 @@ function refreshUI() {
 	else if (UI.tab === "city") renderCityTab();
 	else if (UI.tab === "players") renderPlayersTab();
 	else if (UI.tab === "diplo") renderDiploTab();
+	else if (UI.tab === "designs") renderDesignsTab();
 	else if (UI.tab === "tuning") renderTuningTab();
 	else if (UI.tab === "log") renderLogTab();
 }
@@ -321,11 +335,15 @@ function renderInfoTab() {
 		var u = R.selectedUnit;
 		var def = UNIT_TYPES[u.type];
 		html += "<h3>" + def.name + " (" + esc(G.players[u.owner].name) + ")</h3>" +
-			"<div>HP " + Math.round(u.hp) +
+			"<div>HP " + Math.round(u.hp) + " · str " + Math.round(u.str || unitStrength(u.type)) +
 			(def.domain === "air" ? " · missions " + fmtNum(u.moves, 0) : " · moves " + fmtNum(u.moves, 0)) +
-			" · " + def.domain + "</div>";
+			" · " + def.domain + (u.training ? " · <b>" + u.training + "</b>" : "") + "</div>";
+		if (def.design) html += "<div class='sub'>" + esc(designLabel(u.type, designOf(G.players[u.owner], u.type))) + "</div>";
+		if (M.isWater(u.tile) && def.domain === "land") html += "<div class='warn'>⚓ embarked at sea (weak)</div>";
+		if (u.landedTurns > 0) html += "<div class='warn'>landing disorganization (" + u.landedTurns + "t)</div>";
+		if (u.carrierId) html += "<div class='sub'>✈ aboard carrier</div>";
 		// supply status
-		var needs = def.needs || {};
+		var needs = unitNeeds(u);
 		var supBits = [];
 		if (needs.food) supBits.push((u.supply.food ? "🌾" : "<span class='warn'>🌾✗</span>"));
 		if (needs.ammo) supBits.push((u.supply.ammo ? "💥" : "<span class='warn'>💥✗</span>"));
@@ -338,9 +356,22 @@ function renderInfoTab() {
 		if (u.owner === h && u.type === "settler") {
 			html += "<button id='foundBtn'>Found city here</button>";
 		}
-		html += "<div class='hint'>" + (def.domain === "air"
-			? "Click an enemy in range to strike; click your city to rebase."
-			: "Click a tile to move/attack.") + "</div><hr>";
+		// WW2 infantry training (once, costs gold)
+		if (u.owner === h && def.trainable && !u.training) {
+			var A = GameConfig.amphibious;
+			html += "<div class='trainrow'>" +
+				"<button id='trainAirborne' class='sm'>Train airborne (" + A.trainAirborneCost + "g)</button> " +
+				"<button id='trainAmphib' class='sm'>Train amphibious (" + A.trainAmphibiousCost + "g)</button></div>";
+		}
+		if (u.owner === h && u.training === "airborne") {
+			html += "<div class='hint'>Airborne: click a tile within " + GameConfig.amphibious.paradropRange +
+				" hops to drop (uses fuel).</div>";
+			html += "<label><input type='checkbox' id='dropMode'" + (UI.dropMode ? " checked" : "") + "> paradrop mode</label>";
+		}
+		var orderHint = def.domain === "air"
+			? "Click an enemy in range to strike; click your city or a carrier to rebase."
+			: "Click a tile to move/attack. Land units embark to cross water.";
+		html += "<div class='hint'>" + orderHint + "</div><hr>";
 	}
 
 	var t = R.hoverTile >= 0 ? R.hoverTile : R.selectedTile;
@@ -378,6 +409,18 @@ function renderInfoTab() {
 		if (c) { R.selectedUnit = null; R.selectedCity = c; UI.tab = "city"; }
 		R.dirty = true; refreshUI();
 	};
+	var ta = $id("trainAirborne");
+	if (ta) ta.onclick = function () {
+		if (!trainUnit(R.selectedUnit, "airborne")) gameLog("Can't train (need gold).");
+		R.dirty = true; refreshUI();
+	};
+	var tm = $id("trainAmphib");
+	if (tm) tm.onclick = function () {
+		if (!trainUnit(R.selectedUnit, "amphibious")) gameLog("Can't train (need gold).");
+		R.dirty = true; refreshUI();
+	};
+	var dm = $id("dropMode");
+	if (dm) dm.onchange = function () { UI.dropMode = this.checked; };
 
 	function row(k, v) { return "<tr><td>" + esc(k) + "</td><td>" + v + "</td></tr>"; }
 }
@@ -681,6 +724,55 @@ function diploTributeList() {
 		return "<div class='sub'>" + esc(G.players[tr.from].name) + " → " + esc(G.players[tr.to].name) +
 			": " + tr.amount + "g/turn, " + tr.turnsLeft + " turns left</div>";
 	}).join("");
+}
+
+// ---------------------------------------------------------------------------
+// Designs tab: per-unit-type ship/plane design sliders with live cost + a
+// retooling warning. Available for the era's designable units.
+// ---------------------------------------------------------------------------
+
+function renderDesignsTab() {
+	var body = $id("tabBody");
+	var h = UI.humanId();
+	if (h < 0) { body.innerHTML = "<div class='hint'>Spectating — no designs to edit.</div>"; return; }
+	var pl = G.players[h];
+	initDesigns(pl);
+
+	var types = designableTypes().filter(function (t) { return UNIT_TYPES[t].era <= pl.era; });
+	var current = designableTypes().filter(function (t) { return UNIT_TYPES[t].era === pl.era; });
+	var html = "<div class='hint'>Configure your ship and aircraft classes. Higher attributes cost more; " +
+		"changing a design slows production of that type for " + GameConfig.design.retoolTurns + " turns.</div>";
+
+	if (!current.length) html += "<div class='hint'>No designable classes in the " + ERA_NAMES[pl.era] + " era.</div>";
+
+	current.forEach(function (t) {
+		var def = UNIT_TYPES[t], cls = DESIGN_CLASSES[def.design], d = designOf(pl, t);
+		var retool = (pl.retool && pl.retool[t]) || 0;
+		html += "<div class='designbox'><b>" + esc(def.name) + "</b> <span class='sub'>" + def.design + "</span>" +
+			(retool ? " <span class='warn'>retooling " + retool + "t</span>" : "") +
+			"<div class='sub'>base str " + unitBaseStrength(t) + " · cost " + unitCost(t, pl) + "⚒</div>";
+		["a", "b"].forEach(function (slot) {
+			var meta = cls[slot];
+			html += "<label class='slider'>" + meta.label +
+				" <input type='range' class='desSl' data-t='" + t + "' data-slot='" + slot +
+				"' min='" + GameConfig.design.attrMin + "' max='" + GameConfig.design.attrMax +
+				"' step='0.05' value='" + d[slot] + "'><span>" + d[slot].toFixed(2) + "</span></label>";
+		});
+		html += "</div>";
+	});
+	body.innerHTML = html;
+
+	body.querySelectorAll(".desSl").forEach(function (sl) {
+		// live label while dragging; commit (with retool) on release/change
+		sl.oninput = function () { sl.nextElementSibling.textContent = (+sl.value).toFixed(2); };
+		sl.onchange = function () {
+			var t = sl.dataset.t, d = designOf(pl, t);
+			var a = sl.dataset.slot === "a" ? +sl.value : d.a;
+			var b = sl.dataset.slot === "b" ? +sl.value : d.b;
+			setDesign(pl, t, a, b);
+			refreshUI();
+		};
+	});
 }
 
 function renderLogTab() {

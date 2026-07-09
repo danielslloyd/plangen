@@ -85,6 +85,9 @@ label.slider span { min-width: 34px; text-align: right; }
 
 .offer { padding: 6px; margin: 4px 0; background: #1b2c40; border: 1px solid #35507a;
 	border-radius: 6px; }
+.designbox { background: #14202e; border: 1px solid #24374e; border-radius: 6px;
+	padding: 6px 8px; margin: 6px 0; }
+.trainrow { margin: 4px 0; display: flex; gap: 4px; flex-wrap: wrap; }
 .goal { font-size: 12px; color: #b7c7da; margin: 2px 0 2px 6px; }
 .goalkind { display: inline-block; background: #223247; border-radius: 3px;
 	padding: 0 4px; font-size: 10.5px; color: #9fb6d0; margin-right: 3px; }
