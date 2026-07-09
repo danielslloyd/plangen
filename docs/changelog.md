@@ -2,6 +2,22 @@
 
 > Deep-dive doc. CLAUDE.md links here. Newest first.
 
+- **Game prototype wave 2: era rosters, siege/amphibious/airborne, carriers,
+  ship/plane designs, city trading** (`game/`): (1) per-era unit rosters with
+  distinct ids (Classical militia/legion/cavalry/trireme; Napoleonic infantry/
+  cavalry/artillery/ship-of-the-line/frigate; WW2 infantry/artillery/armor/
+  destroyer/carrier/fighter/bomber); artillery is a siege unit. (2) **Hard era
+  shift** — advancing disbands the old army and resets production; only the
+  current era builds. (3) **Amphibious** transport for all land units (weak at
+  sea, decaying landing penalty unless trained); WW2 infantry train **airborne**
+  (paradrop, burns fuel) or **amphibious**. (4) **Carriers** as mobile airbases
+  (rebase/supply/air-wing bonus). (5) **Configurable designs** (`designs.js`):
+  ships speed/firepower, planes range/firepower, carriers speed/air-wing —
+  higher = costlier, changing a design triggers a retooling penalty. (6) **City
+  trading** in diplomacy (peaceful cession keeping pop/buildings; can't cede
+  your last city). New Designs tab, training/paradrop unit orders, combined-arms
+  AI that designs, trains, and paradrops.
+
 - **Game prototype: eras, supply, diplomacy, occupation, turn log** (all in
   `game/`, see `game/README.md`): (1) three combat eras — Classical →
   Napoleonic → WW2 — with a full land/sea/air roster (per-type stats in

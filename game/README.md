@@ -33,10 +33,35 @@ use **Load map** to open any other exported game map (PlanGen → Save/Load pane
 
 ## Combat, eras & supply
 
-- **Classical**: militia, legions, triremes — armies need **food**.
-- **Napoleonic**: line infantry, cavalry, frigates — food **+ ammunition**.
-- **WW2**: infantry, armor, destroyers, fighters, bombers — food + ammo
-  **+ fuel**. Obsolete designs (two eras back) leave production.
+Each era is a **hard generational shift**: on advancing, the whole old army
+disbands and every city retools from scratch — only the new era's units can be
+built.
+
+- **Classical**: militia, legion, cavalry, trireme — armies need **food**.
+- **Napoleonic**: infantry, cavalry, artillery, ship of the line, frigate —
+  food **+ ammunition**.
+- **WW2**: infantry, artillery, armor, destroyer, carrier, fighter, bomber —
+  food + ammo **+ fuel**.
+- **Artillery** is a siege unit: a big bonus attacking cities and it bombards
+  with little counter-fire, but it can't itself capture a tile.
+
+### Amphibious, airborne & carriers
+
+- **Amphibious**: any land unit can embark and cross water (transport cost per
+  sea tile) — it is weak while at sea, and comes ashore **disorganized for a
+  few turns** (strength ramps back up) unless trained amphibious.
+- **WW2 infantry** can **train** (gold, once) as **airborne** — paradrop within
+  range, burning fuel — or **amphibious** — no landing penalty.
+- **Carriers** are mobile airbases: aircraft rebase onto them, sail with the
+  fleet, draw supply from them, and inherit the carrier design's air-wing bonus.
+
+### Design classes
+
+Napoleonic+ ships and WW2 ships/planes have **configurable designs** (Designs
+tab): ships trade **speed vs firepower**, planes **range vs firepower**,
+carriers **speed vs air-wing**. Higher attributes cost more; changing a design
+imposes a short **retooling** production penalty. AIs pick designs from their
+personality (aggressive → firepower, traders → speed/range).
 - **Supply lines**: every unit draws its needs from the nearest friendly city
   via a supply line that cannot cross enemy territory. Food is consumed every
   turn, ammo per attack, fuel per movement; delivery cost rises per hop
@@ -54,9 +79,10 @@ use **Load map** to open any other exported game map (PlanGen → Save/Load pane
 ## Diplomacy
 
 - The Diplomacy tab builds two-sided deals: **gold**, **tile-by-tile
-  territory** (pick tiles on the map — red = you give, green = you get),
-  **tribute** (gold per turn for N turns) and **peace**. Warring players can
-  only talk peace.
+  territory**, whole **cities** (pick tiles or cities on the map — red = you
+  give, green = you get; ceded cities keep their population and buildings),
+  **tribute** (gold per turn for N turns) and **peace**. You can't cede your
+  last city. Warring players can only talk peace.
 - AIs value deals with their own personality and geography, accept above a
   margin, and rejections come with a "they'd want ~Xg more" hint for
   counter-offers. Losing/war-weary AIs proactively buy peace with tribute;
@@ -119,7 +145,8 @@ goals and downloads the whole thing as JSON (~2KB/turn).
 | `mapdata.js` | map decoding, derived geometry, shared Dijkstra |
 | `engine.js` | state, cities, yields, movement domains, combat, supply, eras, occupation, turn driver |
 | `trade.js` | prices, routes, tolls, subsidies, knowledge spread, camps |
-| `diplomacy.js` | deals, valuation, tribute, AI peace/extortion |
+| `diplomacy.js` | deals, valuation, tribute, city cession, AI peace/extortion |
+| `designs.js` | configurable ship/plane/carrier design classes + retooling |
 | `gamelog.js` | structured replay log + JSON export |
 | `ai.js` | personalities, site scoring, per-turn decisions, naval/air missions |
 | `render.js` | canvas map, overlays, contested hatching, deal highlights |
@@ -128,9 +155,11 @@ goals and downloads the whole thing as JSON (~2KB/turn).
 
 ## Known prototype simplifications
 
-- No troop transports: land units can't cross water (trade is amphibious).
+- Amphibious transport is abstract (no explicit transport ships; land units
+  ride "over" water and are weak until ashore).
 - Air units have no fuel-range escort model; interception is probabilistic.
 - Cities all-capture on HP 0 (no razing choice).
 - Prices are flow-based (no warehousing/stockpiles).
 - Wars auto-peace after 40 turns of stalemate.
-- City tiles can't be traded in deals (capture only).
+- AI doesn't fly its land-based aircraft onto carriers (carriers still buff
+  and supply any aircraft based on them).
