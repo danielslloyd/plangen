@@ -67,22 +67,51 @@ var GameConfig = {
 		settlerCost: 40,
 		settlerMaintenance: 0.5,  // gold upkeep per turn
 		unitMaintenance: 1.0,
-		maxUnitsPerPlayer: 24,
+		maxUnitsPerPlayer: 28,
 		healPerTurnFriendly: 15,
-		// per-type cost / strength / speed factor (era & needs live in UNIT_TYPES)
+		// per-type cost / strength / speed factor (era, domain & needs live in
+		// UNIT_TYPES). Designable ship/plane stats are further scaled per player.
 		stats: {
-			militia:      { cost: 25,  str: 10, moves: 1.0 },
-			legion:       { cost: 45,  str: 17, moves: 1.0 },
-			lineInfantry: { cost: 60,  str: 27, moves: 1.0 },
-			cavalry:      { cost: 70,  str: 22, moves: 1.6 },
-			infantry:     { cost: 80,  str: 40, moves: 1.0 },
-			armor:        { cost: 120, str: 58, moves: 1.7 },
-			trireme:      { cost: 40,  str: 12, moves: 1.4 },
-			frigate:      { cost: 75,  str: 28, moves: 1.7 },
-			destroyer:    { cost: 120, str: 50, moves: 2.0 },
-			fighter:      { cost: 100, str: 32, moves: 0 },
-			bomber:       { cost: 130, str: 42, moves: 0 }
+			// Classical
+			militia:    { cost: 25,  str: 10, moves: 1.0 },
+			legion:     { cost: 45,  str: 18, moves: 1.0 },
+			cavalry:    { cost: 55,  str: 20, moves: 1.7 },
+			trireme:    { cost: 40,  str: 12, moves: 1.4 },
+			// Napoleonic
+			nInfantry:  { cost: 60,  str: 30, moves: 1.0 },
+			nCavalry:   { cost: 80,  str: 34, moves: 1.7 },
+			artillery:  { cost: 90,  str: 26, moves: 0.8 },
+			shipOfLine: { cost: 110, str: 40, moves: 1.2 },
+			frigate:    { cost: 75,  str: 26, moves: 1.8 },
+			// WW2
+			wInfantry:  { cost: 70,  str: 42, moves: 1.0 },
+			wArtillery: { cost: 100, str: 40, moves: 0.9 },
+			armor:      { cost: 130, str: 62, moves: 1.8 },
+			destroyer:  { cost: 120, str: 50, moves: 2.0 },
+			carrier:    { cost: 200, str: 28, moves: 1.4 },
+			fighter:    { cost: 100, str: 34, moves: 0 },
+			bomber:     { cost: 130, str: 44, moves: 0 }
 		}
+	},
+
+	// Amphibious transport, opposed-landing penalty, and WW2 infantry training.
+	amphibious: {
+		transportCost: 5,        // movement cost per water edge for a land unit at sea
+		embarkedPenalty: 0.3,    // strength mult while a land unit sits on water
+		landingPenaltyTurns: 3,  // turns of reduced strength after an untrained landing
+		landingPenalty: 0.45,    // strength mult on the landing turn (ramps back to 1)
+		trainAmphibiousCost: 45, // gold to train a unit for amphibious landings
+		trainAirborneCost: 60,   // gold to train WW2 infantry as airborne
+		paradropRange: 12        // tiles an airborne unit can drop (consumes fuel)
+	},
+
+	// Configurable design classes for Napoleonic+ ships and WW2 ships/planes.
+	design: {
+		retoolTurns: 4,          // turns of production penalty after changing a design
+		retoolPenalty: 0.45,     // extra production cost fraction while retooling
+		attrMin: 0.6,            // design attribute range (1.0 = balanced baseline)
+		attrMax: 1.6,
+		costBase: 0.4            // cost = base*(costBase + (1-costBase)/2*(a+b))
 	},
 
 	// Supply lines: every unit draws its needs from the nearest friendly city.
@@ -133,7 +162,9 @@ var GameConfig = {
 		terrainDefHills: 0.25,
 		terrainDefForest: 0.2,
 		terrainDefMountain: 0.4,
-		cityAttackerPenalty: 0.0
+		cityAttackerPenalty: 0.0,
+		siegeCityBonus: 1.9,     // artillery strength multiplier vs cities
+		siegeCounterFactor: 0.35 // counter-damage artillery takes attacking (bombard)
 	},
 
 	trade: {
@@ -249,28 +280,18 @@ var CONFIG_SCHEMA = [
 	{ g: "Units", p: "units.movePoints", min: 4, max: 30, step: 1 },
 	{ g: "Units", p: "units.settlerCost", min: 10, max: 120, step: 5 },
 	{ g: "Units", p: "units.maxUnitsPerPlayer", min: 4, max: 60, step: 1 },
-	{ g: "Units", p: "units.stats.militia.cost", min: 10, max: 150, step: 5 },
-	{ g: "Units", p: "units.stats.militia.str", min: 4, max: 40, step: 1 },
-	{ g: "Units", p: "units.stats.legion.cost", min: 10, max: 200, step: 5 },
-	{ g: "Units", p: "units.stats.legion.str", min: 4, max: 50, step: 1 },
-	{ g: "Units", p: "units.stats.lineInfantry.cost", min: 10, max: 250, step: 5 },
-	{ g: "Units", p: "units.stats.lineInfantry.str", min: 10, max: 60, step: 1 },
-	{ g: "Units", p: "units.stats.cavalry.cost", min: 10, max: 250, step: 5 },
-	{ g: "Units", p: "units.stats.cavalry.str", min: 10, max: 60, step: 1 },
-	{ g: "Units", p: "units.stats.infantry.cost", min: 20, max: 300, step: 5 },
-	{ g: "Units", p: "units.stats.infantry.str", min: 15, max: 80, step: 1 },
-	{ g: "Units", p: "units.stats.armor.cost", min: 30, max: 400, step: 10 },
-	{ g: "Units", p: "units.stats.armor.str", min: 20, max: 120, step: 2 },
-	{ g: "Units", p: "units.stats.trireme.cost", min: 10, max: 150, step: 5 },
-	{ g: "Units", p: "units.stats.trireme.str", min: 4, max: 40, step: 1 },
-	{ g: "Units", p: "units.stats.frigate.cost", min: 20, max: 250, step: 5 },
-	{ g: "Units", p: "units.stats.frigate.str", min: 10, max: 60, step: 1 },
-	{ g: "Units", p: "units.stats.destroyer.cost", min: 30, max: 400, step: 10 },
-	{ g: "Units", p: "units.stats.destroyer.str", min: 20, max: 120, step: 2 },
-	{ g: "Units", p: "units.stats.fighter.cost", min: 30, max: 400, step: 10 },
-	{ g: "Units", p: "units.stats.fighter.str", min: 10, max: 80, step: 2 },
-	{ g: "Units", p: "units.stats.bomber.cost", min: 30, max: 400, step: 10 },
-	{ g: "Units", p: "units.stats.bomber.str", min: 10, max: 100, step: 2 },
+	// per-unit cost/str rows are appended programmatically below.
+
+	{ g: "Amphibious", p: "amphibious.transportCost", min: 1, max: 15, step: 1 },
+	{ g: "Amphibious", p: "amphibious.embarkedPenalty", min: 0.1, max: 1, step: 0.05 },
+	{ g: "Amphibious", p: "amphibious.landingPenaltyTurns", min: 0, max: 8, step: 1 },
+	{ g: "Amphibious", p: "amphibious.landingPenalty", min: 0.1, max: 1, step: 0.05 },
+	{ g: "Amphibious", p: "amphibious.trainAmphibiousCost", min: 0, max: 150, step: 5 },
+	{ g: "Amphibious", p: "amphibious.trainAirborneCost", min: 0, max: 150, step: 5 },
+	{ g: "Amphibious", p: "amphibious.paradropRange", min: 3, max: 30, step: 1 },
+
+	{ g: "Design", p: "design.retoolTurns", min: 0, max: 12, step: 1 },
+	{ g: "Design", p: "design.retoolPenalty", min: 0, max: 1, step: 0.05 },
 
 	{ g: "Supply", p: "supply.foodCost", min: 0, max: 1, step: 0.05 },
 	{ g: "Supply", p: "supply.ammoCost", min: 0, max: 2, step: 0.05 },
@@ -304,6 +325,8 @@ var CONFIG_SCHEMA = [
 	{ g: "Combat", p: "combat.strengthScale", min: 3, max: 20, step: 1 },
 	{ g: "Combat", p: "combat.terrainDefHills", min: 0, max: 1, step: 0.05 },
 	{ g: "Combat", p: "combat.terrainDefForest", min: 0, max: 1, step: 0.05 },
+	{ g: "Combat", p: "combat.siegeCityBonus", min: 1, max: 4, step: 0.1 },
+	{ g: "Combat", p: "combat.siegeCounterFactor", min: 0, max: 1, step: 0.05 },
 
 	{ g: "Trade: prices", p: "trade.priceElasticity", min: 0.1, max: 2, step: 0.05 },
 	{ g: "Trade: prices", p: "trade.priceMin", min: 0.05, max: 1, step: 0.05 },
@@ -334,6 +357,19 @@ var CONFIG_SCHEMA = [
 	{ g: "Pirates & bandits", p: "trade.campMaxCount", min: 0, max: 40, step: 1 },
 	{ g: "Pirates & bandits", p: "trade.riskPremiumPerCamp", min: 0, max: 40, step: 1 }
 ];
+
+// Per-unit cost/strength sliders, generated from the stats table so the roster
+// stays the single source of truth (grouped under "Units: <era>").
+(function () {
+	var eraOf = { militia: "Classical", legion: "Classical", cavalry: "Classical", trireme: "Classical",
+		nInfantry: "Napoleonic", nCavalry: "Napoleonic", artillery: "Napoleonic", shipOfLine: "Napoleonic", frigate: "Napoleonic",
+		wInfantry: "WW2", wArtillery: "WW2", armor: "WW2", destroyer: "WW2", carrier: "WW2", fighter: "WW2", bomber: "WW2" };
+	Object.keys(GameConfig.units.stats).forEach(function (id) {
+		var g = "Units: " + (eraOf[id] || "?");
+		CONFIG_SCHEMA.push({ g: g, p: "units.stats." + id + ".cost", min: 10, max: 400, step: 5 });
+		CONFIG_SCHEMA.push({ g: g, p: "units.stats." + id + ".str", min: 4, max: 120, step: 2 });
+	});
+})();
 
 function configGet(path) {
 	var parts = path.split("."), o = GameConfig;

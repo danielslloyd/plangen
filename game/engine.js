@@ -20,43 +20,81 @@ var CITY_NAMES = ["Ur", "Kish", "Thebes", "Argos", "Tyre", "Byblos", "Nineveh", 
 	"Mycenae", "Knossos", "Carthage", "Cumae", "Tanis", "Lagash", "Byzantion", "Sparta", "Veii", "Sidon",
 	"Akkad", "Uruk", "Larsa", "Mari", "Ebla", "Ugarit", "Gordium", "Sardis", "Miletus", "Rhodes"];
 
-// Unit roster across the three combat eras. `era` is the minimum era to
-// build. `domain` is land/sea/air. `needs` drives the supply system:
-// food is eaten every turn, ammo is spent per attack, fuel per move.
+// Unit roster. Each combat unit belongs to exactly ONE era (era transitions
+// wipe the old roster — see updateEra). `domain` is land/sea/air. `needs`
+// drives supply (food/turn, ammo/attack, fuel/move). `siege` units bombard
+// (bonus vs cities, reduced counter-damage). `design` marks configurable
+// ship/plane classes; `airbase` units carry aircraft.
 var UNIT_TYPES = {
-	settler:      { name: "Settler",       combat: false, era: 0, domain: "land", icon: "⚑", needs: { food: 0.5 } },
-	// Classical: armies march on their stomachs.
-	militia:      { name: "Militia",       combat: true,  era: 0, domain: "land", icon: "⚔", needs: { food: 1 } },
-	legion:       { name: "Legion",        combat: true,  era: 0, domain: "land", icon: "✠", needs: { food: 1.5 } },
-	trireme:      { name: "Trireme",       combat: true,  era: 0, domain: "sea",  icon: "⛵", needs: { food: 1 } },
-	// Napoleonic: powder and shot join the wagon train.
-	lineInfantry: { name: "Line Infantry", combat: true,  era: 1, domain: "land", icon: "♟", needs: { food: 1.5, ammo: 1 } },
-	cavalry:      { name: "Cavalry",       combat: true,  era: 1, domain: "land", icon: "♞", needs: { food: 2, ammo: 0.5 } },
-	frigate:      { name: "Frigate",       combat: true,  era: 1, domain: "sea",  icon: "⚓", needs: { food: 1, ammo: 1 } },
-	// WW2: food, ammo and fuel — and the air war.
-	infantry:     { name: "Infantry",      combat: true,  era: 2, domain: "land", icon: "✚", needs: { food: 2, ammo: 1.5 } },
-	armor:        { name: "Armor",         combat: true,  era: 2, domain: "land", icon: "▣", needs: { food: 2, ammo: 2, fuel: 2 } },
-	destroyer:    { name: "Destroyer",     combat: true,  era: 2, domain: "sea",  icon: "♜", needs: { food: 2, ammo: 1.5, fuel: 2 } },
-	fighter:      { name: "Fighter",       combat: true,  era: 2, domain: "air",  icon: "✈", needs: { food: 1, ammo: 2, fuel: 3 } },
-	bomber:       { name: "Bomber",        combat: true,  era: 2, domain: "air",  icon: "💣", needs: { food: 1, ammo: 3, fuel: 4 } }
+	settler:    { name: "Settler",         combat: false, era: -1, domain: "land", icon: "⚑", needs: { food: 0.5 } },
+	// --- Classical ---
+	militia:    { name: "Militia",         combat: true, era: 0, domain: "land", icon: "⚔", needs: { food: 1 } },
+	legion:     { name: "Legion",          combat: true, era: 0, domain: "land", icon: "✠", needs: { food: 1.5 } },
+	cavalry:    { name: "Cavalry",         combat: true, era: 0, domain: "land", icon: "♞", needs: { food: 1.5 } },
+	trireme:    { name: "Trireme",         combat: true, era: 0, domain: "sea",  icon: "⛵", needs: { food: 1 } },
+	// --- Napoleonic ---
+	nInfantry:  { name: "Infantry",        combat: true, era: 1, domain: "land", icon: "♟", needs: { food: 1.5, ammo: 1 } },
+	nCavalry:   { name: "Cavalry",         combat: true, era: 1, domain: "land", icon: "♞", needs: { food: 2, ammo: 0.5 } },
+	artillery:  { name: "Artillery",       combat: true, era: 1, domain: "land", icon: "❂", needs: { food: 1.5, ammo: 1.5 }, siege: true },
+	shipOfLine: { name: "Ship of the Line",combat: true, era: 1, domain: "sea",  icon: "⛵", needs: { food: 1, ammo: 1 }, design: "ship" },
+	frigate:    { name: "Frigate",         combat: true, era: 1, domain: "sea",  icon: "⚓", needs: { food: 1, ammo: 1 }, design: "ship" },
+	// --- WW2 ---
+	wInfantry:  { name: "Infantry",        combat: true, era: 2, domain: "land", icon: "✚", needs: { food: 2, ammo: 1.5 }, trainable: true },
+	wArtillery: { name: "Artillery",       combat: true, era: 2, domain: "land", icon: "❂", needs: { food: 2, ammo: 2 }, siege: true },
+	armor:      { name: "Armor",           combat: true, era: 2, domain: "land", icon: "▣", needs: { food: 2, ammo: 2, fuel: 2 } },
+	destroyer:  { name: "Destroyer",       combat: true, era: 2, domain: "sea",  icon: "♜", needs: { food: 2, ammo: 1.5, fuel: 2 }, design: "ship" },
+	carrier:    { name: "Carrier",         combat: true, era: 2, domain: "sea",  icon: "⊞", needs: { food: 2, ammo: 1, fuel: 3 }, design: "carrier", airbase: true },
+	fighter:    { name: "Fighter",         combat: true, era: 2, domain: "air",  icon: "✈", needs: { food: 1, ammo: 2, fuel: 3 }, design: "plane" },
+	bomber:     { name: "Bomber",          combat: true, era: 2, domain: "air",  icon: "💣", needs: { food: 1, ammo: 3, fuel: 4 }, design: "plane" }
 };
-function unitCost(type) {
+
+// Base (undesigned) stat lookups.
+function unitBaseCost(type) {
 	if (type === "settler") return GameConfig.units.settlerCost;
 	var s = GameConfig.units.stats[type];
 	return s ? s.cost : 50;
 }
-function unitStrength(type) {
+function unitBaseStrength(type) {
 	var s = GameConfig.units.stats[type];
 	return s ? s.str : 0;
 }
-// Per-turn budget: land/sea use move points scaled by the type's speed;
-// air units get one mission per turn.
-function unitMoveBudget(type) {
-	var def = UNIT_TYPES[type];
-	if (def.domain === "air") return 1;
+function unitBaseMoves(type) {
 	var s = GameConfig.units.stats[type];
-	return Math.round(GameConfig.units.movePoints * (s && s.moves ? s.moves : 1));
+	return s && s.moves ? s.moves : 1;
 }
+// Player-specific unit cost: applies the player's design (ships/planes) and a
+// retooling penalty after a recent design change.
+function unitCost(type, player) {
+	var base = unitBaseCost(type);
+	if (player && UNIT_TYPES[type] && UNIT_TYPES[type].design) {
+		base *= designCostFactor(designOf(player, type));
+		if (player.retool && player.retool[type] > 0) base *= 1 + GameConfig.design.retoolPenalty;
+	}
+	return Math.round(base);
+}
+// Undesigned strength (used for placement/AI estimates); per-unit strength is
+// stamped at spawn (u.str) and read by effStrength.
+function unitStrength(type) { return unitBaseStrength(type); }
+
+// The needs of a specific unit (airborne training adds a fuel appetite).
+function unitNeeds(u) {
+	var needs = UNIT_TYPES[u.type].needs || {};
+	if (u.training === "airborne" && !needs.fuel) {
+		var n = {}; for (var k in needs) n[k] = needs[k]; n.fuel = 2; return n;
+	}
+	return needs;
+}
+
+// Per-turn movement budget for a spawned unit: air = 1 mission; land/sea use
+// move points × the unit's (possibly designed) speed factor.
+function unitMoveBudget(u) {
+	var def = UNIT_TYPES[u.type];
+	if (def.domain === "air") return 1;
+	var mult = u.moveMult || unitBaseMoves(u.type);
+	return Math.max(1, Math.round(GameConfig.units.movePoints * mult));
+}
+
+var ERA_NAMES = ["Classical", "Napoleonic", "WW2"];
 
 var ERA_NAMES = ["Classical", "Napoleonic", "WW2"];
 
@@ -107,9 +145,12 @@ function newGame(seed) {
 			tollRate: C.trade.tollDefault,
 			alive: true,
 			capital: -1,
-			score: 0
+			score: 0,
+			designs: {},        // unitType -> { a, b } design attributes
+			retool: {}          // unitType -> turns of production penalty left
 		});
 	}
+	G.players.forEach(function (pl) { initDesigns(pl); });
 
 	initReplay();
 	placeStartingPositions(rng);
@@ -401,7 +442,7 @@ function cityEconomyTurn(city) {
 	// production
 	if (city.producing) {
 		city.prodStore += prod;
-		var item = city.producing, cost = productionCost(item);
+		var item = city.producing, cost = productionCost(item, city);
 		if (city.prodStore >= cost) {
 			city.prodStore -= cost;
 			completeProduction(city, item);
@@ -416,9 +457,9 @@ function cityEconomyTurn(city) {
 	city.yields = { food: food, prod: prod, gold: gold, sci: sci };
 }
 
-function productionCost(item) {
+function productionCost(item, city) {
 	var B = GameConfig.build;
-	if (UNIT_TYPES[item]) return unitCost(item);
+	if (UNIT_TYPES[item]) return unitCost(item, city ? G.players[city.owner] : null);
 	if (item === "walls") return B.wallsCost;
 	if (item === "market") return B.marketCost;
 	if (item === "granary") return B.granaryCost;
@@ -436,8 +477,9 @@ function completeProduction(city, item) {
 	city.producing = null;
 }
 
-// Buildable items: units of the player's era (and the era before — older
-// designs go obsolete), sea units only in coastal cities, plus buildings.
+// Buildable items: only the CURRENT era's units (each era is a hard reset;
+// see updateEra), sea units only in coastal cities, plus buildings and the
+// era-agnostic settler.
 function cityIsCoastal(city) { return adjacentWaterTile(city.tile) >= 0; }
 
 function availableProduction(city) {
@@ -446,8 +488,7 @@ function availableProduction(city) {
 	var coastal = cityIsCoastal(city);
 	Object.keys(UNIT_TYPES).forEach(function (t) {
 		var def = UNIT_TYPES[t];
-		if (!def.combat) return;
-		if (def.era > pl.era || def.era < pl.era - 1) return;
+		if (!def.combat || def.era !== pl.era) return;
 		if (def.domain === "sea" && !coastal) return;
 		items.push(t);
 	});
@@ -476,14 +517,33 @@ function spawnUnit(owner, type, tile) {
 		if (w < 0) return null;
 		tile = w;
 	}
+	var pl = G.players[owner];
 	var u = {
 		id: G.nextId++, owner: owner, type: type, tile: tile, hp: 100,
-		moves: unitMoveBudget(type),
-		base: def.domain === "air" ? G.cityAt[tile] : -1,  // air units live at a city
+		str: unitBaseStrength(type),          // designed strength stamped below
+		moveMult: unitBaseMoves(type),        // designed speed factor
+		strikeRange: GameConfig.air.strikeRange,
+		base: def.domain === "air" ? G.cityAt[tile] : -1,  // air units live at a city/carrier
+		training: null,                       // 'airborne' | 'amphibious' (WW2 infantry)
+		landedTurns: 0,                       // opposed-landing disorganization timer
 		stepsMoved: 0, attacksMade: 0,
 		supply: { food: true, ammo: true, fuel: true },
 		supplyDist: 0
 	};
+	// Apply the owner's design for configurable ship/plane classes.
+	if (def.design) {
+		var d = designOf(pl, type);
+		if (def.design === "plane") {
+			u.str = Math.round(u.str * d.b);          // firepower
+			u.strikeRange = Math.round(GameConfig.air.strikeRange * d.a); // range
+		} else if (def.design === "carrier") {
+			u.moveMult = unitBaseMoves(type) * d.a;   // hull speed (airPower buffs planes elsewhere)
+		} else { // ship
+			u.str = Math.round(u.str * d.b);          // firepower
+			u.moveMult = unitBaseMoves(type) * d.a;   // hull speed
+		}
+	}
+	u.moves = unitMoveBudget(u);
 	G.units.push(u);
 	return u;
 }
@@ -494,9 +554,11 @@ function removeUnit(u) {
 function unitsAt(tile) { return G.units.filter(function (u) { return u.tile === tile; }); }
 
 // Movement cost stepping a->b, by movement domain (game rules, tunable).
+// Land units may traverse water (amphibious transport) at a high per-tile cost.
 function stepCost(a, b, domain) {
 	var mv = GameConfig.movement;
 	if (domain === "sea") return M.isWater(b) ? mv.seaCost : Infinity;
+	if (M.isWater(b)) return GameConfig.amphibious.transportCost; // land unit embarking / at sea
 	if (!M.isPassable(b)) return Infinity;
 	var ter = M.layer("terrain")[b];
 	var c = mv.flatCost;
@@ -524,10 +586,12 @@ function unitPathfind(start, goal, owner, domain) {
 }
 
 // Can this unit end up standing on tile t (after winning a fight there)?
+// Land units may also sit on water (embarked on transports), where they are
+// weak until they reach shore.
 function unitCanOccupy(u, t) {
 	var domain = UNIT_TYPES[u.type].domain;
 	if (domain === "sea") return M.isWater(t);
-	if (domain === "land") return M.isPassable(t);
+	if (domain === "land") return M.isPassable(t) || M.isWater(t);
 	return false;
 }
 
@@ -555,7 +619,7 @@ function moveUnitTowards(u, target) {
 	var pf = unitPathfind(u.tile, target, u.owner, def.domain);
 	if (!pf) return false;
 	var path = pf.path;
-	var fullMoves = unitMoveBudget(u.type);
+	var fullMoves = unitMoveBudget(u);
 	for (var i = 1; i < path.length; i++) {
 		var next = path[i];
 		var c = stepCost(u.tile, next, def.domain);
@@ -577,6 +641,11 @@ function moveUnitTowards(u, target) {
 		if (hostileCity) { u.moves -= c; attackCity(u, G.cities[cityId]); return true; }
 		if (neutral.length || (cityId >= 0 && G.cities[cityId].owner !== u.owner)) break; // blocked, not at war
 
+		// amphibious landing: a land unit coming ashore from the sea is
+		// disorganized for a few turns unless trained for it.
+		if (def.domain === "land" && M.isWater(u.tile) && !M.isWater(next) && u.training !== "amphibious") {
+			u.landedTurns = GameConfig.amphibious.landingPenaltyTurns;
+		}
 		u.moves -= c;
 		u.tile = next;
 		u.stepsMoved++; // fuel consumption
@@ -618,27 +687,37 @@ function combatDamage(strA, strD) {
 	return Math.max(1, Math.round(base * spread));
 }
 
-// Effective strength: health-scaled, and halved-ish when the unit needs
-// ammunition it isn't getting (classical units don't care).
+// Effective strength: per-unit (designed) strength, health-scaled, reduced
+// without ammunition, while embarked at sea, and while disorganized from a
+// recent opposed landing.
 function effStrength(u) {
-	var s = unitStrength(u.type) * (u.hp / 100 * 0.5 + 0.5);
-	var needs = UNIT_TYPES[u.type].needs || {};
+	var A = GameConfig.amphibious;
+	var s = (u.str || unitStrength(u.type)) * (u.hp / 100 * 0.5 + 0.5);
+	var needs = unitNeeds(u);
 	if (needs.ammo && u.supply && !u.supply.ammo) s *= GameConfig.supply.noAmmoPenalty;
+	if (UNIT_TYPES[u.type].domain === "land" && M.isWater(u.tile)) s *= A.embarkedPenalty;
+	if (u.landedTurns > 0) {
+		// ramp from landingPenalty back to full over landingPenaltyTurns
+		var frac = u.landedTurns / Math.max(1, A.landingPenaltyTurns);
+		s *= A.landingPenalty + (1 - A.landingPenalty) * (1 - frac);
+	}
 	return s;
 }
 
 function attackUnit(att, def) {
 	att.attacksMade++;
+	var siege = UNIT_TYPES[att.type].siege;
 	var strA = effStrength(att);
 	var strD = effStrength(def) * combatModifiers(def.tile, att);
 	if (strD <= 0) strD = 1; // settlers etc.
 	def.hp -= combatDamage(strA, strD);
-	att.hp -= combatDamage(strD, strA) * 0.7;
+	// artillery bombards: it takes little counter-fire in the open
+	att.hp -= combatDamage(strD, strA) * (siege ? GameConfig.combat.siegeCounterFactor : 0.7);
 	if (def.hp <= 0) {
 		var tile = def.tile;
 		removeUnit(def);
 		gameLog(G.players[att.owner].name + " destroys a " + UNIT_TYPES[def.type].name);
-		if (att.hp > 0 && unitsAt(tile).length === 0 && G.cityAt[tile] < 0 && unitCanOccupy(att, tile)) att.tile = tile;
+		if (att.hp > 0 && !siege && unitsAt(tile).length === 0 && G.cityAt[tile] < 0 && unitCanOccupy(att, tile)) att.tile = tile;
 	}
 	if (att.hp <= 0) removeUnit(att);
 }
@@ -646,16 +725,17 @@ function attackUnit(att, def) {
 function attackCity(att, city) {
 	var C = GameConfig.city;
 	att.attacksMade++;
-	var strA = effStrength(att);
+	var siege = UNIT_TYPES[att.type].siege;
+	var strA = effStrength(att) * (siege ? GameConfig.combat.siegeCityBonus : 1);
 	var strD = (C.cityBaseStrength + C.cityStrengthPerPop * city.pop) * combatModifiers(city.tile, att);
 	var defUnits = unitsAt(city.tile).filter(function (x) { return x.owner === city.owner && unitStrength(x.type) > 0; });
 	if (defUnits.length) { attackUnit(att, defUnits[0]); return; }
 	city.hp -= combatDamage(strA, strD);
-	att.hp -= combatDamage(strD, strA) * 0.5;
+	att.hp -= combatDamage(strD, strA) * (siege ? GameConfig.combat.siegeCounterFactor : 0.5);
 	if (att.hp <= 0) { removeUnit(att); return; }
 	if (city.hp <= 0) {
-		// only land forces can take a city; ships hold it at the brink
-		if (UNIT_TYPES[att.type].domain === "land") captureCity(att.owner, city, att);
+		// only land forces can take a city; ships/artillery-only leave it at the brink
+		if (UNIT_TYPES[att.type].domain === "land" && !siege && unitCanOccupy(att, city.tile)) captureCity(att.owner, city, att);
 		else city.hp = 1;
 	}
 }
@@ -714,15 +794,17 @@ function attackCamp(att, camp) {
 
 function airStrike(u, targetTile) {
 	var A = GameConfig.air;
+	var carrierBonus = carrierAirBonus(u);
+	var range = (u.strikeRange || A.strikeRange) * carrierBonus;
 	if (u.moves <= 0) return false;
-	if (M.distTiles(u.tile, targetTile) > A.strikeRange) return false;
+	if (M.distTiles(u.tile, targetTile) > range) return false;
 
 	// interception: an enemy fighter based in range of the target may engage
 	var interceptor = null;
 	for (var i = 0; i < G.units.length; i++) {
 		var x = G.units[i];
 		if (x.type === "fighter" && x.owner !== u.owner && atWar(u.owner, x.owner) &&
-			M.distTiles(x.tile, targetTile) <= A.strikeRange) { interceptor = x; break; }
+			M.distTiles(x.tile, targetTile) <= (x.strikeRange || A.strikeRange)) { interceptor = x; break; }
 	}
 	u.moves = 0;
 	u.attacksMade++;
@@ -736,7 +818,7 @@ function airStrike(u, targetTile) {
 		if (u.type === "bomber") return true; // bombers driven off by the dogfight
 	}
 
-	var strA = effStrength(u);
+	var strA = effStrength(u) * carrierBonus;
 	var defended = false;
 	var foes = unitsAt(targetTile).filter(function (x) { return x.owner !== u.owner && atWar(u.owner, x.owner); });
 	var cid = G.cityAt[targetTile];
@@ -777,8 +859,68 @@ function airRebase(u, cityId) {
 	if (!city || city.owner !== u.owner) return false;
 	if (M.distTiles(u.tile, city.tile) > GameConfig.air.ferryRange) return false;
 	u.base = cityId;
+	u.carrierId = null;
 	u.tile = city.tile;
 	u.moves = 0;
+	return true;
+}
+
+// Rebase an air unit onto a friendly carrier (mobile airbase).
+function airRebaseCarrier(u, carrier) {
+	if (!carrier || carrier.owner !== u.owner || !UNIT_TYPES[carrier.type].airbase) return false;
+	if (M.distTiles(u.tile, carrier.tile) > GameConfig.air.ferryRange) return false;
+	u.base = -1;
+	u.carrierId = carrier.id;
+	u.tile = carrier.tile;
+	u.moves = 0;
+	return true;
+}
+
+// The plane-attribute multiplier a carrier confers on its embarked aircraft
+// (carrier design "airPower").
+function carrierAirBonus(u) {
+	if (!u.carrierId) return 1;
+	var c = G.units.find(function (x) { return x.id === u.carrierId; });
+	if (!c) return 1;
+	return designOf(G.players[c.owner], c.type).b;
+}
+
+// Keep carrier-based planes riding with their carrier; strand them if it sank.
+function syncCarrierAircraft() {
+	G.units.forEach(function (u) {
+		if (!u.carrierId) return;
+		var c = G.units.find(function (x) { return x.id === u.carrierId; });
+		if (c) u.tile = c.tile; else u.carrierId = null;
+	});
+}
+
+// Airborne paradrop: a trained WW2 infantry drops onto a tile within
+// paradrop range, consuming fuel. Cannot drop onto enemy-occupied tiles or
+// cities; lands adjacent and can attack next turn.
+function airborneDrop(u, targetTile) {
+	if (u.training !== "airborne" || u.moves <= 0) return false;
+	if (M.distTiles(u.tile, targetTile) > GameConfig.amphibious.paradropRange) return false;
+	if (!M.isPassable(targetTile)) return false;
+	if (G.cityAt[targetTile] >= 0 && G.cities[G.cityAt[targetTile]].owner !== u.owner) return false;
+	if (unitsAt(targetTile).some(function (x) { return x.owner !== u.owner; })) return false;
+	u.tile = targetTile;
+	u.moves = 0;
+	u.stepsMoved += 4;       // the drop burns fuel
+	u.landedTurns = 0;       // airborne troops are trained to land ready
+	gameLog(G.players[u.owner].name + "'s airborne infantry drops behind the lines");
+	return true;
+}
+
+// Train a WW2 infantry unit as airborne or amphibious (gold, once).
+function trainUnit(u, kind) {
+	if (!UNIT_TYPES[u.type].trainable) return false;
+	if (u.training) return false;
+	var pl = G.players[u.owner];
+	var cost = kind === "airborne" ? GameConfig.amphibious.trainAirborneCost : GameConfig.amphibious.trainAmphibiousCost;
+	if (pl.gold < cost) return false;
+	pl.gold -= cost;
+	u.training = kind;
+	gameLog(pl.name + " trains " + kind + " infantry");
 	return true;
 }
 
@@ -830,6 +972,8 @@ function supplyTurn(pl, myUnits) {
 	var S = GameConfig.supply;
 	var seeds = [];
 	G.cities.forEach(function (c) { if (c.owner === pl.id) seeds.push(c.tile); });
+	// Carriers are mobile supply bases for the fleet and its aircraft.
+	myUnits.forEach(function (u) { if (UNIT_TYPES[u.type].airbase) seeds.push(u.tile); });
 	var dist = null;
 	if (seeds.length) {
 		dist = M.bfsDistance(seeds, {
@@ -841,7 +985,7 @@ function supplyTurn(pl, myUnits) {
 	}
 	var cost = 0;
 	myUnits.forEach(function (u) {
-		var needs = UNIT_TYPES[u.type].needs || {};
+		var needs = unitNeeds(u);
 		var d = dist ? dist[u.tile] : -1;
 		var reachable = d >= 0 && d <= S.maxRange;
 		u.supplyDist = reachable ? d : -1;
@@ -869,7 +1013,20 @@ function updateEra(pl) {
 	var newEra = pl.science >= T.ww2Cost ? 2 : pl.science >= T.napoleonicCost ? 1 : 0;
 	if (newEra > pl.era) {
 		pl.era = newEra;
-		gameLog(pl.name + " enters the " + ERA_NAMES[newEra] + " era!");
+		// A hard generational shift: the old army is obsolete and disbands, and
+		// every city retools from scratch for the new era's units.
+		var wiped = 0;
+		G.units.slice().forEach(function (u) {
+			if (u.owner === pl.id && UNIT_TYPES[u.type].combat) { removeUnit(u); wiped++; }
+		});
+		G.cities.forEach(function (c) {
+			if (c.owner !== pl.id) return;
+			c.producing = null;
+			c.prodStore = 0;
+		});
+		pl.retool = {}; // fresh era, no legacy retooling penalties
+		gameLog(pl.name + " enters the " + ERA_NAMES[newEra] + " era! (" + wiped +
+			" obsolete units stand down; production resets)");
 	}
 }
 
@@ -880,6 +1037,9 @@ function updateEra(pl) {
 function endTurn() {
 	if (G.winner !== null) return;
 	G.turn++;
+
+	// 0. Carrier-based aircraft ride with their carrier from last turn's moves
+	syncCarrierAircraft();
 
 	// 1. AI decisions (human already gave orders through the UI)
 	G.players.forEach(function (pl) {
@@ -928,14 +1088,19 @@ function endTurn() {
 				}
 			}
 			// next turn's budget: air = 1 mission; no fuel = crawling pace
-			var budget = unitMoveBudget(u.type);
+			var budget = unitMoveBudget(u);
 			if (!u.supply.fuel) budget = Math.max(1, Math.round(budget * GameConfig.supply.noFuelPenalty));
 			u.moves = budget;
 			u.stepsMoved = 0;
 			u.attacksMade = 0;
+			if (u.landedTurns > 0) u.landedTurns--; // amphibious disorganization fades
 			if (G.owner[u.tile] === pl.id && u.supply.food) {
 				u.hp = Math.min(100, u.hp + GameConfig.units.healPerTurnFriendly);
 			}
+		});
+		// design retooling penalty ages off
+		Object.keys(pl.retool).forEach(function (k) {
+			if (--pl.retool[k] <= 0) delete pl.retool[k];
 		});
 		updateEra(pl);
 		pl.score = computeScore(pl);

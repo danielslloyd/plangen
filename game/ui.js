@@ -396,8 +396,9 @@ function renderCityTab() {
 	if (mine) {
 		html += "<select id='prodSel'><option value=''>— idle (gold) —</option>";
 		availableProduction(c).forEach(function (it) {
+			var label = UNIT_TYPES[it] ? UNIT_TYPES[it].name : it;
 			html += "<option value='" + it + "'" + (c.producing === it ? " selected" : "") + ">" +
-				it + " (" + productionCost(it) + "⚒)</option>";
+				label + " (" + productionCost(it, c) + "⚒)</option>";
 		});
 		html += "</select> <span class='sub'>" + fmtNum(c.prodStore, 0) + "⚒ stored</span>";
 	} else {
