@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hex Economy — Spatial Simulator</title>
+<style>
+  :root{
+    --bg:#0e1620; --panel:#16212e; --panel-2:#1b2836; --line:#26374a;
+    --ink:#e7eef5; --muted:#8698a9; --dim:#5f7183;
+    --farm:#6fb07f; --city:#e2a24a; --warn:#e0685f; --good:#5aa9d6; --sel:#f2f6fa;
+    --road:#f0c46a;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden}
+  body{background:var(--bg); color:var(--ink); font-family:var(--sans); font-size:13px; line-height:1.4;}
+  .app{display:grid; grid-template-columns:minmax(0,1fr) 320px; grid-template-rows:auto 1fr; height:100vh; gap:10px; padding:10px;}
+  @media (max-width:820px){ .app{grid-template-columns:1fr; grid-template-rows:auto auto 1fr} .side{grid-row:3} }
+  .topbar{grid-column:1/-1; display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+    background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:8px 12px;}
+  h1{font-size:14px; margin:0; font-weight:600; letter-spacing:.02em; white-space:nowrap}
+  h1 .sub{color:var(--dim); font-weight:400; font-size:10px; display:block; letter-spacing:.02em}
+  .bar{display:flex; gap:6px; align-items:center; flex-wrap:wrap}
+  .spacer{flex:1}
+  button{font-family:var(--sans); font-size:12px; color:var(--ink); background:var(--panel-2);
+    border:1px solid var(--line); border-radius:7px; padding:6px 10px; cursor:pointer; transition:background .12s,border-color .12s; white-space:nowrap}
+  button:hover{background:#22303f; border-color:#33485d}
+  button.primary{background:#3f6f52; border-color:#4f8a67; color:#eafff0}
+  button.active{background:#26384a; border-color:var(--good); color:#eaf6ff}
+  button.sm{padding:5px 8px; font-size:11px}
+  .seg{display:flex; gap:3px; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:3px}
+  .seg button{border:none; background:transparent; padding:5px 9px}
+  .seg button.active{background:#26384a; border-radius:6px; color:#eaf6ff}
+  .mapwrap{position:relative; background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; min-height:0}
+  canvas{display:block; width:100%; height:100%; touch-action:none; cursor:crosshair}
+  .overlay{position:absolute; left:10px; bottom:10px; background:rgba(14,22,32,.82); border:1px solid var(--line);
+    border-radius:8px; padding:8px 10px; font-size:11px; color:var(--muted); pointer-events:none; max-width:260px}
+  .overlay .k{display:inline-flex;align-items:center;gap:5px;margin-right:10px}
+  .sw{width:10px;height:10px;border-radius:2px;display:inline-block}
+  .brushrow{position:absolute; left:10px; top:10px; display:flex; gap:5px; flex-wrap:wrap; max-width:70%}
+  .brushrow button{font-size:11px; padding:5px 8px}
+  .side{background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow-y:auto; min-height:0; display:flex; flex-direction:column}
+  .side h2{font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); margin:0; padding:10px 12px; border-bottom:1px solid var(--line)}
+  .stats{display:grid; grid-template-columns:1fr 1fr; gap:1px; background:var(--line)}
+  .stat{background:var(--panel-2); padding:8px 10px}
+  .stat .lab{font-size:9px; letter-spacing:.06em; text-transform:uppercase; color:var(--dim)}
+  .stat .val{font-family:var(--mono); font-size:15px; margin-top:1px}
+  .group>.gh{font-size:9px; letter-spacing:.1em; text-transform:uppercase; color:var(--city); padding:9px 12px 3px; border-top:1px solid var(--line)}
+  .knob{display:grid; grid-template-columns:96px 1fr 52px; gap:7px; align-items:center; padding:3px 12px}
+  .knob label{font-size:11px; color:var(--ink)}
+  .knob label .g{color:var(--dim); font-size:9px; display:block; line-height:1.2}
+  input[type=range]{width:100%; accent-color:var(--city); height:3px}
+  input[type=number]{width:100%; font-family:var(--mono); font-size:11px; text-align:right; background:var(--bg); color:var(--ink); border:1px solid var(--line); border-radius:6px; padding:3px 5px}
+  input[type=number]:focus{outline:none;border-color:var(--good)}
+  .toggle{display:flex;align-items:center;gap:8px;padding:5px 12px;font-size:11px}
+  .toggle input{accent-color:var(--good)}
+  .note{font-size:10px;color:var(--dim);padding:6px 12px 12px}
+  .kbd{font-family:var(--mono);background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:0 4px;font-size:10px}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <h1>Hex Economy<span class="sub">von Thünen basins · distance-priced food · roads discount transport</span></h1>
+    <div class="seg" id="tools">
+      <button data-tool="select" title="Drag to pan, wheel to zoom">✋ Pan</button>
+      <button data-tool="paint" class="active" title="Paint terrain">▦ Terrain</button>
+      <button data-tool="city" title="Found / remove a city">◉ City</button>
+      <button data-tool="road" title="Drag to lay roads">╱ Road</button>
+      <button data-tool="erase" title="Remove cities & roads">⌫ Erase</button>
+    </div>
+    <div class="spacer"></div>
+    <div class="seg" id="views">
+      <button data-view="basins" class="active">Basins</button>
+      <button data-view="terrain">Terrain</button>
+      <button data-view="intensity">Farming</button>
+      <button data-view="price">Prices</button>
+    </div>
+    <div class="bar">
+      <button id="playBtn" class="primary">▶ Run</button>
+      <button id="stepBtn" class="sm">Step</button>
+      <button id="resetBtn" class="sm">Reset pop</button>
+    </div>
+  </div>
+
+  <div class="mapwrap">
+    <canvas id="map"></canvas>
+    <div class="brushrow" id="brushrow"></div>
+    <div class="overlay" id="legend"></div>
+  </div>
+
+  <div class="side">
+    <h2>Readouts</h2>
+    <div class="stats">
+      <div class="stat"><div class="lab">Total pop</div><div class="val" id="s_pop">—</div></div>
+      <div class="stat"><div class="lab">Cities</div><div class="val" id="s_cities">—</div></div>
+      <div class="stat"><div class="lab">Farm output/turn</div><div class="val" id="s_out">—</div></div>
+      <div class="stat"><div class="lab">Avg food price</div><div class="val" id="s_price">—</div></div>
+      <div class="stat"><div class="lab">Net gold/turn</div><div class="val" id="s_gold">—</div></div>
+      <div class="stat"><div class="lab">Treasury</div><div class="val" id="s_treas">—</div></div>
+    </div>
+
+    <h2>Knobs</h2>
+    <div id="knobs"></div>
+    <div class="toggle"><input type="checkbox" id="emerge" checked><label for="emerge">Let new cities emerge in underserved fertile land</label></div>
+
+    <h2>Map</h2>
+    <div class="bar" style="padding:8px 12px;gap:6px">
+      <button id="regenBtn" class="sm">Regenerate terrain</button>
+      <button id="clearBtn" class="sm">Clear to plains</button>
+    </div>
+    <div class="note">
+      <b>Tools:</b> Terrain paints land quality (pick a brush top-left); City founds a settlement; Road drags cheap trade corridors; Erase removes cities/roads.
+      <b>Keys:</b> <span class="kbd">space</span> run · <span class="kbd">s</span> step · <span class="kbd">r</span> reset pop · scroll to zoom, Pan tool to drag.
+      Farmland ships food to the city offering the best netback (its price minus transport). Cities grow while their gold can afford the food they pull; overreach — too big, too far, too many roads — stalls them.
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
+const SQRT3=Math.sqrt(3);
+
+/* ---------------- parameters ---------------- */
+const params={
+  K0:      {v:1.0,  min:0.2, max:3,  step:0.1,  g:"Transport", label:"Overland cost", hint:"gold/food per hex, open country"},
+  K1:      {v:0.25, min:0.05,max:1,  step:0.05, g:"Transport", label:"Road cost",     hint:"gold/food per hex on a road"},
+  wage:    {v:3.0,  min:1,   max:10, step:0.5,  g:"Economy",   label:"City wage",      hint:"gold per city worker / turn"},
+  c:       {v:1.0,  min:0.5, max:3,  step:0.1,  g:"Economy",   label:"Food per person",hint:"consumed per person / turn"},
+  W0:      {v:0.5,  min:0.1, max:2,  step:0.1,  g:"Economy",   label:"Min farm price", hint:"netback below this = fallow"},
+  rho:     {v:0.10, min:0.02,max:0.3,step:0.02, g:"Dynamics",  label:"Growth rate",    hint:"city population speed"},
+  popScale:{v:1.5,  min:0.5, max:5,  step:0.5,  g:"Dynamics",  label:"Growth softness",hint:"higher = gentler response"},
+  roadUpkeep:{v:0.3,min:0,   max:2,  step:0.1,  g:"Dynamics",  label:"Road upkeep",    hint:"gold/road/turn from treasury"},
+};
+const SOLVE_ITERS=80, PRICE_ETA=0.03, PRICE_CAP=60, EMERGE_EVERY=50, EMERGE_THRESH=90;
+
+/* ---------------- hex grid ---------------- */
+let COLS=26, ROWS=16, SIZE=22;
+let hexes=[], axialMap={}, roads=new Set();
+const DIRS=[[1,0],[1,-1],[0,-1],[-1,0],[-1,1],[0,1]];
+const TERR={
+  water:   {C:0, passable:false, col:"#20415e"},
+  mountain:{C:0, passable:false, col:"#3b3f49"},
+  barren:  {C:0, passable:true,  col:"#4a4636"},
+  plains:  {C:3, passable:true,  col:"#3c5a44"},
+  farm:    {C:6, passable:true,  col:"#4d7a4f"},
+  rich:    {C:9, passable:true,  col:"#5fa564"},
+};
+const rk=(i,j)=> i<j ? i+"-"+j : j+"-"+i;
+
+function genGrid(){
+  hexes=[]; axialMap={};
+  for(let r=0;r<ROWS;r++) for(let col=0;col<COLS;col++){
+    const q=col-Math.floor(r/2);
+    const cx=SIZE*SQRT3*(q+r/2), cy=SIZE*1.5*r;
+    const i=hexes.length;
+    hexes.push({i,q,r,col,cx,cy,C:3,terrain:"plains",passable:true,isCity:false,pop:0,basin:-1,netback:-Infinity,out:0});
+    axialMap[q+","+r]=i;
+  }
+}
+function getHex(col,row){ return hexes.find(h=>h.col===col&&h.r===row); }
+function neighbors(i){ const h=hexes[i], out=[]; for(const[dq,dr]of DIRS){ const j=axialMap[(h.q+dq)+","+(h.r+dr)]; if(j!==undefined) out.push(j);} return out; }
+function setTerrain(h,t){ h.terrain=t; h.C=TERR[t].C; h.passable=TERR[t].passable; if(!h.passable&&h.isCity){h.isCity=false;h.pop=0;} }
+
+function seedTerrain(){
+  hexes.forEach(h=>setTerrain(h,"plains"));
+  // fertile blobs
+  const blobs=[[8,5,"rich"],[19,11,"rich"],[13,3,"farm"],[6,12,"farm"],[22,6,"farm"]];
+  hexes.forEach(h=>blobs.forEach(([bc,br,t])=>{ if(Math.hypot(h.col-bc,h.r-br)<2.6){ if(TERR[t].C>h.C) setTerrain(h,t);} }));
+  // a river
+  hexes.forEach(h=>{ if(Math.abs(h.col - h.r*0.65 - 5) < 0.8) setTerrain(h,"water"); });
+  // a mountain ridge
+  hexes.forEach(h=>{ if(h.col>=20 && h.col<=21 && h.r>=1 && h.r<=8) setTerrain(h,"mountain"); });
+  roads=new Set();
+  // two founding settlements on decent land
+  [[4,4],[16,12]].forEach(([c,r])=>{ let h=getHex(c,r); if(h&&!h.passable){ h=hexes.find(x=>x.passable&&Math.hypot(x.col-c,x.r-r)<3);} if(h){h.isCity=true;h.pop=5;} });
+  cityPrices={}; treasury=40; tick=0; transportDirty=true;
+}
+
+/* ---------------- transport (Dijkstra per city, cached) ---------------- */
+let transportByCity={}, transportDirty=true;
+function computeTransport(){
+  transportByCity={};
+  const n=hexes.length;
+  const cities=hexes.filter(h=>h.isCity).map(h=>h.i);
+  for(const src of cities){
+    const dist=new Float64Array(n).fill(Infinity); dist[src]=0;
+    const done=new Uint8Array(n);
+    for(let it=0;it<n;it++){
+      let u=-1,best=Infinity;
+      for(let k=0;k<n;k++) if(!done[k]&&dist[k]<best){best=dist[k];u=k;}
+      if(u<0) break; done[u]=1;
+      if(!hexes[u].passable && u!==src) continue;
+      for(const v of neighbors(u)){
+        if(!hexes[v].passable) continue;
+        const w = roads.has(rk(u,v)) ? params.K1.v : params.K0.v;
+        if(dist[u]+w < dist[v]) dist[v]=dist[u]+w;
+      }
+    }
+    transportByCity[src]=dist;
+  }
+}
+
+/* ---------------- economic solve ---------------- */
+let cityPrices={}, treasury=40, tick=0, lastNetGold=0;
+const surplusOf=(C,nb)=> nb>params.W0.v ? C*(1-params.W0.v/nb) : 0;
+
+function assignAndSupply(cities){
+  const supply={}; cities.forEach(c=>supply[c.i]=0);
+  for(const h of hexes){
+    if(h.isCity){
+      h.basin=h.i; h.netback=cityPrices[h.i];
+      h.out = h.C>0 ? surplusOf(h.C,cityPrices[h.i]) : 0;
+      supply[h.i]+=h.out;
+      continue;
+    }
+    if(!h.passable){ h.basin=-1; h.out=0; h.netback=-Infinity; continue; }
+    let best=-Infinity,bk=-1;
+    for(const c of cities){ const tc=transportByCity[c.i]?transportByCity[c.i][h.i]:Infinity;
+      if(!isFinite(tc)) continue; const nb=cityPrices[c.i]-tc; if(nb>best){best=nb;bk=c.i;} }
+    h.netback=best;
+    if(best>params.W0.v){ h.basin=bk; h.out=surplusOf(h.C,best); supply[bk]+=h.out; }
+    else { h.basin=-1; h.out=0; }
+  }
+  return supply;
+}
+function solve(){
+  if(transportDirty){ computeTransport(); transportDirty=false; }
+  hexes.forEach(h=>{h.basin=-1;h.out=0;h.netback=-Infinity;});
+  const cities=hexes.filter(h=>h.isCity);
+  for(const k in cityPrices){ const idx=+k; if(!hexes[idx]||!hexes[idx].isCity) delete cityPrices[k]; }
+  if(!cities.length) return {supply:{},cities:[]};
+  cities.forEach(c=>{ if(cityPrices[c.i]==null) cityPrices[c.i]=params.W0.v*2; });
+  let supply={};
+  for(let it=0;it<SOLVE_ITERS;it++){
+    supply=assignAndSupply(cities);
+    let mx=0;
+    cities.forEach(c=>{ const demand=params.c.v*c.pop; const ex=demand-supply[c.i]; mx=Math.max(mx,Math.abs(ex));
+      cityPrices[c.i]=clamp(cityPrices[c.i]+PRICE_ETA*ex, params.W0.v, PRICE_CAP); });
+    if(mx<1e-3 && it>3) break;
+  }
+  supply=assignAndSupply(cities);
+  return {supply,cities};
+}
+
+function stepEconomy(){
+  const {supply,cities}=solve();
+  let netGold=0;
+  cities.forEach(c=>{
+    const P=cityPrices[c.i];
+    const perCapCost=P*params.c.v;                 // gold to feed one person
+    const dp=params.rho.v*c.pop*Math.tanh((params.wage.v-perCapCost)/params.popScale.v);
+    c.pop=Math.max(0.1, c.pop+dp);
+    netGold += (params.wage.v-perCapCost)*c.pop;    // industry income minus food bill
+  });
+  const upkeep=roads.size*params.roadUpkeep.v;
+  lastNetGold = netGold - upkeep;
+  treasury += lastNetGold;
+  if(treasury<0){                                   // overreach: shed a road, recover
+    const arr=[...roads]; if(arr.length){ roads.delete(arr[arr.length-1]); transportDirty=true; }
+    treasury=0;
+  }
+  if($("emerge").checked && tick>0 && tick%EMERGE_EVERY===0) tryEmerge();
+  tick++;
+}
+
+function tryEmerge(){
+  const cities=hexes.filter(h=>h.isCity);
+  if(!cities.length) return;
+  let bestScore=-1,bestI=-1;
+  for(const h of hexes){
+    if(h.isCity||!h.passable||h.C<=0) continue;
+    let cap=h.C; for(const j of neighbors(h.i)) if(hexes[j].passable) cap+=hexes[j].C;
+    let dmin=Infinity;
+    for(const c of cities){ const tc=transportByCity[c.i]?transportByCity[c.i][h.i]:Infinity; dmin=Math.min(dmin, isFinite(tc)?tc:params.K0.v*30); }
+    const score=cap*dmin;
+    if(score>bestScore){ bestScore=score; bestI=h.i; }
+  }
+  if(bestI>=0 && bestScore>EMERGE_THRESH){ hexes[bestI].isCity=true; hexes[bestI].pop=2; cityPrices[bestI]=params.W0.v*2; transportDirty=true; }
+}
+
+/* ---------------- rendering ---------------- */
+const cv=$("map"), ctx=cv.getContext("2d");
+let cam={x:60,y:40,scale:1}, view="basins", tool="paint", brush="farm";
+const HEXPTS=[]; for(let i=0;i<6;i++){ const a=Math.PI/3*i+Math.PI/6; HEXPTS.push([Math.cos(a)*SIZE,Math.sin(a)*SIZE]); }
+function cityHue(i){ return (i*67)%360; }
+function lerpShade(base, t){ return base; }
+
+function resize(){
+  const dpr=window.devicePixelRatio||1, w=cv.clientWidth, h=cv.clientHeight;
+  cv.width=w*dpr; cv.height=h*dpr; draw();
+}
+function fitView(){
+  const xs=hexes.map(h=>h.cx), ys=hexes.map(h=>h.cy);
+  const minx=Math.min(...xs)-SIZE, maxx=Math.max(...xs)+SIZE, miny=Math.min(...ys)-SIZE, maxy=Math.max(...ys)+SIZE;
+  const w=cv.clientWidth||800, h=cv.clientHeight||500;
+  const s=Math.min(w/(maxx-minx), h/(maxy-miny))*0.96;
+  cam.scale=s; cam.x=(w-(maxx-minx)*s)/2 - minx*s; cam.y=(h-(maxy-miny)*s)/2 - miny*s;
+}
+function fillFor(h){
+  if(view==="terrain") return TERR[h.terrain].col;
+  if(!h.passable) return TERR[h.terrain].col;
+  if(view==="basins"){
+    if(h.isCity) return `hsl(${cityHue(h.i)} 60% 55%)`;
+    if(h.basin>=0){ const inten=h.C>0?clamp(h.out/h.C,0,1):0; return `hsl(${cityHue(h.basin)} ${35+inten*35}% ${22+inten*20}%)`; }
+    return "#2a3340"; // fallow
+  }
+  if(view==="intensity"){
+    if(h.isCity) return "#e2a24a";
+    const inten=h.C>0?clamp(h.out/h.C,0,1):0;
+    return `hsl(140 ${20+inten*55}% ${10+inten*38}%)`;
+  }
+  if(view==="price"){
+    if(h.basin<0 && !h.isCity) return "#252d38";
+    const nb=isFinite(h.netback)?h.netback:0;
+    const t=clamp((nb-params.W0.v)/(6-params.W0.v),0,1); // low→blue, high→warm
+    const hue=210-t*210;
+    return `hsl(${hue} 60% ${28+t*22}%)`;
+  }
+  return "#333";
+}
+function draw(){
+  const dpr=window.devicePixelRatio||1;
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,cv.width,cv.height);
+  ctx.setTransform(dpr*cam.scale,0,0,dpr*cam.scale, dpr*cam.x, dpr*cam.y);
+  // hexes
+  ctx.lineWidth=1/cam.scale; ctx.strokeStyle="#0e1620";
+  for(const h of hexes){
+    ctx.beginPath();
+    ctx.moveTo(h.cx+HEXPTS[0][0], h.cy+HEXPTS[0][1]);
+    for(let k=1;k<6;k++) ctx.lineTo(h.cx+HEXPTS[k][0], h.cy+HEXPTS[k][1]);
+    ctx.closePath();
+    ctx.fillStyle=fillFor(h); ctx.fill(); ctx.stroke();
+  }
+  // roads
+  ctx.strokeStyle="var(--road)"; ctx.strokeStyle="#f0c46a"; ctx.lineWidth=3.4/cam.scale; ctx.lineCap="round";
+  for(const key of roads){ const [a,b]=key.split("-").map(Number); const A=hexes[a],B=hexes[b]; if(!A||!B) continue;
+    ctx.beginPath(); ctx.moveTo(A.cx,A.cy); ctx.lineTo(B.cx,B.cy); ctx.stroke(); }
+  // cities
+  for(const h of hexes){ if(!h.isCity) continue;
+    const R=5+1.9*Math.sqrt(Math.max(h.pop,0.1));
+    ctx.beginPath(); ctx.arc(h.cx,h.cy,R,0,7);
+    ctx.fillStyle=`hsl(${cityHue(h.i)} 70% 58%)`; ctx.globalAlpha=0.92; ctx.fill(); ctx.globalAlpha=1;
+    ctx.lineWidth=1.6/cam.scale; ctx.strokeStyle="#0e1620"; ctx.stroke();
+    ctx.beginPath(); ctx.arc(h.cx,h.cy,R,0,7); ctx.lineWidth=1.2/cam.scale; ctx.strokeStyle="rgba(255,255,255,.7)"; ctx.stroke();
+    if(cam.scale>0.7){ ctx.fillStyle="#f6fbff"; ctx.font=`${11/cam.scale}px ${getComputedStyle(document.body).getPropertyValue('--mono')}`;
+      ctx.textAlign="center"; ctx.textBaseline="middle"; ctx.fillText(Math.round(h.pop), h.cx, h.cy); }
+  }
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+
+/* ---------------- stats + legend ---------------- */
+function updateStats(){
+  const cities=hexes.filter(h=>h.isCity);
+  let out=0; hexes.forEach(h=>out+=h.out||0);
+  const pop=cities.reduce((s,c)=>s+c.pop,0);
+  const avgP=cities.length?cities.reduce((s,c)=>s+(cityPrices[c.i]||0),0)/cities.length:0;
+  $("s_pop").textContent=Math.round(pop);
+  $("s_cities").textContent=cities.length;
+  $("s_out").textContent=out.toFixed(1);
+  $("s_price").textContent=avgP.toFixed(2);
+  $("s_gold").textContent=(lastNetGold>=0?"+":"")+lastNetGold.toFixed(1);
+  $("s_gold").style.color=lastNetGold<0?"var(--warn)":"var(--farm)";
+  $("s_treas").textContent=Math.round(treasury);
+  $("s_treas").style.color=treasury<=0?"var(--warn)":"var(--ink)";
+}
+function drawLegend(){
+  let h="";
+  if(view==="basins") h=`<span class="k">Hex tint = its city's basin, brighter = farmed harder</span><br><span class="k"><span class="sw" style="background:#2a3340"></span>fallow (too far to be worth farming)</span>`;
+  else if(view==="terrain") h=`<span class="k"><span class="sw" style="background:${TERR.rich.col}"></span>rich</span><span class="k"><span class="sw" style="background:${TERR.farm.col}"></span>farm</span><span class="k"><span class="sw" style="background:${TERR.plains.col}"></span>plains</span><span class="k"><span class="sw" style="background:${TERR.barren.col}"></span>barren</span><span class="k"><span class="sw" style="background:${TERR.water.col}"></span>water</span><span class="k"><span class="sw" style="background:${TERR.mountain.col}"></span>mtn</span>`;
+  else if(view==="intensity") h=`<span class="k">Green = farming intensity (share of land's capacity in use)</span>`;
+  else if(view==="price") h=`<span class="k">Netback price: <span class="sw" style="background:hsl(210 60% 30%)"></span>low → <span class="sw" style="background:hsl(20 60% 45%)"></span>high · amber = cities</span>`;
+  $("legend").innerHTML=h;
+}
+
+/* ---------------- interaction ---------------- */
+function hexRound(qf,rf){
+  let x=qf,z=rf,y=-x-z;
+  let rx=Math.round(x),ry=Math.round(y),rz=Math.round(z);
+  const dx=Math.abs(rx-x),dy=Math.abs(ry-y),dz=Math.abs(rz-z);
+  if(dx>dy&&dx>dz) rx=-ry-rz; else if(dy>dz) ry=-rx-rz; else rz=-rx-ry;
+  return [rx,rz];
+}
+function hexAt(cssx,cssy){
+  const wx=(cssx-cam.x)/cam.scale, wy=(cssy-cam.y)/cam.scale;
+  const qf=(SQRT3/3*wx - 1/3*wy)/SIZE, rf=(2/3*wy)/SIZE;
+  const [q,r]=hexRound(qf,rf); const idx=axialMap[q+","+r];
+  return idx===undefined?null:hexes[idx];
+}
+let dragging=false, lastHex=null, panLast=null;
+function scheduleDraw(){ solve(); draw(); updateStats(); }
+function editAt(h){
+  if(!h) return;
+  if(tool==="paint"){ setTerrain(h,brush); transportDirty=true; }
+  else if(tool==="city"){ if(h===lastHex) return; if(h.passable){ h.isCity=!h.isCity; h.pop=h.isCity?5:0; if(!h.isCity) delete cityPrices[h.i]; transportDirty=true; } lastHex=h; }
+  else if(tool==="road"){ if(lastHex && lastHex!==h && neighbors(lastHex.i).includes(h.i)){ roads.add(rk(lastHex.i,h.i)); transportDirty=true; } lastHex=h; }
+  else if(tool==="erase"){ if(h.isCity){h.isCity=false;h.pop=0;delete cityPrices[h.i];} neighbors(h.i).forEach(j=>roads.delete(rk(h.i,j))); transportDirty=true; }
+}
+cv.addEventListener("pointerdown",e=>{
+  const rect=cv.getBoundingClientRect(); const x=e.clientX-rect.left, y=e.clientY-rect.top;
+  dragging=true; lastHex=null; cv.setPointerCapture(e.pointerId);
+  if(tool==="select"){ panLast=[x,y]; return; }
+  editAt(hexAt(x,y)); if(!playing) scheduleDraw();
+});
+cv.addEventListener("pointermove",e=>{
+  if(!dragging) return;
+  const rect=cv.getBoundingClientRect(); const x=e.clientX-rect.left, y=e.clientY-rect.top;
+  if(tool==="select"){ if(panLast){ cam.x+=x-panLast[0]; cam.y+=y-panLast[1]; panLast=[x,y]; draw(); } return; }
+  editAt(hexAt(x,y)); if(!playing) scheduleDraw(); else draw();
+});
+cv.addEventListener("pointerup",e=>{ dragging=false; panLast=null; lastHex=null; if(!playing) scheduleDraw(); });
+cv.addEventListener("wheel",e=>{
+  e.preventDefault();
+  const rect=cv.getBoundingClientRect(); const x=e.clientX-rect.left, y=e.clientY-rect.top;
+  const f=Math.exp(-e.deltaY*0.0016), ns=clamp(cam.scale*f,0.25,4);
+  const wx=(x-cam.x)/cam.scale, wy=(y-cam.y)/cam.scale;
+  cam.scale=ns; cam.x=x-wx*ns; cam.y=y-wy*ns; draw();
+},{passive:false});
+
+$("tools").addEventListener("click",e=>{ const b=e.target.closest("button"); if(!b)return;
+  tool=b.dataset.tool; [...$("tools").children].forEach(x=>x.classList.toggle("active",x===b));
+  $("brushrow").style.display = tool==="paint"?"flex":"none";
+  cv.style.cursor = tool==="select"?"grab":"crosshair";
+});
+$("views").addEventListener("click",e=>{ const b=e.target.closest("button"); if(!b)return;
+  view=b.dataset.view; [...$("views").children].forEach(x=>x.classList.toggle("active",x===b)); drawLegend(); draw();
+});
+
+/* ---------------- brushes ---------------- */
+function buildBrushes(){
+  const order=[["rich","Rich"],["farm","Farm"],["plains","Plains"],["barren","Barren"],["water","Water"],["mountain","Mtn"]];
+  $("brushrow").innerHTML=order.map(([k,lab])=>`<button data-brush="${k}" class="${k===brush?'active':''}" style="border-left:3px solid ${TERR[k].col}">${lab}</button>`).join("");
+  $("brushrow").querySelectorAll("button").forEach(b=>b.addEventListener("click",()=>{ brush=b.dataset.brush;
+    $("brushrow").querySelectorAll("button").forEach(x=>x.classList.toggle("active",x===b)); }));
+}
+
+/* ---------------- knobs ---------------- */
+function buildKnobs(){
+  const wrap=$("knobs"); wrap.innerHTML="";
+  const groups={}; for(const k in params){ (groups[params[k].g] ||= []).push(k); }
+  for(const gn in groups){
+    const gd=document.createElement("div"); gd.className="group"; gd.innerHTML=`<div class="gh">${gn}</div>`;
+    groups[gn].forEach(k=>{ const p=params[k]; const row=document.createElement("div"); row.className="knob";
+      row.innerHTML=`<label>${p.label}<span class="g">${p.hint}</span></label>`+
+        `<input type="range" data-k="${k}" min="${p.min}" max="${p.max}" step="${p.step}" value="${p.v}">`+
+        `<input type="number" data-k="${k}" min="${p.min}" max="${p.max}" step="${p.step}" value="${p.v}">`;
+      gd.appendChild(row); });
+    wrap.appendChild(gd);
+  }
+  wrap.querySelectorAll("input").forEach(inp=>inp.addEventListener("input",e=>{
+    const k=e.target.dataset.k, v=parseFloat(e.target.value); if(isNaN(v))return; params[k].v=v;
+    wrap.querySelectorAll(`input[data-k="${k}"]`).forEach(o=>{ if(o!==e.target) o.value=v; });
+    if(k==="K0"||k==="K1") transportDirty=true;
+    if(!playing) scheduleDraw();
+  }));
+}
+
+/* ---------------- run loop ---------------- */
+let playing=false, speed=8, timer=null;
+function startLoop(){ timer=setInterval(()=>{ stepEconomy(); draw(); updateStats(); }, 1000/speed); }
+function stopLoop(){ clearInterval(timer); timer=null; }
+function setPlay(on){ playing=on; $("playBtn").textContent=on?"⏸ Pause":"▶ Run"; $("playBtn").classList.toggle("primary",!on); on?startLoop():stopLoop(); }
+$("playBtn").addEventListener("click",()=>setPlay(!playing));
+$("stepBtn").addEventListener("click",()=>{ stepEconomy(); draw(); updateStats(); });
+$("resetBtn").addEventListener("click",()=>{ hexes.forEach(h=>{ if(h.isCity) h.pop=5; }); cityPrices={}; treasury=40; tick=0; lastNetGold=0; transportDirty=true; scheduleDraw(); });
+$("regenBtn").addEventListener("click",()=>{ if(playing)setPlay(false); seedTerrain(); fitView(); scheduleDraw(); });
+$("clearBtn").addEventListener("click",()=>{ if(playing)setPlay(false); hexes.forEach(h=>setTerrain(h,"plains")); roads=new Set(); hexes.forEach(h=>{h.isCity=false;h.pop=0;}); cityPrices={}; treasury=40; transportDirty=true; scheduleDraw(); });
+
+window.addEventListener("keydown",e=>{
+  if(e.target.tagName==="INPUT") return;
+  if(e.code==="Space"){ e.preventDefault(); setPlay(!playing); }
+  else if(e.key==="s"){ stepEconomy(); draw(); updateStats(); }
+  else if(e.key==="r"){ hexes.forEach(h=>{ if(h.isCity) h.pop=5; }); cityPrices={}; treasury=40; scheduleDraw(); }
+});
+window.addEventListener("resize",resize);
+
+/* ---------------- boot ---------------- */
+genGrid(); seedTerrain(); buildBrushes(); buildKnobs(); drawLegend();
+requestAnimationFrame(()=>{ resize(); fitView(); scheduleDraw(); });
+</script>
+</body>
+</html>

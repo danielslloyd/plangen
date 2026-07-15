@@ -1,0 +1,12 @@
+{
+  "maps": "all",
+  "strategies": "all",
+  "axes": {
+    "K0": [0.5, 2.0],
+    "urban": [0.3, 0.7],
+    "edgeVar": [0.0, 0.7]
+  },
+  "fixed": { "roadMult": 0.30, "migrate": 0.5, "r": 0.10, "malthus": true },
+  "runOpts": { "maxTicks": 450, "minTicks": 120, "sampleEvery": 15 },
+  "out": "out/sweep.jsonl"
+}

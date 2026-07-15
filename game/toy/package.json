@@ -1,0 +1,19 @@
+{
+  "name": "hex-economy-v2",
+  "version": "0.2.0",
+  "description": "Hex-economy v2 balance sandbox + headless test harness (labor/wealth/roads).",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "validate": "node test/validate_core.js && node test/validate_layers.js && node test/validate_organic.js && node test/validate_transport.js",
+    "test": "node test/validate_core.js && node test/validate_layers.js && node test/validate_organic.js && node test/validate_transport.js",
+    "gen-maps": "node test/gen_maps.js",
+    "sweep": "node harness.js",
+    "sweep:quick": "node harness.js --quick",
+    "analyze": "node analyze.js out/sweep.jsonl",
+    "steer": "node llm_steer.js out/sweep.analysis.json",
+    "steer:ollama": "node llm_steer.js out/sweep.analysis.json --ollama",
+    "loop": "npm run sweep && npm run analyze && npm run steer"
+  },
+  "engines": { "node": ">=18" }
+}

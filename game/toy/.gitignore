@@ -1,0 +1,3 @@
+# generated sweep output (regenerate with `npm run sweep && npm run analyze`)
+out/
+node_modules/

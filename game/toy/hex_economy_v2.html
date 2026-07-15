@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hex Economy v2 — Labor · Wealth · Roads</title>
+<style>
+  :root{
+    --bg:#0e1620; --panel:#16212e; --panel-2:#1b2836; --line:#26374a;
+    --ink:#e7eef5; --muted:#8698a9; --dim:#5f7183;
+    --farm:#6fb07f; --city:#e2a24a; --warn:#e0685f; --good:#5aa9d6; --sel:#f2f6fa;
+    --road:#f0c46a; --gold:#e2c14a; --labor:#8fb7e8;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden}
+  body{background:var(--bg); color:var(--ink); font-family:var(--sans); font-size:13px; line-height:1.4;}
+  .app{display:grid; grid-template-columns:minmax(0,1fr) 340px; grid-template-rows:auto 1fr; height:100vh; gap:10px; padding:10px;}
+  @media (max-width:900px){ .app{grid-template-columns:1fr; grid-template-rows:auto auto 1fr} .side{grid-row:3} }
+  .topbar{grid-column:1/-1; display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+    background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:8px 12px;}
+  h1{font-size:14px; margin:0; font-weight:600; letter-spacing:.02em; white-space:nowrap}
+  h1 .sub{color:var(--dim); font-weight:400; font-size:10px; display:block; letter-spacing:.02em}
+  .spacer{flex:1}
+  button{font-family:var(--sans); font-size:12px; color:var(--ink); background:var(--panel-2);
+    border:1px solid var(--line); border-radius:7px; padding:6px 10px; cursor:pointer; transition:background .12s,border-color .12s; white-space:nowrap}
+  button:hover{background:#22303f; border-color:#33485d}
+  button.primary{background:#3f6f52; border-color:#4f8a67; color:#eafff0}
+  button.active{background:#26384a; border-color:var(--good); color:#eaf6ff}
+  button.sm{padding:5px 8px; font-size:11px}
+  .seg{display:flex; gap:3px; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:3px}
+  .seg button{border:none; background:transparent; padding:5px 9px}
+  .seg button.active{background:#26384a; border-radius:6px; color:#eaf6ff}
+  .mapwrap{position:relative; background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; min-height:0}
+  canvas{display:block; width:100%; height:100%; touch-action:none; cursor:crosshair}
+  .overlay{position:absolute; left:10px; bottom:10px; background:rgba(14,22,32,.86); border:1px solid var(--line);
+    border-radius:8px; padding:8px 10px; font-size:11px; color:var(--muted); pointer-events:none; max-width:340px}
+  .overlay .k{display:inline-flex;align-items:center;gap:5px;margin-right:10px}
+  .sw{width:10px;height:10px;border-radius:2px;display:inline-block}
+  .brushrow{position:absolute; left:10px; top:10px; display:flex; gap:5px; flex-wrap:wrap; max-width:70%}
+  .brushrow button{font-size:11px; padding:5px 8px}
+  .hint{position:absolute; right:10px; top:10px; background:rgba(14,22,32,.86); border:1px solid var(--line);
+    border-radius:8px; padding:6px 9px; font-size:11px; color:var(--good); pointer-events:none; max-width:230px}
+  .side{background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow-y:auto; min-height:0; display:flex; flex-direction:column}
+  .side h2{font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); margin:0; padding:10px 12px; border-bottom:1px solid var(--line)}
+  .stats{display:grid; grid-template-columns:1fr 1fr; gap:1px; background:var(--line)}
+  .stat{background:var(--panel-2); padding:8px 10px}
+  .stat .lab{font-size:9px; letter-spacing:.06em; text-transform:uppercase; color:var(--dim)}
+  .stat .val{font-family:var(--mono); font-size:15px; margin-top:1px}
+  .group>.gh{font-size:9px; letter-spacing:.1em; text-transform:uppercase; color:var(--city); padding:9px 12px 3px; border-top:1px solid var(--line)}
+  .knob{display:grid; grid-template-columns:104px 1fr 50px; gap:7px; align-items:center; padding:3px 12px}
+  .knob label{font-size:11px; color:var(--ink)}
+  .knob label .g{color:var(--dim); font-size:9px; display:block; line-height:1.2}
+  input[type=range]{width:100%; accent-color:var(--city); height:3px}
+  input[type=number]{width:100%; font-family:var(--mono); font-size:11px; text-align:right; background:var(--bg); color:var(--ink); border:1px solid var(--line); border-radius:6px; padding:3px 5px}
+  input[type=number]:focus{outline:none;border-color:var(--good)}
+  .toggle{display:flex;align-items:center;gap:8px;padding:5px 12px;font-size:11px}
+  .toggle input{accent-color:var(--good)}
+  .note{font-size:10px;color:var(--dim);padding:6px 12px 12px}
+  .kbd{font-family:var(--mono);background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:0 4px;font-size:10px}
+  .warn{color:var(--warn)}
+  #cityCard{padding:8px 12px;font-family:var(--mono);font-size:11px}
+  #cityCard .row{display:flex;justify-content:space-between;gap:8px;padding:1px 0}
+  #cityCard .row .n{color:var(--muted)}
+  #cityCard b{color:var(--city)}
+  /* floating per-tile tooltip (any tile; urban tiles get a city section) */
+  #tileTip{position:absolute; pointer-events:none; z-index:6; display:none; min-width:186px; max-width:250px;
+    background:rgba(12,19,28,.95); border:1px solid #2b3d4f; border-radius:9px; padding:8px 10px;
+    font-family:var(--mono); font-size:12px; line-height:1.45; color:var(--ink); box-shadow:0 6px 22px rgba(0,0,0,.5)}
+  #tileTip .tt-h{font-size:12.5px; font-weight:600; color:#eaf6ff; margin-bottom:2px}
+  #tileTip .tt-c{color:var(--dim); font-weight:400; font-size:11px}
+  #tileTip .tt-sec{margin:5px 0 2px; font-size:9px; letter-spacing:.1em; text-transform:uppercase; color:var(--city)}
+  #tileTip .tt-sec.farm{color:var(--farm)}
+  #tileTip .tt-r{display:flex; justify-content:space-between; gap:12px}
+  #tileTip .tt-r span:first-child{color:var(--muted)}
+  #tileTip .tt-r span:last-child{color:var(--ink)}
+  #tileTip .pos{color:var(--good)} #tileTip .neg{color:var(--warn)}
+  #tileTip .tt-note{margin-top:6px; padding-top:6px; border-top:1px solid var(--line); font-family:var(--sans);
+    font-size:11px; line-height:1.5; color:var(--muted); white-space:normal}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <h1>Hex Economy v2<span class="sub">conserved workforce · von Thünen basins · roads cost gold + labor + food</span></h1>
+    <div class="seg" id="tools">
+      <button data-tool="select" title="Drag to pan, wheel to zoom">✋ Pan</button>
+      <button data-tool="paint" class="active" title="Paint terrain">▦ Terrain</button>
+      <button data-tool="city" title="Found / remove a city">◉ City</button>
+      <button data-tool="road" title="Click two cities to queue a road project">╱ Road</button>
+      <button data-tool="erase" title="Remove cities">⌫ Erase</button>
+    </div>
+    <div class="spacer"></div>
+    <div class="seg" id="views">
+      <button data-view="territory" class="active">Territory</button>
+      <button data-view="terrain">Terrain</button>
+      <button data-view="wealth">Wealth</button>
+      <button data-view="price">Prices</button>
+    </div>
+    <div class="seg">
+      <button id="playBtn" class="primary">▶ Run</button>
+      <button id="stepBtn" class="sm">Step</button>
+      <button id="resetBtn" class="sm">Reset</button>
+    </div>
+  </div>
+
+  <div class="mapwrap">
+    <canvas id="map"></canvas>
+    <div class="brushrow" id="brushrow"></div>
+    <div class="hint" id="hint" style="display:none"></div>
+    <div class="overlay" id="legend"></div>
+    <div id="tileTip"></div>
+  </div>
+
+  <div class="side">
+    <h2>Readouts</h2>
+    <div class="stats">
+      <div class="stat"><div class="lab">Population</div><div class="val" id="s_pop">—</div></div>
+      <div class="stat"><div class="lab">Aggregate wealth ΣY</div><div class="val" id="s_wealth">—</div></div>
+      <div class="stat"><div class="lab">City / Farm / Subs</div><div class="val" id="s_split" style="font-size:12px">—</div></div>
+      <div class="stat"><div class="lab">Avg food price</div><div class="val" id="s_price">—</div></div>
+      <div class="stat"><div class="lab">Roads · funded</div><div class="val" id="s_roads">—</div></div>
+      <div class="stat"><div class="lab">Treasury · tax pool</div><div class="val" id="s_treas" style="font-size:12px">—</div></div>
+      <div class="stat"><div class="lab">City wage · road/seg</div><div class="val" id="s_wage" style="font-size:12px">—</div></div>
+    </div>
+
+    <h2 id="cityHdr">City balance of trade <span style="color:var(--dim);text-transform:none;letter-spacing:0"> — hover a city</span></h2>
+    <div id="cityCard" style="color:var(--dim)">Hover or select a city to see its population split, food imports, output, tax, and net gold.</div>
+
+    <h2>Knobs</h2>
+    <div id="knobs"></div>
+    <div class="toggle"><input type="checkbox" id="malthus" checked><label for="malthus">Malthusian population growth (off = fixed pool, reallocation only)</label></div>
+    <div class="toggle"><input type="checkbox" id="bandits"><label for="bandits">Bandits colonize remote, poorly-maintained routes (levy tolls)</label></div>
+    <div class="toggle"><input type="checkbox" id="seaTravel" checked><label for="seaTravel">Sea travel — harbours connect coastal cities across water</label></div>
+
+    <h2>Overlay display</h2>
+    <div class="toggle"><input type="checkbox" id="showTile" checked><label for="showTile">Per-tile detail (pop split · food · gold) — zoom in</label></div>
+    <div class="toggle"><input type="checkbox" id="showFood" checked><label for="showFood">Food-producer arrows (each farm → its city)</label></div>
+    <div class="toggle"><input type="checkbox" id="showRoads" checked><label for="showRoads">Roads (dim = decaying toward overland)</label></div>
+
+    <h2>Map</h2>
+    <div style="display:flex;gap:6px;padding:8px 12px;flex-wrap:wrap">
+      <button id="regenBtn" class="sm">Next preset map</button>
+      <button id="clearBtn" class="sm">Clear to plains</button>
+    </div>
+    <div class="note">
+      <b>Road tool:</b> click one city, then another — a project auto-routes the cheapest path and builds one segment per tick (each finished segment helps immediately). Roads need <b>tax</b> (gold) to fund <b>crews + garrisons</b> (labor that eats food); over-extend and remote segments decay back toward overland cost. <b>Keys:</b> <span class="kbd">space</span> run · <span class="kbd">s</span> step · <span class="kbd">r</span> reset.
+    </div>
+  </div>
+</div>
+
+<script src="econ_engine.js"></script>
+<script src="maps.js"></script>
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
+const SIZE=22, SQRT3=Math.sqrt(3);
+
+/* ---------- knob definitions (UI -> engine cfg) ---------- */
+const KNOBS={
+  K0:{v:1.0,min:0.2,max:3,step:0.1,g:"Transport",label:"Overland cost",hint:"base gold/food per hex"},
+  roadMult:{v:0.30,min:0.1,max:0.9,step:0.05,g:"Transport",label:"Road multiplier",hint:"road cost = base × this (<1)"},
+  edgeVar:{v:0.55,min:0,max:1,step:0.05,g:"Transport",label:"Terrain variance",hint:"random per-edge cost spread (cheapest ≠ closest)"},
+  urban:{v:0.5,min:0,max:1,step:0.05,g:"Economy",label:"Urbanization",hint:"agrarian ↔ urban (sets A,α,p; keeps p>α)"},
+  kappa:{v:200,min:120,max:360,step:10,g:"Economy",label:"Farm saturation",hint:"farmers to saturate a hex"},
+  yieldVar:{v:0.30,min:0,max:0.6,step:0.05,g:"Economy",label:"Yield variance",hint:"per-tile random spread on farm & sea yields"},
+  basinHyst:{v:0.08,min:0,max:0.4,step:0.01,g:"Economy",label:"Basin stickiness",hint:"a rival must beat the current city by this % to steal a tile"},
+  fishPerSea:{v:180,min:0,max:400,step:20,g:"Coast & sea",label:"Fishing / sea tile",hint:"food capacity a coastal tile gains per adjacent water"},
+  coastalCoreBonus:{v:0.6,min:0,max:2,step:0.1,g:"Coast & sea",label:"Harbour town bias",hint:"how strongly emergent towns prefer a coastal site"},
+  seaCostFrac:{v:0.5,min:0.1,max:2,step:0.1,g:"Coast & sea",label:"Sea travel cost",hint:"cost per water-hex = this × lowest road cost"},
+  harborWorkers:{v:40,min:0,max:150,step:10,g:"Coast & sea",label:"Harbour workers",hint:"labour committed per coastal urban tile"},
+  r:{v:0.10,min:0.02,max:0.2,step:0.01,g:"Population",label:"Growth rate",hint:"Malthusian speed"},
+  migrate:{v:0.5,min:0.1,max:1,step:0.05,g:"Population",label:"Migration",hint:"fraction toward equilibrium/tick"},
+  cityFoundPop:{v:1000,min:0,max:3000,step:100,g:"Population",label:"City founding pop",hint:"people seeded when you place a city"},
+  tau:{v:0.15,min:0,max:0.6,step:0.01,g:"Fiscal & roads",label:"Tax rate τ",hint:"skim of city output → pool"},
+  wageShare:{v:2.5,min:0.5,max:6,step:0.1,g:"Fiscal & roads",label:"Public wage",hint:"cost of crews/garrisons (higher = fewer affordable)"},
+  garrisonPerDist:{v:3.0,min:0,max:8,step:0.5,g:"Fiscal & roads",label:"Garrison / dist",hint:"soldiers per hex of remoteness"},
+  degrade:{v:0.2,min:0,max:1,step:0.05,g:"Fiscal & roads",label:"Road decay",hint:"drift back to overland when unfunded"},
+};
+
+/* ---------- world ---------- */
+let world, view="territory", tool="paint", brush="farm", playing=false, timer=null;
+let cam={x:60,y:40,scale:1}, hoverCity=-1, roadFrom=-1;
+let mapCycle=Object.keys(EconMaps.GENERATORS), mapIdx=0;
+
+function cfgFromKnobs(){
+  const c={};
+  for(const k in KNOBS) c[k]=KNOBS[k].v;
+  c.malthus=$("malthus").checked; c.bandits=$("bandits").checked; c.seaTravel=$("seaTravel").checked;
+  return c;
+}
+function newWorldFromMap(m){
+  world=Econ.createWorld({name:m.name,seed:m.seed,cols:m.cols,rows:m.rows,cells:m.cells,config:cfgFromKnobs()});
+  // seed the two best sites as starting cities
+  (m.sites||[]).slice(0,2).forEach(s=>{const h=Econ.getHex(world,s.col,s.row); if(h)Econ.foundCity(world,h.i);});
+  Econ.step(world); // one solve so readouts populate
+}
+function loadPreset(i){ const gen=EconMaps.GENERATORS[mapCycle[i%mapCycle.length]]; newWorldFromMap(gen()); }
+
+/* ---------- rendering ---------- */
+const cv=$("map"), ctx=cv.getContext("2d");
+const HEXPTS=[]; for(let i=0;i<6;i++){const a=Math.PI/3*i+Math.PI/6; HEXPTS.push([Math.cos(a)*SIZE,Math.sin(a)*SIZE]);}
+function cityHue(i){ return (i*67)%360; }
+function px(h){ return [h.cx*SIZE, h.cy*SIZE]; }
+
+function resize(){ const dpr=window.devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight; cv.width=w*dpr; cv.height=h*dpr; draw(); }
+function fitView(){
+  const xs=world.hexes.map(h=>h.cx*SIZE), ys=world.hexes.map(h=>h.cy*SIZE);
+  const minx=Math.min(...xs)-SIZE,maxx=Math.max(...xs)+SIZE,miny=Math.min(...ys)-SIZE,maxy=Math.max(...ys)+SIZE;
+  const w=cv.clientWidth||800,h=cv.clientHeight||500;
+  const s=Math.min(w/(maxx-minx),h/(maxy-miny))*0.95;
+  cam.scale=s; cam.x=(w-(maxx-minx)*s)/2-minx*s; cam.y=(h-(maxy-miny)*s)/2-miny*s;
+}
+function fillFor(h){
+  const TERR=Econ.TERR;
+  if(view==="territory"){
+    // solid city colour on urban tiles; terrain colour underneath everything else
+    // (farmed tiles get their city's colour as hatching in a later pass)
+    if(h.isCity) return `hsl(${cityHue(h.clusterRep!=null?h.clusterRep:h.i)} 55% 48%)`;
+    return TERR[h.terrain].col;
+  }
+  if(view==="terrain"||!h.passable) return TERR[h.terrain].col;
+  const cap=h.Lsub>0?h.Lsub:1;
+  if(view==="wealth"){
+    if(h.isCity) return "#f0c46a";
+    const nb=isFinite(h.netback)?h.netback:0; const t=clamp(nb/6,0,1);
+    return h.basin>=0?`hsl(${45-t*45} ${30+t*40}% ${16+t*24}%)`:"#242c36";
+  }
+  if(view==="price"){
+    if(h.basin<0&&!h.isCity) return "#242c36";
+    const nb=isFinite(h.netback)?h.netback:0; const t=clamp(nb/6,0,1);
+    return `hsl(${210-t*210} 60% ${28+t*22}%)`;
+  }
+  return "#333";
+}
+function draw(){
+  if(!world) return;
+  const dpr=window.devicePixelRatio||1;
+  ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,cv.width,cv.height);
+  ctx.setTransform(dpr*cam.scale,0,0,dpr*cam.scale,dpr*cam.x,dpr*cam.y);
+  ctx.lineWidth=1/cam.scale; ctx.strokeStyle="#0e1620";
+  for(const h of world.hexes){ const [x,y]=px(h);
+    ctx.beginPath(); ctx.moveTo(x+HEXPTS[0][0],y+HEXPTS[0][1]);
+    for(let k=1;k<6;k++) ctx.lineTo(x+HEXPTS[k][0],y+HEXPTS[k][1]);
+    ctx.closePath(); ctx.fillStyle=fillFor(h); ctx.fill(); ctx.stroke();
+  }
+  if(view==="territory"){ drawHatching(); drawBasinBorders(); }
+  if($("showRoads").checked) drawRoads();
+  if($("showFood").checked) drawFoodArrows();
+  drawCities();
+  if($("showTile").checked) drawTileLabels();
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+// which city's territory a tile belongs to (farm -> basin, city -> its cluster)
+function tileBasin(h){ return h.isCity ? (h.clusterRep!=null?h.clusterRep:h.i) : h.basin; }
+// city-coloured diagonal hatching on farmed tiles — denser where farmed harder
+function drawHatching(){
+  for(const h of world.hexes){
+    if(h.isCity || h.basin<0 || !h.passable) continue;
+    const cap=h.Lsub>0?h.Lsub:1, inten=clamp((h.Lmkt+h.Lsubw)/cap,0.12,1);
+    const [x,y]=px(h);
+    ctx.save();
+    ctx.beginPath(); ctx.moveTo(x+HEXPTS[0][0],y+HEXPTS[0][1]);
+    for(let k=1;k<6;k++) ctx.lineTo(x+HEXPTS[k][0],y+HEXPTS[k][1]);
+    ctx.closePath(); ctx.clip();
+    ctx.strokeStyle=`hsla(${cityHue(h.basin)}, 70%, 60%, ${0.30+0.45*inten})`;
+    ctx.lineWidth=Math.max(0.8, (0.9+1.6*inten))/cam.scale;
+    const step=SIZE*0.42;
+    for(let d=-2*SIZE; d<=2*SIZE; d+=step){
+      ctx.beginPath(); ctx.moveTo(x-SIZE+d, y-SIZE); ctx.lineTo(x+SIZE+d, y+SIZE); ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+// color-coded outline hugging the inside of each city's basin
+function drawBasinBorders(){
+  ctx.lineCap="round"; ctx.lineJoin="round";
+  const half=SIZE*0.52, inset=SIZE*0.12;
+  for(const h of world.hexes){
+    const bk=tileBasin(h); if(bk<0) continue;
+    const [hx,hy]=px(h);
+    ctx.strokeStyle=`hsl(${cityHue(bk)} 78% 58%)`; ctx.lineWidth=2.6/cam.scale;
+    for(const ni of Econ.neighborsOf(world,h.i)){
+      const n=world.hexes[ni];
+      if(tileBasin(n)===bk) continue;                 // same territory: no border
+      const [nx,ny]=px(n); let dx=nx-hx,dy=ny-hy,L=Math.hypot(dx,dy)||1; dx/=L; dy/=L;
+      const mx=hx+dx*(L/2-inset), my=hy+dy*(L/2-inset);   // edge midpoint, nudged inward
+      ctx.beginPath(); ctx.moveTo(mx-(-dy)*half, my-(dx)*half); ctx.lineTo(mx+(-dy)*half, my+(dx)*half); ctx.stroke();
+    }
+  }
+}
+function drawRoads(){
+  for(const key in world.roadState){
+    const rs=world.roadState[key]; const [a,b]=key.split("-").map(Number);
+    const A=world.hexes[a],B=world.hexes[b]; if(!A||!B) continue;
+    const [ax,ay]=px(A),[bx,by]=px(B);
+    const t=clamp(1-rs.decay,0,1); // 1=fresh road, 0=decayed to overland
+    const bandit=rs.banditHold>0.05;
+    ctx.strokeStyle=bandit?`rgba(224,104,95,${0.5+0.5*rs.banditHold})`:`rgba(240,196,106,${0.25+0.65*t})`;
+    ctx.lineWidth=(1.6+2.4*t)/cam.scale; ctx.lineCap="round";
+    ctx.beginPath(); ctx.moveTo(ax,ay); ctx.lineTo(bx,by); ctx.stroke();
+  }
+}
+function drawFoodArrows(){
+  // one arrow per NET FOOD PRODUCER, pointing to the city it feeds (its basin)
+  let maxOut=1; for(const h of world.hexes) if(h.out>maxOut) maxOut=h.out;
+  ctx.lineCap="round";
+  for(const h of world.hexes){
+    if(h.isCity || h.basin<0 || !(h.out>0)) continue;
+    const dst=world.hexes[h.basin]; if(!dst) continue;
+    const [ax,ay]=px(h), [bx,by]=px(dst);
+    // shorten toward the city a touch so the head sits on the tile edge
+    const ang=Math.atan2(by-ay,bx-ax);
+    const t=clamp(h.out/maxOut,0.12,1);
+    ctx.strokeStyle="rgba(111,176,127,"+(0.25+0.5*t)+")"; ctx.lineWidth=(0.6+2.2*t)/cam.scale;
+    ctx.beginPath(); ctx.moveTo(ax,ay); ctx.lineTo(bx,by); ctx.stroke();
+    const hl=(6+4*t)/cam.scale;
+    ctx.beginPath(); ctx.moveTo(bx,by);
+    ctx.lineTo(bx-hl*Math.cos(ang-0.45),by-hl*Math.sin(ang-0.45));
+    ctx.lineTo(bx-hl*Math.cos(ang+0.45),by-hl*Math.sin(ang+0.45));
+    ctx.closePath(); ctx.fillStyle="rgba(111,176,127,"+(0.35+0.5*t)+")"; ctx.fill();
+  }
+}
+// small per-tile readout text (only when zoomed in enough to be legible)
+function drawTileLabels(){
+  const on=cam.scale*SIZE;               // on-screen tile radius (px)
+  if(on<15) return;                       // too small — skip
+  const fs=Math.min(12, on/3)/cam.scale;  // world-space font size (on-screen px ~7→12, tile-width limited)
+  ctx.textAlign="center"; ctx.textBaseline="middle";
+  ctx.font=fs+"px "+getComputedStyle(document.body).getPropertyValue('--mono');
+  for(const h of world.hexes){
+    if(!h.passable) continue;
+    const [x,y]=px(h); const lh=fs*1.15;
+    if(h.isCity){
+      line(x,y-lh, fmt(h.goldWorkers)+"c", "#f6d98a");
+      if(h.fishermen>0.5) line(x,y, fmt(h.fishermen)+"\u{1F41F}", "#7fc8e0");   // coastal city fishes
+      else if(h.govWorkers>0.5) line(x,y, fmt(h.govWorkers)+"g", "#e0a0a0");
+      line(x,y+lh, "$"+fmt(h.goldProd), "#cbb26a");
+    } else {
+      if(h.farmers<0.5 && h.foodCap<=0) continue;
+      line(x,y-lh, fmt(h.farmers)+"f", "#bfe3c9");
+      // market food / capacity (capacity = farm + fishing); net surplus below
+      line(x,y, fmt(Math.round(h.foodProd))+"/"+fmt(h.foodCap), h.fishCap>0?"#7fb8cc":"#8aa9b6");
+      const net=h.foodNet; line(x,y+lh, (net>=0?"+":"")+fmt(Math.round(net)), net>=0?"#6fb07f":"#e0685f");
+    }
+  }
+  function line(x,y,txt,col){ ctx.fillStyle=col; ctx.fillText(txt,x,y); }
+}
+function drawCities(){
+  const cN=world.cityN||{}, showTile=$("showTile").checked;
+  // mark every urban tile with a small core dot tinted by its cluster
+  for(const h of world.hexes){ if(!h.isCity) continue; const [x,y]=px(h);
+    const rep=h.clusterRep!=null?h.clusterRep:h.i; const R=SIZE*0.34;
+    ctx.beginPath(); ctx.arc(x,y,R,0,7);
+    ctx.fillStyle=`hsl(${cityHue(rep)} 68% 56%)`; ctx.globalAlpha=.9; ctx.fill(); ctx.globalAlpha=1;
+    ctx.lineWidth=(rep===hoverCity?2.2:1.1)/cam.scale; ctx.strokeStyle=rep===hoverCity?"#f2f6fa":"#0e1620"; ctx.stroke();
+  }
+  // cluster total at each core (rep); road-tool selection halo
+  for(const k of world.cities){ const [x,y]=px(world.hexes[k]);
+    if(k===roadFrom){ ctx.lineWidth=2.4/cam.scale; ctx.strokeStyle="#5aa9d6"; ctx.beginPath(); ctx.arc(x,y,SIZE*0.5,0,7); ctx.stroke(); }
+    if(!showTile && cam.scale>0.4){ ctx.fillStyle="#f6fbff"; ctx.font=`${10/cam.scale}px ${getComputedStyle(document.body).getPropertyValue('--mono')}`;
+      ctx.textAlign="center"; ctx.textBaseline="middle"; ctx.fillText(fmt(cN[k]||0), x, y); }
+  }
+}
+
+/* ---------- readouts ---------- */
+function fmt(n){ n=Math.round(n); if(n>=1e6)return (n/1e6).toFixed(1)+"M"; if(n>=1e4)return (n/1e3).toFixed(0)+"k"; if(n>=1e3)return (n/1e3).toFixed(1)+"k"; return ""+n; }
+function updateStats(){
+  const m=world.metrics; if(!m) return;
+  $("s_pop").textContent=fmt(m.N)+"  /  cap "+fmt(world.Ksub);
+  $("s_wealth").textContent=fmt(m.Ytotal);
+  $("s_split").textContent=fmt(m.cityWorkers)+" / "+fmt(m.marketFarmers)+" / "+fmt(m.subsistence);
+  $("s_price").textContent=m.avgPrice.toFixed(2);
+  const funded=(m.fundedFrac*100).toFixed(0);
+  const stall=m.roadsStalled>0?' · <span class="warn">'+m.roadsStalled+' stalled</span>':'';
+  $("s_roads").innerHTML=m.roadSegments+" · "+(m.fundedFrac>=0.999?'<span style="color:var(--farm)">100%</span>':'<span class="warn">'+funded+'%</span>')+stall;
+  $("s_treas").textContent=fmt(m.treasury)+" · "+fmt(m.taxCollected);
+  const sw=$("s_wage"); if(sw) sw.textContent=fmt(m.cityWage)+" · "+fmt(m.segCost);
+}
+function cityCard(k){
+  const m=world.metrics; if(!m){return;}
+  const row=(m.cityRows||[]).find(r=>r.city===k); if(!row){ $("cityCard").textContent="—"; return; }
+  let foodIn=0; for(const h of world.hexes) if(h.basin===k) foodIn+=h.out;
+  const line=(n,v)=>`<div class="row"><span class="n">${n}</span><span>${v}</span></div>`;
+  $("cityHdr").innerHTML='City balance of trade <span style="color:var(--dim);text-transform:none;letter-spacing:0"> — @'+world.hexes[k].col+','+world.hexes[k].r+'</span>';
+  $("cityCard").style.color="var(--ink)";
+  $("cityCard").innerHTML=
+    line("workers (+crews)", "<b>"+fmt(row.N)+"</b> (+"+fmt(row.crewFood)+")")+
+    line("food imported", fmt(foodIn)+"  @ P="+row.price.toFixed(2))+
+    line("output Y", fmt(row.Y))+
+    line("tax paid (τ·Y)", fmt(row.tax))+
+    line("food bill", fmt(row.foodBill))+
+    line("net gold", (row.netGold>=0?"+":"")+fmt(row.netGold))+
+    line("top-1% wealth share", (row.topShare*100).toFixed(0)+"%");
+}
+
+/* ---------- per-tile hover tooltip (every tile; urban tiles add a city block) ---------- */
+const TERRNAME={water:"Water",mountain:"Mountain",barren:"Barren",plains:"Plains",farm:"Farmland",rich:"Rich land"};
+function num(n){ n=Math.round(n||0); return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g,","); }
+function signed(n){ const s=(n>=0?"+":"")+num(n); return `<span class="${n>=0?'pos':'neg'}">${s}</span>`; }
+function tileTipHTML(h){
+  const R=(n,v)=>`<div class="tt-r"><span>${n}</span><span>${v}</span></div>`;
+  const harbour=(h.isCity && h.fishCap>0);
+  let s=`<div class="tt-h">${TERRNAME[h.terrain]||h.terrain}${harbour?' ⚓':''} <span class="tt-c">@${h.col},${h.r}</span></div>`;
+  if(!h.passable){ return s+R("terrain","impassable"); }
+  if(!h.isCity) s+=R("farm capacity", num(h.C));         // city tiles don't farm
+  if(h.fishCap>0) s+=R("fishing capacity", "+"+num(h.fishCap));
+  if(h.isCity){
+    const rep=(h.clusterRep!=null?h.clusterRep:h.i);
+    s+=`<div class="tt-sec">Urban tile${harbour?' · harbour':''}</div>`;
+    s+=R("gold workers", num(h.goldWorkers));
+    s+=R("gold output", "$"+num(h.goldProd));
+    if(harbour){ s+=R("fishermen \u{1F41F}", num(h.fishermen)); s+=R("fish landed", num(h.marketFood)); }
+    if(h.govWorkers>0.5) s+=R("gov / crews", num(h.govWorkers));
+    const cl=world.clusterOf?world.clusterOf[rep]:null, nT=cl?cl.tiles.length:1;
+    const core=world.hexes[rep];
+    s+=`<div class="tt-sec">City — cluster @${core.col},${core.r}</div>`;
+    s+=R("total workers", num(world.cityN?world.cityN[rep]:0));
+    s+=R("urban tiles", nT);
+    if(world.Aof&&world.Aof[rep]!=null) s+=R("productivity A", world.Aof[rep].toFixed(1));
+    if(world.prices&&world.prices[rep]!=null) s+=R("food price", world.prices[rep].toFixed(2));
+    const row=((world.metrics&&world.metrics.cityRows)||[]).find(r=>r.city===rep);
+    if(row){
+      let foodIn=0; for(const g of world.hexes) if(g.basin===rep) foodIn+=g.out;
+      s+=R("food imported", num(foodIn));
+      s+=R("output Y", num(row.Y));
+      s+=R("tax paid", num(row.tax));
+      s+=R("net gold", signed(Math.round(row.netGold)));
+      s+=R("top-1% wealth", (row.topShare*100).toFixed(0)+"%");
+    }
+  } else {
+    const desperate=(h.Lsubw>0.5 && h.Lmkt<0.5);   // no market access: pure subsistence
+    s+=`<div class="tt-sec farm">${desperate?'Subsistence land':(h.fishCap>0?'Coastal farmland':'Farmland')}</div>`;
+    s+=R(h.fishCap>0?"farmers + fishers":"farmers", num(h.farmers));
+    // total food now respects capacity (subsistence shares the tile's curve)
+    s+=R("food output / cap", num(h.marketFood + h.subsFood)+" / "+num(h.foodCap));
+    s+=R("net surplus", signed(Math.round(h.foodNet)));
+    if(h.out>0 && h.basin>=0){ const b=world.hexes[h.basin];
+      s+=R("ships to", `@${b.col},${b.r}`);
+      if(h.netback>0) s+=R("netback income", h.netback.toFixed(2)); }
+    else s+=R("status", h.farmers>0.5?"subsistence (self-fed)":"idle");
+  }
+  s+=`<div class="tt-note">${tileForecast(h)}</div>`;
+  return s;
+}
+// a plain-language forecast of what the NEXT step's calculation does to this tile
+function tileForecast(h){
+  const cfg=world.cfg, out=[];
+  if(!h.passable) return h.terrain==="water"
+    ? "Open water — boats cross it between harbours, and coastal tiles fish it. It is never farmed or walked."
+    : "Impassable highland — it blocks both farming and overland transport, so nothing changes here.";
+  if(h.isCity){
+    const rep=h.clusterRep!=null?h.clusterRep:h.i, cl=world.clusterOf&&world.clusterOf[rep];
+    const nT=cl?cl.tiles.length:1, dens=(world.cityN?world.cityN[rep]||0:0)/nT;
+    out.push("Urban tile: its gold-workers migrate a step toward the workforce the solver just computed; it grows no crops.");
+    if(dens>=cfg.urbanDensityTarget) out.push(`It is crowded (${fmt(dens)}/tile, at/over the ${fmt(cfg.urbanDensityTarget)} target), so the city will soon pave its cheapest adjacent farmland — that tile's farm capacity then goes to zero for good.`);
+    else if(dens<cfg.urbanDensityTarget*cfg.shrinkRatio) out.push(`It is sparse (${fmt(dens)}/tile), so a fringe tile may revert to open (now barren) land.`);
+    else out.push("Its density sits in the stable band, so no growth or shrink is expected next step.");
+    if(h.fishCap>0) out.push("As a harbour it also lands fish, which offsets the food it must import.");
+    return out.join(" ");
+  }
+  if(h.paved&&h.C<=0) out.push("This is paved-over former city land: it grows no crops"+(h.fishCap>0?", though fishermen can still work the adjacent sea.":"."));
+  if(h.basin>=0){
+    const b=world.hexes[h.basin];
+    out.push(`Market farmland: next step it ships its surplus to the city at @${b.col},${b.r}, and its farmer count edges toward the target set by that city's delivered price (netback ${h.netback>0?h.netback.toFixed(2):"~0"}).`);
+    const dL=h.LmktT-h.Lmkt;
+    if(Math.abs(dL)>1) out.push(dL>0?`About ${fmt(Math.abs(dL))} more farmers migrate in.`:`About ${fmt(Math.abs(dL))} farmers leave.`);
+    let crowded=false; for(const ni of Econ.neighborsOf(world,h.i)){const n=world.hexes[ni]; if(n.isCity){const rp=n.clusterRep!=null?n.clusterRep:n.i,c=world.clusterOf&&world.clusterOf[rp]; if(c&&(world.cityN[rp]||0)/c.tiles.length>=cfg.urbanDensityTarget){crowded=true;break;}}}
+    if(crowded&&!h.paved) out.push("It borders a crowded city, so it is a prime candidate to be paved into that city soon.");
+  } else if(h.farmers>0.5){
+    out.push("No profitable city is in reach, so people here subsistence-farm out of desperation: workers pile on until the last one's net food is zero, then the count holds.");
+  } else {
+    out.push("Idle land — no city in reach makes farming it pay, and there is no surplus population desperate enough to subsist here.");
+  }
+  return out.join(" ");
+}
+let tipHex=null, tipXY=[0,0];
+function showTileTip(h,x,y){
+  const el=$("tileTip"); if(!h){ tipHex=null; el.style.display="none"; return; }
+  tipHex=h; tipXY=[x,y];
+  el.innerHTML=tileTipHTML(h); el.style.display="block";
+  const wrap=cv.getBoundingClientRect(), tw=el.offsetWidth, th=el.offsetHeight, pad=14;
+  let lx=x+pad, ly=y+pad;
+  if(lx+tw>wrap.width-4) lx=x-tw-pad;      // flip left near right edge
+  if(ly+th>wrap.height-4) ly=y-th-pad;     // flip up near bottom edge
+  el.style.left=Math.max(4,lx)+"px"; el.style.top=Math.max(4,ly)+"px";
+}
+function hideTileTip(){ const el=$("tileTip"); if(el) el.style.display="none"; tipHex=null; }
+
+/* ---------- legend ---------- */
+function drawLegend(){
+  const L={
+    territory:'Terrain base · each city\'s colour hatches the tiles it farms (denser = harder) and outlines its basin · solid = city tiles',
+    terrain:'Land quality (capacity)',
+    wealth:'Farmer income (netback): <span class="sw" style="background:hsl(45 30% 18%)"></span>low → <span class="sw" style="background:hsl(0 70% 40%)"></span>high · gold = cities',
+    price:'Netback food price: <span class="sw" style="background:hsl(210 60% 30%)"></span>low → <span class="sw" style="background:hsl(0 60% 45%)"></span>high'
+  };
+  $("legend").innerHTML='<span class="k">'+(L[view]||'')+'</span>';
+}
+
+/* ---------- interaction ---------- */
+function hexAt(cssx,cssy){
+  const wx=(cssx-cam.x)/cam.scale/SIZE, wy=(cssy-cam.y)/cam.scale/SIZE;
+  const qf=(SQRT3/3*wx-1/3*wy), rf=(2/3*wy);
+  let x=qf,z=rf,y=-x-z, rx=Math.round(x),ry=Math.round(y),rz=Math.round(z);
+  const dx=Math.abs(rx-x),dy=Math.abs(ry-y),dz=Math.abs(rz-z);
+  if(dx>dy&&dx>dz)rx=-ry-rz; else if(dy>dz)ry=-rx-rz; else rz=-rx-ry;
+  const idx=world.axialMap[rx+","+rz]; return idx===undefined?null:world.hexes[idx];
+}
+let dragging=false,panLast=null,lastPaint=null;
+function editAt(h){
+  if(!h) return;
+  if(tool==="paint"){ Econ.paintTerrain(world,h.i,brush); }
+  else if(tool==="city"){ if(h===lastPaint) return; if(h.passable){ if(h.isCity)Econ.removeCity(world,h.i); else Econ.foundCity(world,h.i);} lastPaint=h; }
+  else if(tool==="erase"){ if(h.isCity)Econ.removeCity(world,h.i); }
+}
+function clickRoad(h){
+  if(!h||!h.isCity){ roadFrom=-1; setHint(""); return; }
+  if(roadFrom<0){ roadFrom=h.i; setHint("Now click the destination city."); }
+  else if(roadFrom!==h.i){
+    const ok=Econ.startRoadProject(world,roadFrom,h.i);
+    const seg=world.metrics?Math.round(world.metrics.segCost):0;
+    setHint(ok?("Road queued — one segment builds per tick as the treasury can afford it (~"+fmt(seg)+" gold/seg: materials + a crew hired at the city wage). It stalls if the treasury runs low."):"Couldn't route (already linked or no path).");
+    roadFrom=-1;
+  } else { roadFrom=-1; setHint(""); }
+}
+function setHint(t){ const el=$("hint"); if(t){el.style.display="block"; el.textContent=t;} else el.style.display="none"; }
+
+cv.addEventListener("pointerdown",e=>{
+  const r=cv.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;
+  dragging=true; lastPaint=null; cv.setPointerCapture(e.pointerId);
+  if(tool==="select"){ panLast=[x,y]; return; }
+  const h=hexAt(x,y);
+  if(tool==="road"){ clickRoad(h); }
+  else { editAt(h); if(!playing) refresh(); }
+});
+cv.addEventListener("pointermove",e=>{
+  const r=cv.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;
+  const h=hexAt(x,y);
+  showTileTip(h,x,y);                       // hover overlay for EVERY tile
+  const nh=(h&&h.isCity)?h.i:-1; if(nh!==hoverCity){ hoverCity=nh; if(nh>=0)cityCard(nh); if(!playing)draw(); }
+  if(!dragging) return;
+  if(tool==="select"){ if(panLast){ cam.x+=x-panLast[0]; cam.y+=y-panLast[1]; panLast=[x,y]; hideTileTip(); draw(); } return; }
+  if(tool!=="road"){ editAt(h); if(!playing)refresh(); }
+});
+cv.addEventListener("pointerleave",hideTileTip);
+cv.addEventListener("pointerup",()=>{ dragging=false; panLast=null; lastPaint=null; if(!playing)refresh(); });
+cv.addEventListener("wheel",e=>{
+  e.preventDefault(); const r=cv.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;
+  const f=Math.exp(-e.deltaY*0.0016),ns=clamp(cam.scale*f,0.25,4);
+  const wx=(x-cam.x)/cam.scale,wy=(y-cam.y)/cam.scale; cam.scale=ns; cam.x=x-wx*ns; cam.y=y-wy*ns; draw();
+},{passive:false});
+
+$("tools").addEventListener("click",e=>{const b=e.target.closest("button"); if(!b)return;
+  tool=b.dataset.tool; [...$("tools").children].forEach(x=>x.classList.toggle("active",x===b));
+  $("brushrow").style.display=tool==="paint"?"flex":"none"; roadFrom=-1;
+  setHint(tool==="road"?"Click a city to start a road, then click another.":"");
+  cv.style.cursor=tool==="select"?"grab":"crosshair";
+});
+$("views").addEventListener("click",e=>{const b=e.target.closest("button"); if(!b)return;
+  view=b.dataset.view; [...$("views").children].forEach(x=>x.classList.toggle("active",x===b)); drawLegend(); draw();
+});
+
+/* ---------- brushes ---------- */
+function buildBrushes(){
+  const order=[["rich","Rich"],["farm","Farm"],["plains","Plains"],["barren","Barren"],["water","Water"],["mountain","Mtn"]];
+  $("brushrow").innerHTML=order.map(([k,lab])=>`<button data-brush="${k}" class="${k===brush?'active':''}" style="border-left:3px solid ${Econ.TERR[k].col}">${lab}</button>`).join("");
+  $("brushrow").querySelectorAll("button").forEach(b=>b.addEventListener("click",()=>{brush=b.dataset.brush;
+    $("brushrow").querySelectorAll("button").forEach(x=>x.classList.toggle("active",x===b));}));
+}
+
+/* ---------- knobs ---------- */
+function buildKnobs(){
+  const wrap=$("knobs"); wrap.innerHTML="";
+  const groups={}; for(const k in KNOBS){ (groups[KNOBS[k].g]||=[]).push(k); }
+  for(const gn in groups){
+    const gd=document.createElement("div"); gd.className="group"; gd.innerHTML=`<div class="gh">${gn}</div>`;
+    groups[gn].forEach(k=>{const p=KNOBS[k]; const row=document.createElement("div"); row.className="knob";
+      row.innerHTML=`<label>${p.label}<span class="g">${p.hint}</span></label>`+
+        `<input type="range" data-k="${k}" min="${p.min}" max="${p.max}" step="${p.step}" value="${p.v}">`+
+        `<input type="number" data-k="${k}" min="${p.min}" max="${p.max}" step="${p.step}" value="${p.v}">`;
+      gd.appendChild(row);});
+    wrap.appendChild(gd);
+  }
+  wrap.querySelectorAll("input").forEach(inp=>inp.addEventListener("input",e=>{
+    const k=e.target.dataset.k,v=parseFloat(e.target.value); if(isNaN(v))return; KNOBS[k].v=v;
+    wrap.querySelectorAll(`input[data-k="${k}"]`).forEach(o=>{if(o!==e.target)o.value=v;});
+    world.cfg[k]=v; Econ.reconfigure(world); if(!playing)refresh();
+  }));
+}
+["malthus","bandits","seaTravel"].forEach(id=>$(id).addEventListener("change",()=>{ world.cfg[id]=$(id).checked; Econ.reconfigure(world); if(!playing)refresh(); }));
+["showTile","showFood","showRoads"].forEach(id=>$(id).addEventListener("change",()=>draw()));
+
+/* ---------- run loop ---------- */
+function refresh(){ draw(); updateStats(); if(hoverCity>=0)cityCard(hoverCity); if(tipHex)showTileTip(tipHex,tipXY[0],tipXY[1]); }
+function stepOnce(){ Econ.step(world); refresh(); }
+function setPlay(on){ playing=on; $("playBtn").textContent=on?"⏸ Pause":"▶ Run"; $("playBtn").classList.toggle("primary",!on);
+  if(on){ timer=setInterval(()=>{ Econ.step(world); refresh(); }, 90); } else { clearInterval(timer); timer=null; } }
+$("playBtn").addEventListener("click",()=>setPlay(!playing));
+$("stepBtn").addEventListener("click",stepOnce);
+$("resetBtn").addEventListener("click",()=>{ if(playing)setPlay(false); const cur=EconMaps.GENERATORS[mapCycle[mapIdx%mapCycle.length]](); newWorldFromMap(cur); refresh(); });
+$("regenBtn").addEventListener("click",()=>{ if(playing)setPlay(false); mapIdx++; loadPreset(mapIdx); fitView(); refresh(); });
+$("clearBtn").addEventListener("click",()=>{ if(playing)setPlay(false);
+  world.hexes.forEach(h=>{ if(h.isCity)Econ.removeCity(world,h.i); });
+  world.hexes.forEach(h=>Econ.paintTerrain(world,h.i,"plains")); world.N=world.cfg.N0; Econ.step(world); refresh(); });
+
+window.addEventListener("keydown",e=>{
+  if(e.target.tagName==="INPUT")return;
+  if(e.code==="Space"){e.preventDefault(); setPlay(!playing);}
+  else if(e.key==="s"){stepOnce();}
+  else if(e.key==="r"){ $("resetBtn").click(); }
+});
+window.addEventListener("resize",resize);
+
+/* ---------- boot ---------- */
+loadPreset(0); buildBrushes(); buildKnobs(); drawLegend();
+requestAnimationFrame(()=>{ resize(); fitView(); refresh(); });
+</script>
+</body>
+</html>
