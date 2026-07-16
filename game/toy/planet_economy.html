@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Planet Economy — labor · wealth · roads on the default map</title>
+<style>
+  :root{
+    --bg:#0e1620; --panel:#16212e; --panel-2:#1b2836; --line:#26374a;
+    --ink:#e7eef5; --muted:#8698a9; --dim:#5f7183;
+    --farm:#6fb07f; --city:#e2a24a; --warn:#e0685f; --good:#5aa9d6; --sel:#f2f6fa;
+    --road:#f0c46a; --gold:#e2c14a; --labor:#8fb7e8;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden}
+  body{background:var(--bg); color:var(--ink); font-family:var(--sans); font-size:13px; line-height:1.4;}
+  .app{display:grid; grid-template-columns:minmax(0,1fr) 348px; grid-template-rows:auto 1fr; height:100vh; gap:10px; padding:10px;}
+  @media (max-width:900px){ .app{grid-template-columns:1fr; grid-template-rows:auto auto 1fr} .side{grid-row:3} }
+  .topbar{grid-column:1/-1; display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+    background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:8px 12px;}
+  h1{font-size:14px; margin:0; font-weight:600; letter-spacing:.02em; white-space:nowrap}
+  h1 .sub{color:var(--dim); font-weight:400; font-size:10px; display:block; letter-spacing:.02em}
+  .spacer{flex:1}
+  button{font-family:var(--sans); font-size:12px; color:var(--ink); background:var(--panel-2);
+    border:1px solid var(--line); border-radius:7px; padding:6px 10px; cursor:pointer; transition:background .12s,border-color .12s; white-space:nowrap}
+  button:hover{background:#22303f; border-color:#33485d}
+  button.primary{background:#3f6f52; border-color:#4f8a67; color:#eafff0}
+  button.active{background:#26384a; border-color:var(--good); color:#eaf6ff}
+  button.sm{padding:5px 8px; font-size:11px}
+  .seg{display:flex; gap:3px; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:3px}
+  .seg button{border:none; background:transparent; padding:5px 9px}
+  .seg button.active{background:#26384a; border-radius:6px; color:#eaf6ff}
+  .mapwrap{position:relative; background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; min-height:0}
+  canvas{display:block; width:100%; height:100%; touch-action:none; cursor:crosshair}
+  .overlay{position:absolute; left:10px; bottom:10px; background:rgba(14,22,32,.86); border:1px solid var(--line);
+    border-radius:8px; padding:8px 10px; font-size:11px; color:var(--muted); pointer-events:none; max-width:420px}
+  .overlay .k{display:inline-flex;align-items:center;gap:5px;margin-right:10px}
+  .sw{width:10px;height:10px;border-radius:2px;display:inline-block}
+  .hint{position:absolute; right:10px; top:10px; background:rgba(14,22,32,.86); border:1px solid var(--line);
+    border-radius:8px; padding:6px 9px; font-size:11px; color:var(--good); pointer-events:none; max-width:260px}
+  .loading{position:absolute; inset:0; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:8px; color:var(--muted); font-size:13px}
+  .side{background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow-y:auto; min-height:0; display:flex; flex-direction:column}
+  .side h2{font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); margin:0; padding:10px 12px; border-bottom:1px solid var(--line)}
+  .stats{display:grid; grid-template-columns:1fr 1fr; gap:1px; background:var(--line)}
+  .stat{background:var(--panel-2); padding:8px 10px}
+  .stat .lab{font-size:9px; letter-spacing:.06em; text-transform:uppercase; color:var(--dim)}
+  .stat .val{font-family:var(--mono); font-size:15px; margin-top:1px}
+  .group>.gh{font-size:9px; letter-spacing:.1em; text-transform:uppercase; color:var(--city); padding:9px 12px 3px; border-top:1px solid var(--line)}
+  .knob{display:grid; grid-template-columns:112px 1fr 50px; gap:7px; align-items:center; padding:3px 12px}
+  .knob label{font-size:11px; color:var(--ink)}
+  .knob label .g{color:var(--dim); font-size:9px; display:block; line-height:1.2}
+  input[type=range]{width:100%; accent-color:var(--city); height:3px}
+  input[type=number]{width:100%; font-family:var(--mono); font-size:11px; text-align:right; background:var(--bg); color:var(--ink); border:1px solid var(--line); border-radius:6px; padding:3px 5px}
+  input[type=number]:focus{outline:none;border-color:var(--good)}
+  .toggle{display:flex;align-items:center;gap:8px;padding:5px 12px;font-size:11px}
+  .toggle input{accent-color:var(--good)}
+  .note{font-size:10px;color:var(--dim);padding:6px 12px 12px}
+  .kbd{font-family:var(--mono);background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:0 4px;font-size:10px}
+  .warn{color:var(--warn)}
+  .modes{display:flex;flex-direction:column;gap:4px;padding:8px 12px}
+  .modes label{display:flex;gap:8px;align-items:flex-start;font-size:11px;cursor:pointer}
+  .modes label input{margin-top:2px;accent-color:var(--good)}
+  .modes label .d{color:var(--dim);font-size:10px;display:block}
+  #cityCard{padding:8px 12px;font-family:var(--mono);font-size:11px}
+  #cityCard .row{display:flex;justify-content:space-between;gap:8px;padding:1px 0}
+  #cityCard .row .n{color:var(--muted)}
+  #cityCard b{color:var(--city)}
+  #tileTip{position:absolute; pointer-events:none; z-index:6; display:none; min-width:190px; max-width:262px;
+    background:rgba(12,19,28,.95); border:1px solid #2b3d4f; border-radius:9px; padding:8px 10px;
+    font-family:var(--mono); font-size:12px; line-height:1.45; color:var(--ink); box-shadow:0 6px 22px rgba(0,0,0,.5)}
+  #tileTip .tt-h{font-size:12.5px; font-weight:600; color:#eaf6ff; margin-bottom:2px}
+  #tileTip .tt-c{color:var(--dim); font-weight:400; font-size:11px}
+  #tileTip .tt-sec{margin:5px 0 2px; font-size:9px; letter-spacing:.1em; text-transform:uppercase; color:var(--city)}
+  #tileTip .tt-sec.farm{color:var(--farm)}
+  #tileTip .tt-r{display:flex; justify-content:space-between; gap:12px}
+  #tileTip .tt-r span:first-child{color:var(--muted)}
+  #tileTip .pos{color:var(--good)} #tileTip .neg{color:var(--warn)}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <h1>Planet Economy<span class="sub">von Thünen economy on the game's default map · baked bi-directional travel costs · calorie food capacity</span></h1>
+    <div class="seg" id="tools">
+      <button data-tool="pan" class="active" title="Drag to pan, wheel to zoom">✋ Pan</button>
+      <button data-tool="city" title="Found / remove a city on a tile">◉ City</button>
+      <button data-tool="road" title="Click two cities to queue a road project">╱ Road</button>
+    </div>
+    <div class="spacer"></div>
+    <div class="seg" id="views">
+      <button data-view="territory" class="active">Territory</button>
+      <button data-view="terrain">Terrain</button>
+      <button data-view="capacity">Food cap</button>
+      <button data-view="population">Pop</button>
+      <button data-view="wealth">Wealth</button>
+      <button data-view="price">Prices</button>
+    </div>
+    <div class="seg">
+      <button id="playBtn" class="primary">▶ Run</button>
+      <button id="stepBtn" class="sm">Step</button>
+      <button id="resetBtn" class="sm">Reset</button>
+    </div>
+  </div>
+
+  <div class="mapwrap">
+    <canvas id="map"></canvas>
+    <div class="hint" id="hint" style="display:none"></div>
+    <div class="overlay" id="legend"></div>
+    <div id="tileTip"></div>
+    <div class="loading" id="loading">Loading the default map…<div style="font-size:11px;color:var(--dim)">../../maps/sample-map.json</div></div>
+  </div>
+
+  <div class="side">
+    <h2>Readouts <span id="tickLab" style="color:var(--dim);text-transform:none;letter-spacing:0;float:right">t=0</span></h2>
+    <div class="stats">
+      <div class="stat"><div class="lab">Population</div><div class="val" id="s_pop">—</div></div>
+      <div class="stat"><div class="lab">Aggregate wealth ΣY</div><div class="val" id="s_wealth">—</div></div>
+      <div class="stat"><div class="lab">City / Farm / Subs</div><div class="val" id="s_split" style="font-size:12px">—</div></div>
+      <div class="stat"><div class="lab">Avg food price</div><div class="val" id="s_price">—</div></div>
+      <div class="stat"><div class="lab">Cities · roads</div><div class="val" id="s_cities" style="font-size:13px">—</div></div>
+      <div class="stat"><div class="lab">Treasury · funded</div><div class="val" id="s_treas" style="font-size:12px">—</div></div>
+      <div class="stat"><div class="lab">Carrying capacity</div><div class="val" id="s_ksub" style="font-size:13px">—</div></div>
+      <div class="stat"><div class="lab">Food conservation</div><div class="val" id="s_cons" style="font-size:13px">—</div></div>
+    </div>
+
+    <h2 id="cityHdr">City balance of trade <span style="color:var(--dim);text-transform:none;letter-spacing:0"> — hover a city</span></h2>
+    <div id="cityCard" style="color:var(--dim)">Hover a city tile to see its population split, food imports, output, tax and net gold.</div>
+
+    <h2>Start mode <span style="color:var(--dim);text-transform:none;letter-spacing:0"> — applied on Reset</span></h2>
+    <div class="modes" id="modes">
+      <label><input type="radio" name="mode" value="priority" checked><span><b>Seed cityPriority + grow</b><span class="d">seed the map's top city-priority spots, then cities grow & new ones emerge</span></span></label>
+      <label><input type="radio" name="mode" value="emergent"><span><b>Fully emergent</b><span class="d">one bootstrap settlement; the rest self-ignite in food-rich regions</span></span></label>
+      <label><input type="radio" name="mode" value="manual"><span><b>You place them</b><span class="d">start empty; use the ◉ City tool to found cities</span></span></label>
+    </div>
+    <div class="knob" style="grid-template-columns:112px 1fr 50px"><label>Seed count<span class="g">cities for the priority mode</span></label><input type="range" id="seedN" min="1" max="12" step="1" value="5"><input type="number" id="seedN_n" value="5"></div>
+    <div class="toggle"><input type="checkbox" id="urbanize" checked><label for="urbanize">Organic cities — tiles flip farm↔urban, cities emerge/grow (off = fixed placed cities, the clean balance mode)</label></div>
+
+    <h2>Knobs</h2>
+    <div id="knobs"></div>
+    <div class="toggle"><input type="checkbox" id="malthus" checked><label for="malthus">Malthusian population growth (off = fixed pool, reallocation only)</label></div>
+    <div class="toggle"><input type="checkbox" id="seaTravel"><label for="seaTravel">Harbour labour + coastal-town bias (sea <i>trade</i> always uses the map's baked costs)</label></div>
+
+    <h2>Overlay display</h2>
+    <div class="toggle"><input type="checkbox" id="showCities" checked><label for="showCities">City markers</label></div>
+    <div class="toggle"><input type="checkbox" id="showRoads" checked><label for="showRoads">Roads (dim = decaying toward overland)</label></div>
+    <div class="toggle"><input type="checkbox" id="showArrows"><label for="showArrows">Food-producer arrows (each farm → its city) — heavier</label></div>
+
+    <h2>Map</h2>
+    <div style="display:flex;gap:6px;padding:8px 12px;flex-wrap:wrap;align-items:center">
+      <label class="sm" style="border:1px solid var(--line);border-radius:7px;padding:6px 10px;cursor:pointer;background:var(--panel-2)">Load a map…<input type="file" id="mapFile" accept=".json" style="display:none"></label>
+      <button id="fitBtn" class="sm">Fit view</button>
+    </div>
+    <div class="note" id="mapInfo"></div>
+    <div class="note">
+      <b>Transport</b> uses the map's baked, <b>bi-directional</b> edge costs (moveCost / moveCostR) — shipping downhill/downwind is cheaper than the reverse. <b>Food capacity</b> = the map's per-tile calories (median land ≈ farm tier). <b>Roads</b>: pick two cities; a project auto-routes the cheapest land path and builds one segment/tick. <b>Minerals are shown but not simulated.</b> <span class="kbd">space</span> run · <span class="kbd">s</span> step · <span class="kbd">r</span> reset.
+    </div>
+  </div>
+</div>
+
+<script src="econ_engine.js"></script>
+<script src="game_map_adapter.js"></script>
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
+const MAP_URL="../../maps/sample-map.json";
+
+/* ---------- knob definitions (planet-relevant subset) ---------- */
+const KNOBS={
+  K0:{v:1.0,min:0.2,max:4,step:0.1,g:"Transport",label:"Transport cost",hint:"global × on the map's baked edge costs"},
+  roadMult:{v:0.30,min:0.1,max:0.9,step:0.05,g:"Transport",label:"Road multiplier",hint:"road cost = baked × this (<1)"},
+  urban:{v:0.5,min:0,max:1,step:0.05,g:"Economy",label:"Urbanization",hint:"agrarian ↔ urban (sets A,α,p; keeps p>α)"},
+  kappa:{v:200,min:120,max:360,step:10,g:"Economy",label:"Farm saturation",hint:"farmers to saturate a tile"},
+  basinHyst:{v:0.08,min:0,max:0.4,step:0.01,g:"Economy",label:"Basin stickiness",hint:"a rival must beat the current city by this % to steal a tile"},
+  r:{v:0.10,min:0.02,max:0.2,step:0.01,g:"Population",label:"Growth rate",hint:"Malthusian speed"},
+  migrate:{v:0.5,min:0.1,max:1,step:0.05,g:"Population",label:"Migration",hint:"fraction toward equilibrium/tick"},
+  cityFoundPop:{v:1000,min:0,max:3000,step:100,g:"Population",label:"Founder pop",hint:"people seeded by the FIRST city (bootstrap)"},
+  tau:{v:0.15,min:0,max:0.6,step:0.01,g:"Fiscal & roads",label:"Tax rate τ",hint:"skim of city output → public pool"},
+  wageShare:{v:2.5,min:0.5,max:6,step:0.1,g:"Fiscal & roads",label:"Public wage",hint:"cost of crews/garrisons (higher = fewer affordable)"},
+  garrisonPerDist:{v:3.0,min:0,max:8,step:0.5,g:"Fiscal & roads",label:"Garrison / dist",hint:"soldiers per hop of remoteness beyond safe radius"},
+  degrade:{v:0.2,min:0,max:1,step:0.05,g:"Fiscal & roads",label:"Road decay",hint:"drift back to overland when unfunded"},
+  urbanDensityTarget:{v:2000,min:400,max:5000,step:200,g:"Emergence",label:"Urban density",hint:"gold workers per tile a city grows toward"},
+  newCoreMinDist:{v:5,min:2,max:12,step:1,g:"Emergence",label:"New-town spacing",hint:"min hops from an existing city for a new town"},
+  maxUrbanFrac:{v:0.5,min:0.1,max:0.9,step:0.05,g:"Emergence",label:"Max urban frac",hint:"urban tiles never exceed this share of land"},
+};
+
+/* ---------- terrain palette (game terrain names) ---------- */
+const TERRCOL={
+  ocean:"#1b3a54", coast:"#295a76", lake:"#2b6e8c", seaIce:"#a9c1cc", glacier:"#cdddE6",
+  desert:"#c9b06f", plains:"#7d9b58", grassland:"#6f9c50", forest:"#3f6b41",
+  tundra:"#94a68f", hills:"#8a8a5c", mountain:"#63636e"
+};
+function terrColor(name){ return TERRCOL[name] || "#4a4636"; }
+function cityHue(i){ return (i*67)%360; }
+
+/* ---------- state ---------- */
+let md=null, world=null, view="territory", tool="pan", playing=false, timer=null;
+let vw={lonC:0, latC:8, scale:5}, hoverTile=-1, roadFrom=-1;
+const cv=$("map"), ctx=cv.getContext("2d");
+
+function cfgFromKnobs(){
+  const c={};
+  for(const k in KNOBS) c[k]=KNOBS[k].v;
+  c.malthus=$("malthus").checked;
+  c.seaTravel=$("seaTravel").checked;
+  c.urbanize=$("urbanize").checked;
+  c.yieldVar=0;            // calories already carry the per-tile variation
+  return c;
+}
+
+/* ---------- projection (equirectangular; scale = px/degree) ---------- */
+function projX(lon){ return cv.clientWidth/2 + (lon - vw.lonC)*vw.scale; }
+function projY(lat){ return cv.clientHeight/2 - (lat - vw.latC)*vw.scale; }
+function invLon(px){ return vw.lonC + (px - cv.clientWidth/2)/vw.scale; }
+function invLat(py){ return vw.latC - (py - cv.clientHeight/2)/vw.scale; }
+// tile center [lat,lon] in degrees
+function tLat(i){ return md.graph.coordsDeg[i*2]; }
+function tLon(i){ return md.graph.coordsDeg[i*2+1]; }
+
+function fitView(){
+  const cd=md.graph.coordsDeg, n=md.graph.n;
+  let minLon=1e9,maxLon=-1e9,minLat=1e9,maxLat=-1e9;
+  for(let i=0;i<n;i++){ const la=cd[i*2],lo=cd[i*2+1];
+    if(lo<minLon)minLon=lo; if(lo>maxLon)maxLon=lo; if(la<minLat)minLat=la; if(la>maxLat)maxLat=la; }
+  const w=cv.clientWidth||900, h=cv.clientHeight||560;
+  vw.scale=Math.min(w/(maxLon-minLon+8), h/(maxLat-minLat+8))*0.98;
+  vw.lonC=(minLon+maxLon)/2; vw.latC=(minLat+maxLat)/2;
+}
+
+/* ---------- world lifecycle ---------- */
+function seedCities(){
+  const mode=document.querySelector('input[name="mode"]:checked').value;
+  if(mode==="priority") return md.sites.slice(0, KNOBS_val("seedN"));
+  if(mode==="emergent") return md.sites.slice(0,1);
+  return [];  // manual
+}
+function KNOBS_val(id){ return +$(id).value; }
+function buildWorld(){
+  world=Econ.createWorld({ name:md.name, seed:md.seed, graph:md.graph, cities:seedCities(), config:cfgFromKnobs() });
+  Econ.step(world);  // one solve so readouts + display fields populate
+  roadFrom=-1; updateReadouts(); draw();
+}
+function resetWorld(){ stop(); buildWorld(); }
+
+/* ---------- fill color per view ---------- */
+function heat(t){ t=clamp(t,0,1); return `hsl(${(1-t)*45+8} ${45+t*35}% ${18+t*30}%)`; }
+function fillFor(i){
+  const h=world.hexes[i], G=md.graph;
+  if(!h.passable){ return terrColor(G.terrainName[i]); }          // water / mountain / ice
+  if(view==="terrain") return terrColor(G.terrainName[i]);
+  if(view==="capacity"){ const t=(G.capBase[i]||0)/900; return heat(t); }
+  if(view==="territory"){
+    if(h.isCity) return `hsl(${cityHue(h.clusterRep!=null?h.clusterRep:i)} 55% 50%)`;
+    if(h.basin>=0) return `hsl(${cityHue(h.basin)} 34% 26%)`;
+    return terrColor(G.terrainName[i]);
+  }
+  if(view==="population"){
+    if(h.isCity){ const d=(world.cityN&&world.cityN[h.clusterRep!=null?h.clusterRep:i])||0; return heat(clamp(d/6000,0.2,1)); }
+    const cap=h.Lsub>0?h.Lsub:1, load=(h.Lmkt+h.Lsubw)/cap; return h.passable? heat(clamp(load,0,1)) : "#242c36";
+  }
+  if(view==="wealth"){
+    if(h.isCity) return "#f0c46a";
+    const nb=isFinite(h.netback)?h.netback:0; return h.basin>=0? heat(clamp(nb/6,0,1)) : "#232b34";
+  }
+  if(view==="price"){
+    if(h.isCity) return "#e2c14a";
+    if(h.basin<0) return "#232b34";
+    const nb=isFinite(h.netback)?h.netback:0, t=clamp(nb/6,0,1); return `hsl(${210-t*210} 55% ${26+t*22}%)`;
+  }
+  return "#333";
+}
+
+/* ---------- draw ---------- */
+function resize(){ const dpr=window.devicePixelRatio||1; cv.width=cv.clientWidth*dpr; cv.height=cv.clientHeight*dpr; ctx.setTransform(dpr,0,0,dpr,0,0); draw(); }
+function draw(){
+  if(!world){ return; }
+  const dpr=window.devicePixelRatio||1;
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.fillStyle="#0b121b"; ctx.fillRect(0,0,cv.clientWidth,cv.clientHeight);
+  const polys=md.graph.polys, n=md.graph.n, drawEdges=vw.scale>3.2;
+  // tiles
+  for(let i=0;i<n;i++){
+    const poly=polys[i]; if(!poly) continue;
+    ctx.beginPath();
+    for(let k=0;k<poly.length;k++){ const x=projX(poly[k][0]), y=projY(poly[k][1]); if(k===0)ctx.moveTo(x,y); else ctx.lineTo(x,y); }
+    ctx.closePath();
+    ctx.fillStyle=fillFor(i); ctx.fill();
+    if(drawEdges){ ctx.strokeStyle="rgba(9,15,22,.55)"; ctx.lineWidth=0.5; ctx.stroke(); }
+  }
+  if($("showArrows").checked) drawArrows();
+  if($("showRoads").checked) drawRoads();
+  if($("showCities").checked) drawCities();
+  if(hoverTile>=0) drawHoverHalo();
+}
+function drawRoads(){
+  ctx.lineCap="round";
+  for(const key in world.roadState){
+    const rs=world.roadState[key]; const p=key.split("-"), a=+p[0], b=+p[1];
+    const ax=projX(tLon(a)),ay=projY(tLat(a)),bx=projX(tLon(b)),by=projY(tLat(b));
+    const t=clamp(1-rs.decay,0,1);
+    ctx.strokeStyle=`rgba(240,196,106,${0.28+0.6*t})`; ctx.lineWidth=1.4+2.2*t;
+    ctx.beginPath(); ctx.moveTo(ax,ay); ctx.lineTo(bx,by); ctx.stroke();
+  }
+}
+function drawArrows(){
+  let maxOut=1; for(const h of world.hexes) if(h.out>maxOut) maxOut=h.out;
+  ctx.lineCap="round";
+  for(let i=0;i<world.hexes.length;i++){ const h=world.hexes[i];
+    if(h.isCity||h.basin<0||!(h.out>0.5)) continue;
+    const ax=projX(tLon(i)),ay=projY(tLat(i)),bx=projX(tLon(h.basin)),by=projY(tLat(h.basin));
+    const t=clamp(h.out/maxOut,0.1,1);
+    ctx.strokeStyle="rgba(111,176,127,"+(0.18+0.4*t)+")"; ctx.lineWidth=0.5+1.6*t;
+    ctx.beginPath(); ctx.moveTo(ax,ay); ctx.lineTo(bx,by); ctx.stroke();
+  }
+}
+function drawCities(){
+  for(let ci=0; ci<world.cities.length; ci++){
+    const rep=world.cities[ci], x=projX(tLon(rep)), y=projY(tLat(rep));
+    const N=(world.cityN&&world.cityN[rep])||0, rad=clamp(3+Math.sqrt(N)/40,3,14);
+    ctx.beginPath(); ctx.arc(x,y,rad,0,Math.PI*2);
+    ctx.fillStyle=`hsl(${cityHue(rep)} 70% 55%)`; ctx.globalAlpha=0.92; ctx.fill(); ctx.globalAlpha=1;
+    ctx.lineWidth=1.4; ctx.strokeStyle="#0b121b"; ctx.stroke();
+  }
+}
+function drawHoverHalo(){
+  const poly=md.graph.polys[hoverTile]; if(!poly) return;
+  ctx.beginPath();
+  for(let k=0;k<poly.length;k++){ const x=projX(poly[k][0]), y=projY(poly[k][1]); if(k===0)ctx.moveTo(x,y); else ctx.lineTo(x,y); }
+  ctx.closePath(); ctx.strokeStyle="#eaf6ff"; ctx.lineWidth=2; ctx.stroke();
+}
+
+/* ---------- pick nearest tile to a lat/lon ---------- */
+function pickTile(lon,lat){
+  const cd=md.graph.coordsDeg, n=md.graph.n; let best=-1, bd=1e9;
+  for(let i=0;i<n;i++){ let dLon=cd[i*2+1]-lon; if(dLon>180)dLon-=360; else if(dLon<-180)dLon+=360;
+    const dLat=cd[i*2]-lat, d=dLat*dLat+dLon*dLon; if(d<bd){bd=d; best=i;} }
+  return best;
+}
+
+/* ---------- readouts ---------- */
+const fmt=x=>{ x=+x||0; const a=Math.abs(x);
+  if(a>=1e9) return (x/1e9).toFixed(2)+"B"; if(a>=1e6) return (x/1e6).toFixed(2)+"M";
+  if(a>=1e3) return (x/1e3).toFixed(1)+"k"; return Math.round(x).toString(); };
+function updateReadouts(){
+  const m=world.metrics; if(!m) return;
+  $("tickLab").textContent="t="+m.tick;
+  $("s_pop").textContent=fmt(m.N);
+  $("s_wealth").textContent=fmt(m.Ytotal);
+  $("s_split").textContent=fmt(m.cityWorkers)+" / "+fmt(m.marketFarmers)+" / "+fmt(m.subsistence);
+  $("s_price").textContent=(m.avgPrice||0).toFixed(2);
+  $("s_cities").textContent=m.cities+" · "+m.roadSegments;
+  $("s_treas").textContent=fmt(m.treasury)+" · "+Math.round((m.fundedFrac||0)*100)+"%";
+  $("s_ksub").textContent=fmt(world.Ksub);
+  const rel=m.foodProduced>1? m.conservationErr/m.foodProduced : m.conservationErr;
+  const consEl=$("s_cons"); consEl.textContent=(rel*100).toFixed(2)+"%"; consEl.className="val"+(rel>0.03?" warn":"");
+}
+
+/* ---------- tile tooltip ---------- */
+function showTip(i, mx, my){
+  const h=world.hexes[i], G=md.graph, tip=$("tileTip");
+  const name=G.terrainName[i], cap=Math.round(G.capBase[i]||0), fish=Math.round(G.fishBonus[i]||0);
+  let html=`<div class="tt-h">Tile ${i} <span class="tt-c">${name}${!h.passable?" · impassable":""}</span></div>`;
+  // minerals present here (inert)
+  const ores=[]; for(const k in G.minerals){ if(G.minerals[k][i]>0.001) ores.push(k+" "+(G.minerals[k][i]*100|0)); }
+  if(h.isCity){
+    const rep=h.clusterRep!=null?h.clusterRep:i, N=(world.cityN&&world.cityN[rep])||0;
+    html+=`<div class="tt-sec">City</div>`;
+    html+=row("gold workers", fmt(h.goldWorkers));
+    html+=row("cluster pop", fmt(N));
+    html+=row("productivity A", ((world.Aof&&world.Aof[rep])||0).toFixed(1));
+    html+=row("food price", ((world.prices&&world.prices[rep])||0).toFixed(2));
+    html+=row("gold output", fmt(h.goldProd));
+    if(h.fishermen>0.5) html+=row("fishermen", fmt(h.fishermen));
+    if(h.govWorkers>0.5) html+=row("crews/garrison", fmt(h.govWorkers));
+  } else if(h.passable){
+    html+=`<div class="tt-sec farm">Farmland</div>`;
+    html+=row("food capacity", cap + (fish>0?` (+${fish} fish)`:""));
+    html+=row("farmers", fmt(h.farmers));
+    html+=row("food produced", fmt(Math.round(h.foodProd||0)));
+    const net=h.foodNet||0; html+=rowc("net surplus", (net>=0?"+":"")+fmt(Math.round(net)), net>=0);
+    if(h.basin>=0){ const nb=isFinite(h.netback)?h.netback:0;
+      html+=row("ships to", "city "+h.basin);
+      html+=rowc("netback", nb.toFixed(2), nb>0); }
+    else html+=row("basin", "unserved");
+  } else {
+    html+=`<div class="tt-sec">${name}</div>`;
+    if(G.water[i]) html+=row("role","sea lane (transport only)");
+  }
+  if(ores.length) html+=`<div class="tt-sec">Minerals (not simulated)</div><div class="tt-r"><span>${ores.join(", ")}</span></div>`;
+  tip.innerHTML=html;
+  tip.style.display="block";
+  const tw=tip.offsetWidth, th=tip.offsetHeight, W=cv.clientWidth, H=cv.clientHeight;
+  tip.style.left=Math.min(mx+14, W-tw-6)+"px";
+  tip.style.top=Math.min(Math.max(6,my-th-8), H-th-6)+"px";
+  function row(n,v){ return `<div class="tt-r"><span>${n}</span><span>${v}</span></div>`; }
+  function rowc(n,v,good){ return `<div class="tt-r"><span>${n}</span><span class="${good?'pos':'neg'}">${v}</span></div>`; }
+}
+function updateCityCard(i){
+  const card=$("cityCard"); if(i<0||!world.hexes[i]||!world.hexes[i].isCity){ return; }
+  const h=world.hexes[i], rep=h.clusterRep!=null?h.clusterRep:i;
+  const N=(world.cityN&&world.cityN[rep])||0, P=(world.prices&&world.prices[rep])||0;
+  const A=(world.Aof&&world.Aof[rep])||0;
+  card.style.color=""; card.innerHTML=
+    r("cluster pop", fmt(N))+r("productivity A", A.toFixed(1))+r("food price", P.toFixed(2))+
+    r("gold output/tile", fmt(h.goldProd))+r("crews here", fmt(h.govWorkers))+(h.fishermen>0.5?r("fishermen",fmt(h.fishermen)):"");
+  $("cityHdr").innerHTML='City balance of trade <span style="color:var(--dim);text-transform:none;letter-spacing:0"> — tile '+rep+'</span>';
+  function r(n,v){ return `<div class="row"><span class="n">${n}</span><b>${v}</b></div>`; }
+}
+
+/* ---------- run loop ---------- */
+function stepOnce(){ Econ.step(world); updateReadouts(); if(hoverTile>=0) updateCityCard(hoverTile); draw(); }
+function play(){ if(playing) return; playing=true; $("playBtn").textContent="⏸ Pause"; $("playBtn").classList.add("active");
+  timer=setInterval(stepOnce, 60); }
+function stop(){ playing=false; if(timer) clearInterval(timer); timer=null; $("playBtn").textContent="▶ Run"; $("playBtn").classList.remove("active"); }
+function togglePlay(){ playing?stop():play(); }
+
+/* ---------- interaction ---------- */
+let dragging=false, dragMoved=false, lastX=0, lastY=0;
+cv.addEventListener("mousedown",e=>{ dragging=true; dragMoved=false; lastX=e.clientX; lastY=e.clientY; });
+window.addEventListener("mouseup",e=>{
+  if(dragging && !dragMoved) handleClick(e);
+  dragging=false;
+});
+cv.addEventListener("mousemove",e=>{
+  const rect=cv.getBoundingClientRect(), mx=e.clientX-rect.left, my=e.clientY-rect.top;
+  if(dragging && tool==="pan"){
+    const dx=e.clientX-lastX, dy=e.clientY-lastY; if(Math.abs(dx)+Math.abs(dy)>2) dragMoved=true;
+    vw.lonC-=dx/vw.scale; vw.latC+=dy/vw.scale; lastX=e.clientX; lastY=e.clientY; draw(); return;
+  }
+  if(dragging) dragMoved=true;
+  const i=pickTile(invLon(mx), invLat(my));
+  if(i!==hoverTile){ hoverTile=i; if(world.hexes[i]&&world.hexes[i].isCity) updateCityCard(i); draw(); }
+  if(i>=0) showTip(i, mx, my); else $("tileTip").style.display="none";
+});
+cv.addEventListener("mouseleave",()=>{ hoverTile=-1; $("tileTip").style.display="none"; draw(); });
+cv.addEventListener("wheel",e=>{
+  e.preventDefault();
+  const rect=cv.getBoundingClientRect(), mx=e.clientX-rect.left, my=e.clientY-rect.top;
+  const lon0=invLon(mx), lat0=invLat(my);
+  vw.scale=clamp(vw.scale*(e.deltaY<0?1.12:0.89), 1.2, 60);
+  // keep cursor anchored
+  vw.lonC=lon0-(mx-cv.clientWidth/2)/vw.scale; vw.latC=lat0+(my-cv.clientHeight/2)/vw.scale;
+  draw();
+},{passive:false});
+
+function handleClick(e){
+  const rect=cv.getBoundingClientRect(), mx=e.clientX-rect.left, my=e.clientY-rect.top;
+  const i=pickTile(invLon(mx), invLat(my)); if(i<0) return;
+  const h=world.hexes[i];
+  if(tool==="city"){
+    if(h.isCity) Econ.removeCity(world,i); else if(h.passable) Econ.foundCity(world,i);
+    world.transportDirty=true; stepOnce();
+  } else if(tool==="road"){
+    if(!h.isCity){ flash("Pick a CITY tile"); return; }
+    if(roadFrom<0){ roadFrom=i; flash("City "+i+" — now pick the other city"); }
+    else if(roadFrom===i){ roadFrom=-1; flash(""); }
+    else { const ok=Econ.startRoadProject(world, roadFrom, i);
+      flash(ok?("Road project queued "+roadFrom+"→"+i):"No land route (sea trade handles it)"); roadFrom=-1; stepOnce(); }
+  }
+}
+function flash(msg){ const el=$("hint"); if(!msg){el.style.display="none";return;} el.textContent=msg; el.style.display="block"; }
+
+/* ---------- controls wiring ---------- */
+function buildKnobs(){
+  const groups={}; const host=$("knobs");
+  for(const k in KNOBS){ const kn=KNOBS[k]; (groups[kn.g]=groups[kn.g]||[]).push(k); }
+  for(const g in groups){
+    const gh=document.createElement("div"); gh.className="group";
+    gh.innerHTML=`<div class="gh">${g}</div>`; host.appendChild(gh);
+    for(const k of groups[g]){
+      const kn=KNOBS[k], row=document.createElement("div"); row.className="knob";
+      row.innerHTML=`<label>${kn.label}<span class="g">${kn.hint}</span></label>
+        <input type="range" id="kn_${k}" min="${kn.min}" max="${kn.max}" step="${kn.step}" value="${kn.v}">
+        <input type="number" id="kn_${k}_n" value="${kn.v}" step="${kn.step}">`;
+      gh.appendChild(row);
+      const rng=$("kn_"+k), num=$("kn_"+k+"_n");
+      const set=v=>{ kn.v=+v; rng.value=v; num.value=v; if(world){ world.cfg[k]=+v; Econ.reconfigure(world); world.transportDirty=true; if(!playing) stepOnce(); } };
+      rng.addEventListener("input",()=>set(rng.value));
+      num.addEventListener("change",()=>set(num.value));
+    }
+  }
+}
+document.querySelectorAll("#tools button").forEach(b=>b.addEventListener("click",()=>{
+  document.querySelectorAll("#tools button").forEach(x=>x.classList.remove("active"));
+  b.classList.add("active"); tool=b.dataset.tool; roadFrom=-1;
+  cv.style.cursor = tool==="pan"?"grab":"crosshair";
+}));
+document.querySelectorAll("#views button").forEach(b=>b.addEventListener("click",()=>{
+  document.querySelectorAll("#views button").forEach(x=>x.classList.remove("active"));
+  b.classList.add("active"); view=b.dataset.view; draw(); buildLegend();
+}));
+$("playBtn").onclick=togglePlay; $("stepBtn").onclick=()=>{stop();stepOnce();}; $("resetBtn").onclick=resetWorld;
+$("fitBtn").onclick=()=>{fitView();draw();};
+["malthus","seaTravel","urbanize"].forEach(id=>$(id).addEventListener("change",()=>{
+  if(!world) return; world.cfg[id]=$(id).checked; Econ.reconfigure(world); if(!playing) stepOnce();
+}));
+["showCities","showRoads","showArrows"].forEach(id=>$(id).addEventListener("change",draw));
+// seedN slider mirror
+$("seedN").addEventListener("input",()=>$("seedN_n").value=$("seedN").value);
+$("seedN_n").addEventListener("change",()=>$("seedN").value=$("seedN_n").value);
+window.addEventListener("keydown",e=>{
+  if(e.target.tagName==="INPUT") return;
+  if(e.code==="Space"){ e.preventDefault(); togglePlay(); }
+  else if(e.key==="s"){ stop(); stepOnce(); }
+  else if(e.key==="r"){ resetWorld(); }
+});
+window.addEventListener("resize",resize);
+
+function buildLegend(){
+  const L=$("legend"); const sw=(c,t)=>`<span class="k"><span class="sw" style="background:${c}"></span>${t}</span>`;
+  let html="";
+  if(view==="terrain"||view==="territory") html=sw(TERRCOL.grassland,"land")+sw(TERRCOL.ocean,"sea")+sw(TERRCOL.mountain,"mountain")+sw("hsl(40 60% 50%)","city / basin");
+  else if(view==="capacity") html=sw(heat(0.1),"poor")+sw(heat(0.5),"farm")+sw(heat(0.95),"rich")+" — from the map's calories";
+  else if(view==="population") html=sw(heat(0.1),"sparse")+sw(heat(0.9),"dense")+sw("#f0c46a","city");
+  else if(view==="wealth") html=sw(heat(0.1),"low netback")+sw(heat(0.9),"high")+sw("#f0c46a","city");
+  else if(view==="price") html=sw("hsl(210 55% 30%)","far / cheap-bid")+sw("hsl(0 55% 44%)","near / high-bid");
+  L.innerHTML=html;
+}
+
+/* ---------- boot ---------- */
+function initFrom(json){
+  md=GameMapAdapter.adaptGameMap(json, {withPolys:true, name:"default map"});
+  $("loading").style.display="none";
+  $("mapInfo").innerHTML=`<b>${md.graph.n}</b> tiles · <b>${md.graph.polys?md.sites.length:0}</b> candidate city sites · calorie scale ×${md.graph.capScale.toFixed(2)} · median land hop cost ${md.graph.mcNorm.toFixed(1)}<br>Minerals present: ${Object.keys(md.graph.minerals).filter(k=>md.graph.minerals[k].some(v=>v>0)).join(", ")||"none"}`;
+  resize(); fitView(); buildWorld(); buildLegend();
+}
+buildKnobs();
+fetch(MAP_URL).then(r=>{ if(!r.ok) throw new Error(r.status); return r.json(); })
+  .then(initFrom)
+  .catch(e=>{ $("loading").innerHTML=`Couldn't load <code>${MAP_URL}</code> (${e}).<br><span style="font-size:11px;color:var(--dim)">Serve the repo root (e.g. <span class="kbd">python -m http.server 8765</span>) and open <span class="kbd">/game/toy/planet_economy.html</span>, or use “Load a map…”.</span>`; });
+$("mapFile").addEventListener("change",ev=>{ const f=ev.target.files[0]; if(!f) return;
+  const rd=new FileReader(); rd.onload=e=>{ try{ initFrom(JSON.parse(e.target.result)); }catch(err){ alert("Bad map file: "+err); } }; rd.readAsText(f); });
+</script>
+</body>
+</html>

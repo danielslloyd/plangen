@@ -110,13 +110,16 @@ the same numbers for the same inputs (verified). Everything else is built on it.
 ```
 econ_engine.js        the economy (equilibrium + organic cities + tax/road/crew/garrison)
 maps.js               deterministic fixed-map catalog (12 archetypes, per-map seed)
+game_map_adapter.js   adapt the game's DEFAULT MAP (a plangen-game-map) -> engine graph spec
 strategies.js         6 "civilizational strategy" archetypes (the player levers)
 game_runner.js        run ONE game -> structured result row (+ health flags)
 harness.js            parallel sweep runner (worker_threads) -> JSONL + manifest
 analyze.js            JSONL -> per-rule-set verdict + markdown brief for an LLM
 llm_steer.js          propose the next sweep (deterministic mock, or local Ollama)
-hex_economy_v2.html   the interactive sandbox (loads econ_engine.js + maps.js)
-test/                 validate_core.js, validate_layers.js, validate_organic.js, gen_maps.js
+hex_economy_v2.html   the interactive sandbox on the fixed hex maps (loads econ_engine.js + maps.js)
+planet_economy.html   the interactive sandbox on the DEFAULT MAP (econ_engine.js + game_map_adapter.js)
+sweep_planet.json     example sweep spec that runs the harness on the default map
+test/                 validate_core/layers/organic/transport/planet.js, gen_maps.js
 maps/                 the committed fixed maps (JSON)
 out/                  sweep output (JSONL, manifest, analysis)
 ```
@@ -149,11 +152,57 @@ Two coupled improvements to the organic-city model (see `updateUrbanization` in
   `ringFillFrac`) blocks a ring-N tile until ring N−1 is >50% filled, so thin
   fingers can't form.
 
+## On the game's default map (the planet)
+
+The same engine also runs on the game's **real default map** — the `plangen-game-map`
+the civ prototype loads (`../../maps/sample-map.json`, via `game/mapdata.js`). Instead
+of a rectangular hex grid it is an irregular dual-graph of ~4000 tiles, and
+`game_map_adapter.js` maps it onto the engine:
+
+- **Food capacity** = the map's per-tile **`calories`** (PlanGen's best-crop yield),
+  scaled so a *median land tile* ≈ the engine's "farm" tier (520). One smooth
+  gradient, no terrain buckets. Coastal tiles gain fishing from adjacent water
+  tiles' calories. *(Dan's call — "counting calories".)*
+- **Transport** = the map's **baked, bi-directional edge costs** (`moveCost` A→B /
+  `moveCostR` B→A — ~40% of edges are genuinely asymmetric: slopes, winds),
+  normalised so a median *land* hop ≈ `K0`. Water and coast edges keep their own
+  baked costs, so sailing is priced by the map (the sample map bakes very cheap
+  ocean travel). `world.transport[city][tile]` charges the **toward-city**
+  direction, so netback reflects the real cost of shipping food *to* market.
+  Impassable land (mountains/glaciers) **walls off** food transport — a barrier,
+  as in the hex model and for roads — while water stays a traversable sea lane.
+  Roads still multiply the baked cost as before.
+- **Strategic resources** (iron/gold/oil/…) are carried through as **inert display
+  data** — shown in the sandbox, *not* simulated in the food/labor/wealth economy.
+  *(Dan's call — deliberately left out for now.)*
+- **Cities**: three selectable start modes — seed the map's top `cityPriority`
+  spots then grow, one bootstrap that lets the rest self-ignite, or place them
+  yourself.
+
+The rectangular-hex path is **bit-identical** (all four original gates still pass);
+the planet is opt-in. The engine runs **identically in Node and the browser** here
+too (a 220-tick Node game and the browser sandbox both settle at N≈488 520, 32
+cities on the sample map).
+
+```bash
+npm run validate:planet     # Node gate: adapter + economy on the sample map
+npm run sweep:planet         # harness sweep on the default map (sweep_planet.json)
+node analyze.js out/sweep_planet.jsonl
+```
+
+Open the interactive sandbox (`planet_economy.html`) on any static server rooted at
+the repo, e.g. `python -m http.server 8765` then
+`http://localhost:8765/game/toy/planet_economy.html`. Six views (Territory /
+Terrain / Food-cap / Pop / Wealth / Prices), pan-zoom, per-tile hover, a city tool
+and a two-city road tool. Balance sweeps use `urbanize:false` (fixed
+strategy-seeded cities — the clean, convergent mode); the sandbox defaults to
+`urbanize:true` to watch cities emerge.
+
 ## Run it
 
 ```bash
 # 1. prove the economics (same Node-first discipline as v1/v2 spec)
-npm run validate            # port fidelity vs the reference + the fiscal layer
+npm run validate            # port fidelity + fiscal layer + transport + planet
 
 # 2. (re)generate the fixed maps  (already committed)
 npm run gen-maps

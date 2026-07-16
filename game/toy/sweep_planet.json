@@ -1,0 +1,9 @@
+{
+  "_comment": "Balance sweep on the game's DEFAULT MAP (the planet). 'planet' is adapted from ../../maps/sample-map.json via game_map_adapter.js and uses the map's baked bi-directional travel costs + calorie food capacity. urbanize:false = fixed strategy-seeded cities (the clean, convergent balance mode; the interactive sandbox uses urbanize:true to watch emergence). Run: node harness.js sweep_planet.json",
+  "maps": ["planet"],
+  "strategies": "all",
+  "axes": { "K0": [0.5, 1.0, 2.0], "urban": [0.3, 0.6], "garrisonPerDist": [1, 6] },
+  "fixed": { "roadMult": 0.30, "migrate": 0.5, "r": 0.10, "malthus": true, "urbanize": false, "seaTravel": false, "yieldVar": 0 },
+  "runOpts": { "maxTicks": 300, "minTicks": 120, "sampleEvery": 15 },
+  "out": "out/sweep_planet.jsonl"
+}

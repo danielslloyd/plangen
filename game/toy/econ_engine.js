@@ -228,12 +228,27 @@
   }
 
   function neighborsOf(world, i) {
+    if (world.adj) return world.adj[i];               // precomputed (hex OR graph maps)
     var h = world.hexes[i], out = [];
     for (var d = 0; d < DIRS.length; d++) {
       var j = world.axialMap[(h.q + DIRS[d][0]) + ',' + (h.r + DIRS[d][1])];
       if (j !== undefined) out.push(j);
     }
     return out;
+  }
+  // Build the neighbour list once (hex maps): same order neighborsOf produces, so
+  // results are bit-identical — this is purely a speed/generality hook.
+  function buildAdjacencyHex(world) {
+    var adj = new Array(world.hexes.length);
+    for (var i = 0; i < world.hexes.length; i++) {
+      var h = world.hexes[i], out = [];
+      for (var d = 0; d < DIRS.length; d++) {
+        var j = world.axialMap[(h.q + DIRS[d][0]) + ',' + (h.r + DIRS[d][1])];
+        if (j !== undefined) out.push(j);
+      }
+      adj[i] = out;
+    }
+    world.adj = adj;
   }
   function getHex(world, col, row) {
     for (var i = 0; i < world.hexes.length; i++) {
@@ -246,6 +261,14 @@
   function axialDist(h1, h2) {
     var dq = h1.q - h2.q, dr = h1.r - h2.r;
     return (Math.abs(dq) + Math.abs(dq + dr) + Math.abs(dr)) / 2;
+  }
+  // Physical distance between two tiles, in "hops". Hex maps: the axial cube
+  // metric (unchanged). Graph maps (planet): great-circle angular distance /
+  // median edge length, supplied as world.physDistFn — so garrison remoteness,
+  // agglomeration decay and city spacing all keep their hex-tuned units.
+  function physDist(world, a, b) {
+    if (world.physDistFn) return world.physDistFn(a, b);
+    return axialDist(world.hexes[a], world.hexes[b]);
   }
   function strHash(s) {
     var h = 2166136261;
@@ -275,10 +298,21 @@
   // Cached; recomputed only when the topology (cities/roads/decay) changes.
   // overland base = K0 * fixed per-edge factor; a road multiplies that base by
   // (roadMult..1) as it decays (never worse than overland); bandits add a toll.
+  // Overland base cost of moving a->b (before roads/bandits). Hex maps: symmetric
+  // K0 * fixed per-edge lognormal factor. Graph maps (planet): K0 * the map's
+  // BAKED, DIRECTIONAL travel cost a->b (moveCost / moveCostR), normalised so a
+  // median land hop ~ K0 — i.e. the bi-directional costs baked into the map.
   function baseEdge(world, a, b) {
+    if (world.dirCost) return world.cfg.K0 * dirNorm(world, a, b);   // planet: directional
     var key = edgeKey(a, b);
     var f = world.edgeFactor ? (world.edgeFactor[key] || 1) : 1;
     return world.cfg.K0 * f;
+  }
+  // Directed normalised overland factor a->b for graph maps (0 if not adjacent).
+  function dirNorm(world, a, b) {
+    var nb = world.adj[a], oc = world.costOut[a];
+    for (var k = 0; k < nb.length; k++) if (nb[k] === b) return oc[k];
+    return Infinity;
   }
   function edgeCost(world, a, b) {
     var base = baseEdge(world, a, b);
@@ -288,6 +322,48 @@
     var cost = base * mult;
     if (rs.banditHold > 0) cost += rs.banditHold * world.cfg.banditToll * base; // toll on top
     return cost;
+  }
+  // apply the (undirected) road multiplier + bandit toll on a directed base cost.
+  function roadAdjust(world, base, key) {
+    var rs = world.roadState[key];
+    if (!rs) return base;
+    var mult = world.cfg.roadMult + rs.decay * (1 - world.cfg.roadMult);
+    var cost = base * mult;
+    if (rs.banditHold > 0) cost += rs.banditHold * world.cfg.banditToll * base;
+    return cost;
+  }
+  // ---- binary-heap Dijkstra over the tile graph (used for the large planet
+  // graph; the hex maps keep their tiny naive scan for bit-identical results).
+  // adj[u] = neighbour indices; weight(u, v, k) = directed cost of adj[u][k]
+  // (Infinity blocks). Returns the min-cost-to-reach distance from `sources`. --
+  function heapDijkstra(n, adj, sources, weight) {
+    var dist = new Float64Array(n); dist.fill(Infinity);
+    var cap = n + 16, hc = new Float64Array(cap), ht = new Int32Array(cap), hn = 0;
+    function grow() { cap *= 2; var nc = new Float64Array(cap), nt = new Int32Array(cap); nc.set(hc); nt.set(ht); hc = nc; ht = nt; }
+    function push(c, t) {
+      if (hn >= cap) grow();
+      hc[hn] = c; ht[hn] = t; var i = hn++;
+      while (i > 0) { var p = (i - 1) >> 1; if (hc[p] <= hc[i]) break;
+        var tc = hc[p], tt = ht[p]; hc[p] = hc[i]; ht[p] = ht[i]; hc[i] = tc; ht[i] = tt; i = p; }
+    }
+    function pop() {
+      var t = ht[0]; hn--; hc[0] = hc[hn]; ht[0] = ht[hn];
+      var i = 0; for (;;) { var l = 2 * i + 1, r = l + 1, s = i;
+        if (l < hn && hc[l] < hc[s]) s = l; if (r < hn && hc[r] < hc[s]) s = r; if (s === i) break;
+        var tc = hc[s], tt = ht[s]; hc[s] = hc[i]; ht[s] = ht[i]; hc[i] = tc; ht[i] = tt; i = s; }
+      return t;
+    }
+    for (var si = 0; si < sources.length; si++) { var s0 = sources[si]; if (dist[s0] !== 0) { dist[s0] = 0; push(0, s0); } }
+    while (hn > 0) {
+      var u = pop(), du = dist[u], nb = adj[u];
+      for (var k = 0; k < nb.length; k++) {
+        var v = nb[k], w = weight(u, v, k);
+        if (!(w < Infinity)) continue;
+        var nd = du + w;
+        if (nd < dist[v]) { dist[v] = nd; push(nd, v); }
+      }
+    }
+    return dist;
   }
   // Sea travel: cost of one open-water hop = Z% of the lowest (fully-built) road
   // cost per hex. Cheaper than roads when seaCostFrac < 1 (coasts trade freely).
@@ -311,6 +387,7 @@
     return world.hexes[landIdx].isCity ? cfg.harborCost : Infinity;
   }
   function computeTransport(world) {
+    if (world.dirCost) { computeTransportGraph(world); return; }
     var n = world.hexes.length, cfg = world.cfg;
     world.transport = {};
     for (var ci = 0; ci < world.cities.length; ci++) {
@@ -340,6 +417,32 @@
     }
     world.transportDirty = false;
   }
+  // Planet (graph) transport: heap Dijkstra rooted at each city cluster, over the
+  // tile graph. Food may cross LAND and WATER (the map's baked edge costs already
+  // price sailing) but NOT impassable-land tiles (mountain/glacier) — a mountain
+  // range walls off a basin, matching the hex model (transEdge blocks !passable)
+  // and the road router (routeBetweenGraph skips impassable). world.transit[i] = 1
+  // for passable land OR water, 0 for impassable land. world.transport[rep][tile]
+  // is the cost to ship one unit of food FROM tile TO the city, so we charge the
+  // TOWARD-CITY direction: relaxing v out from u (u nearer the city), the food
+  // travels v->u, cost = baked(v->u) [costIn].
+  function computeTransportGraph(world) {
+    var n = world.hexes.length, cfg = world.cfg, K0 = cfg.K0;
+    var adj = world.adj, costIn = world.costIn, key = world.adjKey, transit = world.transit;
+    var weight = function (u, v, k) {
+      if (transit && !transit[v]) return Infinity;   // impassable land blocks food transport
+      var base = K0 * costIn[u][k];             // baked cost of v->u (toward the city)
+      return roadAdjust(world, base, key[u][k]);
+    };
+    world.transport = {};
+    for (var ci = 0; ci < world.cities.length; ci++) {
+      var rep = world.cities[ci];
+      var cl = world.clusterOf ? world.clusterOf[rep] : null;
+      var srcs = cl ? cl.tiles : [rep];
+      world.transport[rep] = heapDijkstra(n, adj, srcs, weight);
+    }
+    world.transportDirty = false;
+  }
   // A harbour = a city tile with at least one water neighbour.
   function isHarbor(world, i) {
     if (!world.hexes[i].isCity) return false;
@@ -357,7 +460,11 @@
   // fishCap (sum over adjacent water tiles of fishPerSea x that sea tile's yield).
   // Cfood = C + fishCap is what all the food machinery (mkt/Lsub/production) uses.
   function computeCapacity(world, i) {
-    var cfg = world.cfg, h = world.hexes[i], baseC = TERR[h.terrain].C;
+    var cfg = world.cfg, h = world.hexes[i];
+    // Base farm capacity: hex maps use the terrain-class table; planet (graph)
+    // maps use the map's per-tile `calories` (scaled so a median land tile ~ the
+    // hex "farm" tier) supplied as world.capBase.
+    var baseC = (world.capBase != null) ? (world.capBase[i] || 0) : TERR[h.terrain].C;
     // siteC = the site's intrinsic land quality (drives city PRODUCTIVITY via
     // siteFactor); unaffected by paving so a city on rich land stays productive.
     h.siteC = baseC > 0 ? baseC * yieldMul(world.seed, i, 0x0f, cfg.yieldVar) : 0;
@@ -366,7 +473,9 @@
     // removes the food-shock incentive to re-pave, killing the farm<->city churn.
     h.C = h.paved ? 0 : h.siteC;
     var fish = 0;    // fishing is available to any passable coastal tile (incl. cities)
-    if (cfg.fishPerSea > 0 && h.passable) {
+    if (world.fishBonus != null) {                 // planet: coastal fish from the map
+      fish = h.passable ? (world.fishBonus[i] || 0) : 0;
+    } else if (cfg.fishPerSea > 0 && h.passable) {  // hex: synthetic per-sea-neighbour
       var nb = neighborsOf(world, i);
       for (var k = 0; k < nb.length; k++)
         if (world.hexes[nb[k]].terrain === 'water')
@@ -442,7 +551,7 @@
         var other = world.clusters[c2];
         if (other === cl) continue;
         for (var j = 0; j < other.tiles.length; j++) {
-          across += Math.exp(-axialDist(world.hexes[cl.rep], world.hexes[other.tiles[j]]) / cfg.aggloScale);
+          across += Math.exp(-physDist(world, cl.rep, other.tiles[j]) / cfg.aggloScale);
         }
       }
     }
@@ -464,6 +573,21 @@
     return ret - cfg.c;
   }
   function localFarmers(world, i, radius) {
+    if (world.dirCost) {                 // planet: BFS the hop-ball (avoid O(n) scan/tile)
+      var sum0 = 0, seen = {}, frontier = [i], depth = 0, rad = Math.max(1, Math.round(radius));
+      seen[i] = true;
+      while (frontier.length && depth <= rad) {
+        var next = [];
+        for (var f = 0; f < frontier.length; f++) {
+          var t = frontier[f], ht = world.hexes[t];
+          if (!ht.isCity && ht.passable) sum0 += (ht.Lmkt + ht.Lsubw);
+          if (depth < rad) { var nbf = world.adj[t];
+            for (var m = 0; m < nbf.length; m++) if (!seen[nbf[m]]) { seen[nbf[m]] = true; next.push(nbf[m]); } }
+        }
+        frontier = next; depth++;
+      }
+      return sum0;
+    }
     var sum = 0, h0 = world.hexes[i];
     for (var j = 0; j < world.hexes.length; j++) {
       var h = world.hexes[j];
@@ -544,7 +668,7 @@
                 if (hexes[nbz[zz]].isCity && hexes[nbz[zz]].clusterRep === cl2.rep) { claim = true; break; }
             }
             if (!claim) continue;
-            var dd = axialDist(hz, repH);
+            var dd = Math.round(physDist(world, z, cl2.rep));   // integer ring (== axial for hex)
             ringC[dd] = (ringC[dd] || 0) + 1;
             if (isThis) ringU[dd] = (ringU[dd] || 0) + 1;
           }
@@ -559,7 +683,7 @@
             var fr = farmReal(world, hexes[v]);
             if (M <= fr * (1 + cfg.flipHyst)) continue;            // economic gate
             if (cfg.ringGate) {                                     // ring gate
-              var N = axialDist(hexes[v], repH);
+              var N = Math.round(physDist(world, v, cl2.rep));
               if (N >= 2) { var den = ringC[N - 1] || 0; if (den > 0 && (ringU[N - 1] || 0) / den < cfg.ringFillFrac) continue; }
             }
             var nUrban = 0, nbv = neighborsOf(world, v);
@@ -582,7 +706,7 @@
       for (var i = 0; i < hexes.length; i++) {
         var h = hexes[i]; if (!h.passable || h.isCity || !canFlip(i, true)) continue;
         var dCity = Infinity;
-        for (var r = 0; r < world.cities.length; r++) dCity = Math.min(dCity, axialDist(h, hexes[world.cities[r]]));
+        for (var r = 0; r < world.cities.length; r++) dCity = Math.min(dCity, physDist(world, i, world.cities[r]));
         if (dCity < cfg.newCoreMinDist) continue;
         var pot = localFarmers(world, i, 2);
         if (cfg.seaTravel && cfg.coastalCoreBonus > 0) {
@@ -784,16 +908,68 @@
   // ============================================================================
   //  WORLD CONSTRUCTION
   // ============================================================================
-  // spec: { cols, rows, cells:[terrain...], cities:[{col,row,A?}], config:{...} }
+  // Build the geometry + per-tile state of a PLANET (graph) world from an adapted
+  // plangen-game-map (see game_map_adapter.js). Sets everything buildGrid sets for
+  // the hex path, plus the graph-transport hooks (adj/costIn/costOut/adjKey), the
+  // calories capacity override (capBase/fishBonus) and the great-circle physDist.
+  function buildGraphWorld(world, spec) {
+    var G = spec.graph, n = G.n, hexes = new Array(n);
+    for (var i = 0; i < n; i++) {
+      var isW = !!(G.water && G.water[i]), pass = !!G.passable[i];
+      // pseudo-terrain so the water/impassable checks scattered through the engine
+      // keep working; real per-tile capacity comes from capBase, name from terrainName.
+      var terr = isW ? 'water' : (pass ? 'plains' : 'mountain');
+      hexes[i] = {
+        i: i, q: 0, r: 0, col: 0, cx: 0, cy: 0,
+        terrain: terr, terrainName: G.terrainName ? G.terrainName[i] : terr,
+        C: 0, fishCap: 0, Cfood: 0, passable: pass,
+        isCity: false, A: 0,
+        L: 0, Lmkt: 0, Lsubw: 0, LmktT: 0, LsubT: 0, Fmkt: 0, Lsub: 0,
+        out: 0, basin: -1, netback: -Infinity
+      };
+    }
+    world.hexes = hexes;
+    world.adj = G.adj;
+    world.costOut = G.costOut;   // normalised baked cost u -> adj[u][k]  (K0 applied at use)
+    world.costIn = G.costIn;     // normalised baked cost adj[u][k] -> u
+    // transit[i] = 1 if food transport may pass through tile i (passable land OR
+    // water/sea lane), 0 for impassable land (mountain/glacier — a barrier).
+    var transit = new Uint8Array(n);
+    for (var ti = 0; ti < n; ti++) transit[ti] = (hexes[ti].passable || (G.water && G.water[ti])) ? 1 : 0;
+    world.transit = transit;
+    world.capBase = G.capBase;   // calories-derived farm capacity per tile
+    world.fishBonus = G.fishBonus; // coastal fishing capacity per tile
+    world.dirCost = true;        // marks a directional/graph world
+    world.minerals = G.minerals || null; // inert (displayed, not simulated)
+    world.polys = G.polys || null;        // lon/lat rings for rendering
+    world.coords = G.coords || null;
+    // precompute edgeKey per adjacency slot (road lookups in the hot Dijkstra loop)
+    var adjKey = new Array(n);
+    for (var u = 0; u < n; u++) {
+      var nb = G.adj[u], row = new Array(nb.length);
+      for (var k = 0; k < nb.length; k++) row[k] = edgeKey(u, nb[k]);
+      adjKey[u] = row;
+    }
+    world.adjKey = adjKey;
+    // great-circle distance / median edge length -> "hops" (same units as axial)
+    var coords = G.coords, hopLen = G.hopLen || 1;
+    world.physDistFn = function (a, b) {
+      var la = coords[a * 2], lo = coords[a * 2 + 1], lb = coords[b * 2], lob = coords[b * 2 + 1];
+      var cc = Math.sin(la) * Math.sin(lb) + Math.cos(la) * Math.cos(lb) * Math.cos(lo - lob);
+      if (cc > 1) cc = 1; else if (cc < -1) cc = -1;
+      return Math.acos(cc) / hopLen;
+    };
+  }
+
+  // spec: hex  -> { cols, rows, cells:[terrain...], cities:[{col,row,A?}], config }
+  //       graph-> { graph:{...}, cities:[tileIndex | {i,A}], config } (planet map)
   function createWorld(spec) {
     var cfg = {};
     for (var k in DEFAULTS) cfg[k] = DEFAULTS[k];
     if (spec.config) for (var k2 in spec.config) cfg[k2] = spec.config[k2];
 
-    var g = buildGrid(spec.cols, spec.rows, spec.cells);
     var world = {
-      cfg: cfg, cols: spec.cols, rows: spec.rows,
-      hexes: g.hexes, axialMap: g.axialMap,
+      cfg: cfg,
       cities: [], Aof: {},
       roads: {},         // edgeKey -> true (a built segment exists)
       roadState: {},     // edgeKey -> { cost, decay(0..1), banditHold(0..1) }
@@ -807,6 +983,15 @@
       metrics: null
     };
 
+    if (spec.graph) {
+      buildGraphWorld(world, spec);
+    } else {
+      var g = buildGrid(spec.cols, spec.rows, spec.cells);
+      world.cols = spec.cols; world.rows = spec.rows;
+      world.hexes = g.hexes; world.axialMap = g.axialMap;
+      buildAdjacencyHex(world);   // precompute adj (bit-identical to neighborsOf)
+    }
+
     // urbanization-derived constants + zeta (compute once)
     var du = deriveUrban(cfg);
     world.solverConst = {
@@ -817,19 +1002,20 @@
     // seed first (capacity noise + fishing yields are keyed off it)
     world.seed = (spec.seed != null) ? (spec.seed | 0) : strHash(spec.name || 'map');
 
-    // per-tile food capacities (farm C x yield noise + fishing from adjacent sea)
-    // and subsistence capacities derived from them
+    // per-tile food capacities (farm C x yield noise + fishing) + subsistence
     recomputeCapacities(world);
 
-    // fixed per-edge overland cost factors (deterministic from the map seed)
-    world.edgeFactor = {};
-    for (var hi = 0; hi < world.hexes.length; hi++) {
-      if (!world.hexes[hi].passable) continue;
-      var nb = neighborsOf(world, hi);
-      for (var m = 0; m < nb.length; m++) {
-        var j = nb[m];
-        if (!world.hexes[j].passable || j < hi) continue;
-        world.edgeFactor[edgeKey(hi, j)] = edgeFactorFor(world.seed, hi, j, cfg.edgeVar);
+    // fixed per-edge overland cost factors (hex maps only; planet uses baked costs)
+    if (!world.dirCost) {
+      world.edgeFactor = {};
+      for (var hi = 0; hi < world.hexes.length; hi++) {
+        if (!world.hexes[hi].passable) continue;
+        var nb = neighborsOf(world, hi);
+        for (var m = 0; m < nb.length; m++) {
+          var j = nb[m];
+          if (!world.hexes[j].passable || j < hi) continue;
+          world.edgeFactor[edgeKey(hi, j)] = edgeFactorFor(world.seed, hi, j, cfg.edgeVar);
+        }
       }
     }
 
@@ -838,8 +1024,13 @@
     if (spec.cities) {
       for (var ci = 0; ci < spec.cities.length; ci++) {
         var cs = spec.cities[ci];
-        var h = getHex(world, cs.col, cs.row);
-        if (h && h.passable) foundCity(world, h.i, cs.A);
+        if (spec.graph) {
+          var idx = (typeof cs === 'number') ? cs : cs.i;
+          if (world.hexes[idx] && world.hexes[idx].passable) foundCity(world, idx, cs.A);
+        } else {
+          var h = getHex(world, cs.col, cs.row);
+          if (h && h.passable) foundCity(world, h.i, cs.A);
+        }
       }
     }
     rebuildClusters(world);
@@ -905,15 +1096,18 @@
     world.solverConst = { alpha: du.alpha, pconc: du.pconc, Abase: du.Abase, Z: zeta(du.pconc, cfg.zetaTerms) };
     recomputeCapacities(world);  // farm noise + fishing (fishPerSea/yieldVar may have changed) -> Lsub/Ksub
     rebuildClusters(world);   // recompute agglomerated productivity per cluster
-    // per-edge overland factors (edgeVar may have changed)
-    world.edgeFactor = {};
-    for (var hi = 0; hi < world.hexes.length; hi++) {
-      if (!world.hexes[hi].passable) continue;
-      var nb = neighborsOf(world, hi);
-      for (var m = 0; m < nb.length; m++) {
-        var j = nb[m];
-        if (!world.hexes[j].passable || j < hi) continue;
-        world.edgeFactor[edgeKey(hi, j)] = edgeFactorFor(world.seed, hi, j, cfg.edgeVar);
+    // per-edge overland factors (edgeVar may have changed) — hex maps only; the
+    // planet keeps its baked directional costs (K0 is applied live at use).
+    if (!world.dirCost) {
+      world.edgeFactor = {};
+      for (var hi = 0; hi < world.hexes.length; hi++) {
+        if (!world.hexes[hi].passable) continue;
+        var nb = neighborsOf(world, hi);
+        for (var m = 0; m < nb.length; m++) {
+          var j = nb[m];
+          if (!world.hexes[j].passable || j < hi) continue;
+          world.edgeFactor[edgeKey(hi, j)] = edgeFactorFor(world.seed, hi, j, cfg.edgeVar);
+        }
       }
     }
     world.transportDirty = true;
@@ -922,6 +1116,7 @@
   // Auto-route the cheapest OVERLAND path between two cities (ignores existing
   // roads so the project has something to improve), returns list of hex edges.
   function routeBetween(world, a, b) {
+    if (world.dirCost) return routeBetweenGraph(world, a, b);
     var n = world.hexes.length;
     var dist = new Float64Array(n); dist.fill(Infinity); dist[a] = 0;
     var prev = new Int32Array(n); prev.fill(-1);
@@ -938,6 +1133,38 @@
         if (!world.hexes[v].passable) continue;
         var w = baseEdge(world, u, v); // route over open-country (per-edge) cost
         if (dist[u] + w < dist[v]) { dist[v] = dist[u] + w; prev[v] = u; }
+      }
+    }
+    if (prev[b] < 0 && a !== b) return null;
+    var edges = [], cur = b;
+    while (cur !== a && cur >= 0) { var p = prev[cur]; if (p < 0) break; edges.push([p, cur]); cur = p; }
+    edges.reverse();
+    return edges;
+  }
+  // Planet roads are LAND infrastructure: a heap-Dijkstra cheapest land path a->b
+  // over the baked outbound costs, ignoring existing roads (so the project has
+  // something to improve). Returns null if no land route exists (e.g. across an
+  // ocean — sea trade is handled by transport, not roads).
+  function routeBetweenGraph(world, a, b) {
+    var n = world.hexes.length, K0 = world.cfg.K0, adj = world.adj, costOut = world.costOut;
+    var dist = new Float64Array(n); dist.fill(Infinity); dist[a] = 0;
+    var prev = new Int32Array(n); prev.fill(-1);
+    var cap = 64, hc = new Float64Array(cap), ht = new Int32Array(cap), hn = 0;
+    function grow() { cap *= 2; var nc = new Float64Array(cap), nt = new Int32Array(cap); nc.set(hc); nt.set(ht); hc = nc; ht = nt; }
+    function push(c, t) { if (hn >= cap) grow(); hc[hn] = c; ht[hn] = t; var i = hn++;
+      while (i > 0) { var p = (i - 1) >> 1; if (hc[p] <= hc[i]) break; var tc = hc[p], tt = ht[p]; hc[p] = hc[i]; ht[p] = ht[i]; hc[i] = tc; ht[i] = tt; i = p; } }
+    function pop() { var t = ht[0]; hn--; hc[0] = hc[hn]; ht[0] = ht[hn]; var i = 0;
+      for (;;) { var l = 2 * i + 1, r = l + 1, s = i; if (l < hn && hc[l] < hc[s]) s = l; if (r < hn && hc[r] < hc[s]) s = r; if (s === i) break;
+        var tc = hc[s], tt = ht[s]; hc[s] = hc[i]; ht[s] = ht[i]; hc[i] = tc; ht[i] = tt; i = s; } return t; }
+    push(0, a);
+    while (hn > 0) {
+      var u = pop(); if (u === b) break;
+      if (!world.hexes[u].passable && u !== a) continue;    // roads only cross land
+      var nb = adj[u], du = dist[u];
+      for (var k = 0; k < nb.length; k++) {
+        var v = nb[k]; if (!world.hexes[v].passable) continue;
+        var nd = du + K0 * costOut[u][k];
+        if (nd < dist[v]) { dist[v] = nd; prev[v] = u; push(nd, v); }
       }
     }
     if (prev[b] < 0 && a !== b) return null;
@@ -984,8 +1211,8 @@
         var dT = Math.min(world.transport[kk] ? world.transport[kk][ea] : Infinity,
                           world.transport[kk] ? world.transport[kk][eb] : Infinity);
         if (dT < ndT) { ndT = dT; nearest = kk; }
-        var dP = Math.min(axialDist(world.hexes[ea], world.hexes[kk]),
-                          axialDist(world.hexes[eb], world.hexes[kk]));
+        var dP = Math.min(physDist(world, ea, kk),
+                          physDist(world, eb, kk));
         if (dP < physD) physD = dP;
       }
       segNearestCity[key] = nearest;
@@ -1385,6 +1612,7 @@
     reconfigure: reconfigure, siteFactor: siteFactor,
     neighborsOf: neighborsOf, getHex: getHex, edgeKey: edgeKey, isHarbor: isHarbor,
     computeTransport: computeTransport, deriveUrban: deriveUrban,
+    physDist: physDist, foodCapOf: foodCapOf,
     Lsub: Lsub, zeta: zeta, sampleMetrics: sampleMetrics
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = API;

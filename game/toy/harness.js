@@ -14,6 +14,14 @@ var wt = require('worker_threads');
 
 var MAPS_DIR = path.join(__dirname, 'maps');
 var OUT_DIR = path.join(__dirname, 'out');
+// The game's DEFAULT MAP (a plangen-game-map) — referenced in a sweep spec as the
+// map name "planet". It is adapted on the fly via game_map_adapter.js (not stored
+// in maps/, which holds the small fixed hex maps).
+var PLANET_ALIASES = { planet: path.join(__dirname, '..', '..', 'maps', 'sample-map.json') };
+function resolveMapPath(mn) {
+  if (PLANET_ALIASES[mn]) return PLANET_ALIASES[mn];
+  return path.join(MAPS_DIR, mn + '.json');
+}
 
 // ---- default sweep spec ---------------------------------------------------
 function defaultSpec(quick) {
@@ -75,11 +83,19 @@ function enumerateJobs(spec) {
 // =============================== WORKER =====================================
 if (!wt.isMainThread) {
   var R = require('./game_runner.js');
+  var Adapter = require('./game_map_adapter.js');
   var d = wt.workerData;
   var jobs = enumerateJobs(d.spec);
   var mapCache = {};
   function loadMap(mn) {
-    if (!mapCache[mn]) mapCache[mn] = JSON.parse(fs.readFileSync(path.join(MAPS_DIR, mn + '.json'), 'utf8'));
+    if (!mapCache[mn]) {
+      var raw = JSON.parse(fs.readFileSync(resolveMapPath(mn), 'utf8'));
+      // a plangen-game-map (the planet) is adapted to the engine graph spec; the
+      // fixed hex maps are used as-is. withPolys:false — the harness never renders.
+      mapCache[mn] = (raw && raw.format === 'plangen-game-map')
+        ? Adapter.adaptGameMap(raw, { withPolys: false, name: mn })
+        : raw;
+    }
     return mapCache[mn];
   }
   var batch = [];

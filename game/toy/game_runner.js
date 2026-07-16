@@ -5,7 +5,8 @@
 var Econ = require('./econ_engine.js');
 var Strats = require('./strategies.js');
 
-// mapData: { name, cols, rows, cells, sites:[{col,row}] }
+// mapData: hex   -> { name, cols, rows, cells, sites:[{col,row}] }
+//          planet-> { name, seed, graph:{...}, sites:[tileIndex] }  (adapted game map)
 // params:  partial GameConfig override (the swept rule-set)
 // stratName: strategy id from strategies.js
 // opts: { maxTicks=450, minTicks=120, sampleEvery=10, settleTol=0.004 }
@@ -21,14 +22,19 @@ function runGame(mapData, params, stratName, opts) {
   var checkEvery = 10, needConsec = 2;
   var t0 = Date.now();
 
-  var world = Econ.createWorld({
-    name: mapData.name, seed: mapData.seed,
-    cols: mapData.cols, rows: mapData.rows, cells: mapData.cells, config: params
-  });
-  var siteIdx = [];
-  for (var i = 0; i < mapData.sites.length; i++) {
-    var h = Econ.getHex(world, mapData.sites[i].col, mapData.sites[i].row);
-    if (h) siteIdx.push(h.i);
+  var world, siteIdx = [];
+  if (mapData.graph) {                          // planet (graph) map
+    world = Econ.createWorld({ name: mapData.name, seed: mapData.seed, graph: mapData.graph, config: params });
+    siteIdx = mapData.sites.slice();            // sites are already tile indices
+  } else {                                       // fixed hex map
+    world = Econ.createWorld({
+      name: mapData.name, seed: mapData.seed,
+      cols: mapData.cols, rows: mapData.rows, cells: mapData.cells, config: params
+    });
+    for (var i = 0; i < mapData.sites.length; i++) {
+      var h = Econ.getHex(world, mapData.sites[i].col, mapData.sites[i].row);
+      if (h) siteIdx.push(h.i);
+    }
   }
   var strat = Strats.byName(stratName);
 

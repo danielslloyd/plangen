@@ -10,10 +10,9 @@
   'use strict';
   var Econ = (typeof require !== 'undefined') ? require('./econ_engine.js') : global.Econ;
 
-  function axialD(h1, h2) {
-    var dq = h1.q - h2.q, dr = h1.r - h2.r;
-    return (Math.abs(dq) + Math.abs(dq + dr) + Math.abs(dr)) / 2;
-  }
+  // physical distance between two tiles — works on both the hex maps and the
+  // planet graph (Econ.physDist dispatches on the world).
+  function tileDist(world, a, b) { return Econ.physDist(world, a, b); }
 
   // Generic policy: found up to `cities` best sites (one per `interval` ticks),
   // hold tax at `tau`, wire roads per `roads` topology among founded cities.
@@ -61,7 +60,7 @@
         var nearest = -1, nd = Infinity;
         for (var i = 0; i < f.length; i++) {
           if (f[i] === hi) continue;
-          var d = axialD(world.hexes[f[i]], world.hexes[hi]);
+          var d = tileDist(world, f[i], hi);
           if (d < nd) { nd = d; nearest = f[i]; }
         }
         if (nearest >= 0) link(world, st, nearest, hi);
