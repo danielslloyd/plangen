@@ -7,6 +7,7 @@
 </head>
 <body>
 	<div id="topbar">
+		<span id="brand">PLAN<b>GEN</b></span>
 		<span id="statusSpan">Loading…</span>
 		<button id="endTurnBtn">End Turn ⏵</button>
 		<button id="autoplayBtn">▶ Autoplay</button>
@@ -16,6 +17,7 @@
 			<option value="30">fast</option>
 			<option value="1">max</option>
 		</select>
+		<span class="spacer"></span>
 		<select id="overlaySel" title="map overlay">
 			<option value="terrain">Terrain</option>
 			<option value="political">Political</option>
@@ -24,20 +26,24 @@
 			<option value="cityPriority">★ City priority</option>
 			<option value="transit">★ Transit corridors</option>
 			<option value="shoreDelta">★ Shore delta</option>
+			<option value="population">Population</option>
 			<option value="province">Provinces</option>
 			<option value="prices">Prices…</option>
 			<option value="traffic">Trade traffic</option>
 		</select>
 		<select id="commoditySel" style="display:none" title="commodity for price overlay"></select>
-		<label><input type="checkbox" id="routesChk" checked> routes</label>
-		<span class="spacer"></span>
-		<input id="seedInput" value="12345" size="9" title="game seed">
+		<button id="layersBtn">◈ Layers</button>
 		<button id="newGameBtn">New game</button>
 		<label class="filebtn">Load map<input type="file" id="mapFile" accept=".json"></label>
 	</div>
 	<div id="playerStrip"></div>
 	<div id="content">
-		<div id="mapWrap"><canvas id="mapCanvas"></canvas><div id="toasts"></div></div>
+		<div id="mapWrap">
+			<canvas id="mapCanvas"></canvas>
+			<div id="toasts"></div>
+			<div id="layersPanel" class="hidden"></div>
+			<div id="actionBar" class="hidden"></div>
+		</div>
 		<div id="sidebar">
 			<div id="tabs">
 				<button data-tab="info" class="active">Info</button>
@@ -51,17 +57,21 @@
 			<div id="tabBody"><div class="hint">Loading map…</div></div>
 		</div>
 	</div>
+	<div id="setupScreen" class="hidden"></div>
 
 	<script src="config.js"></script>
 	<script src="mapdata.js"></script>
 	<script src="designs.js"></script>
 	<script src="ai.js"></script>
 	<script src="trade.js"></script>
+	<script src="powerups.js"></script>
+	<script src="merchants.js"></script>
 	<script src="diplomacy.js"></script>
 	<script src="gamelog.js"></script>
 	<script src="engine.js"></script>
 	<script src="render.js"></script>
 	<script src="ui.js"></script>
+	<script src="setup.js"></script>
 	<script src="main.js"></script>
 </body>
 </html>

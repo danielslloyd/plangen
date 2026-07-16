@@ -1,5 +1,9 @@
 # PlanGen Civ Prototype
 
+> **Status & roadmap:** see [`game/STATUS.md`](STATUS.md) for what's working,
+> what we're aiming for, and the to-do list (across `game/` and `game/toy/`).
+> This file is the how-to reference for *playing* the prototype.
+
 A browser-only, dependency-free prototype of a civ-style strategy game played on
 maps exported from PlanGen (`docs/game-export-format.md`). Built for **balance
 tuning**: every rule constant and every AI personality weight is a live slider.
@@ -11,11 +15,62 @@ Serve the repo root (`python -m http.server 8765`) and open
 use **Load map** to open any other exported game map (PlanGen → Save/Load panel
 → **Export Game Map**).
 
+## Starting a game
+
+The **setup screen** opens at boot (and via "New game"): pick 2–8 player
+slots, each **Human or an AI preset**, toggle **independents** (see below),
+set the seed, and optionally **choose your starting location on the map** —
+gold halos mark recommended sites, hover shows green (valid) / red (too close)
+and the Info tab inspects the tile. Multiple humans play hotseat: click
+another human's chip in the player strip to switch perspective.
+
+## UI
+
+- **Action bar** (bottom of the map): always shows what you can do — the
+  selected unit's orders (found city, train airborne/amphibious, paradrop),
+  city shortcuts (route, road), active pick modes with a Cancel button, or an
+  idle summary ("2 units ready · 1 city idle") with next-unit cycling.
+- **Hover previews**: with one of your units selected, hovering a tile draws
+  an animated dashed path with a turn-count badge; tiles reachable this turn
+  are tinted, attackable targets get red pulsing halos; air units show strike
+  rings and highlighted targets; paradrop mode shows its range ring.
+- **◈ Layers** (top bar): 13 optional detail layers (borders, rivers, roads,
+  routes, city names, health bars, supply, occupation, camps, ranges, grid…)
+  with minimal / standard / full presets.
+
+## Feature flags (keep or drop each independently)
+
+Every wave-3.5 dynamic is behind a `GameConfig.features` flag (Tuning tab →
+"Features", 0 = off / 1 = on; most take effect from the next new game):
+
+| flag | what it does |
+|---|---|
+| `persistentOrders` | units remember their destination and keep marching each turn (⚑ flag + dashed line on the map; cancel from the action bar) |
+| `unitStackLimit` | up to N (default 3) own ground/sea units may END on a tile; passing through a full stack is always allowed |
+| `edgeFortifications` | units fortify individual edges (🛡, cheap, defense bonus, decays if unmanned) or build edge walls (🧱, permanent; upgrading a fort is discounted) |
+| `timedEras` | eras advance on a fixed turn schedule (`GameConfig.eras`) shared by all players; science is decorative |
+| `settlementMissions` | no settler builds — pay gold + 1 pop and a mission marches to your chosen tile and founds the city |
+| `recruitment` | "Force doctrine" quotas (Players tab): set desired counts per unit type; idle cities auto-recruit toward them |
+| `tilePopulation` | rural tiles carry population that adds food/goods demand; cities manufacture a "goods" commodity from pop × wealth (Population overlay) |
+| `policies` | per-player policy sliders (Taxation / Militarism / Openness / Infrastructure) replace per-city building micro; buildings leave the production list |
+| `merchants` | concrete trade: cities spawn 🐫 caravans (gold + pop + livestock) and coastal cities ⛵ fleets (gold + pop + timber) that plan their own round trips from EMA price histories, haul real cargo, and bank profits into the city's 💎wealth (which converts to growth). Replaces abstract routes. `merchant.tollMode` picks the tolling variant: **0** = per-tile ⛩ toll gates you place on your own tiles (select a tile → action bar), charged per passage; **1** = one territory-wide entrance fee charged once per trip. Both scale off the toll-rate slider; merchants price tolls into their route planning and detour around greed |
+| `powerups` | every `powerups.everyTurns` turns each civ picks one permanent power-up from four categories (trade / military / building / growth; 16 total). Humans choose in the Players tab (action bar shows a ★ prompt); AIs pick along personality + policies, and several picks stack with policy sliders (Toll Houses × toll rate, Conscription × Militarism, …) |
+
 ## The game
 
 - **Turns**: all AI players act, then occupation, economy, trade, diplomacy.
-  `End Turn` or `Autoplay` (speed selector). Default: you are Player 1; pick
-  "spectate" in the Players tab to watch AIs only.
+  `End Turn` or `Autoplay` (speed selector). Spectate by making every slot an
+  AI (or via the Players tab).
+- **War**: the Diplomacy tab has an explicit **⚔ Declare war** button per
+  partner; peace comes through deals (or long-stalemate auto-peace).
+- **Independents**: when the map is sparse relative to the player count,
+  neutral **city-states** spawn ("Free X") — single-city passive players that
+  trade, defend and can be conquered or dealt with, but never expand or
+  declare war and don't block victory — plus a few starting **bandit camps**
+  in the wilderness.
+- **Pacing**: science is slow by design — each era takes a few hundred turns
+  to play out at default settings (`tech.*` + `yields.sciencePerPop` sliders
+  change this).
 - **Cities** claim territory (radius tunable), work their best tiles
   (pop × tilesPerPop), grow on food surplus, and produce units/buildings.
   A city **fortifies every edge of its tile** — any attack into the city tile
@@ -149,8 +204,11 @@ goals and downloads the whole thing as JSON (~2KB/turn).
 | `designs.js` | configurable ship/plane/carrier design classes + retooling |
 | `gamelog.js` | structured replay log + JSON export |
 | `ai.js` | personalities, site scoring, per-turn decisions, naval/air missions |
-| `render.js` | canvas map, overlays, contested hatching, deal highlights |
-| `ui.js` | panels, tabs, diplomacy builder, player strip, toasts |
+| `merchants.js` | caravan/fleet agents, price memory, round-trip planning, toll gates & entrance fees |
+| `powerups.js` | the 4-category power-up menu, AI picks, effect lookups (`puHas`) |
+| `render.js` | cached base canvas + animated layer: overlays, halos, path previews, layer toggles |
+| `ui.js` | panels, tabs, diplomacy builder, player strip, toasts, action bar, layers panel |
+| `setup.js` | new-game setup screen + start-position picking |
 | `main.js` | bootstrap |
 
 ## Known prototype simplifications

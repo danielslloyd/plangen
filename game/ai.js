@@ -33,6 +33,13 @@ var AI_PRESETS = {
 		wShoreDelta: 0.3, wCoast: 0.2, wRiver: 0.5,
 		expansion: 0.5, military: 0.6, trade: 0.2, aggression: 0.15,
 		tollGreed: 0.9, subsidyBias: 0.5, riskAversion: 0.8
+	},
+	// Independent city-states: defend and trade, never expand or attack.
+	cityState: {
+		wFood: 1.0, wProd: 0.8, wMinerals: 0.7, wCityPriority: 1.1, wTransit: 0.9,
+		wShoreDelta: 0.6, wCoast: 0.7, wRiver: 0.7,
+		expansion: 0, military: 0.55, trade: 0.9, aggression: 0,
+		tollGreed: 0.2, subsidyBias: 0.6, riskAversion: 0.9
 	}
 };
 var AI_PRESET_ORDER = ["balanced", "expansionist", "warmonger", "merchant", "isolationist"];
@@ -47,8 +54,10 @@ var AI_PERSONALITY_SCHEMA = [
 	{ k: "riskAversion", max: 1 }
 ];
 
-function makePersonality(playerIndex, rng) {
-	var preset = AI_PRESET_ORDER[playerIndex % AI_PRESET_ORDER.length];
+function makePersonality(playerIndex, rng, preset) {
+	if (!preset || preset === "random" || !AI_PRESETS[preset]) {
+		preset = AI_PRESET_ORDER[playerIndex % AI_PRESET_ORDER.length];
+	}
 	var p = { preset: preset };
 	var src = AI_PRESETS[preset];
 	for (var k in src) p[k] = Math.max(0, src[k] * (0.9 + rng() * 0.2)); // slight jitter
@@ -186,6 +195,7 @@ function aiMoveUnits(pl, myCities, myUnits) {
 	var missions = { settle: 0, clearCamps: 0, attack: 0, garrison: 0, naval: 0, air: 0 };
 
 	myUnits.forEach(function (u) {
+		if (u.orders) return; // standing orders (settlement missions) run themselves
 		var dom = UNIT_TYPES[u.type].domain;
 		if (dom === "sea") { missions.naval++; aiNavalUnit(pl, u, enemyCities, problemCamps); return; }
 		if (dom === "air") { missions.air++; aiAirUnit(pl, u, enemyCities); return; }
@@ -324,12 +334,15 @@ function aiAirUnit(pl, u, enemyCities) {
 }
 
 function aiBestSettleSite(pl, settler) {
+	return aiBestSettleSiteFrom(pl, settler.tile);
+}
+function aiBestSettleSiteFrom(pl, fromTile) {
 	var best = -1, bestScore = 0.5; // require minimum quality
 	for (var i = 0; i < M.landTiles.length; i++) {
 		var t = M.landTiles[i];
-		if (M.distTiles(settler.tile, t) > 15) continue;
+		if (M.distTiles(fromTile, t) > 15) continue;
 		if (nearestCityDistance(t) < 4) continue;
-		var s = aiSiteScore(pl, t) - M.distTiles(settler.tile, t) * 0.15;
+		var s = aiSiteScore(pl, t) - M.distTiles(fromTile, t) * 0.15;
 		if (s > bestScore) { bestScore = s; best = t; }
 	}
 	return best;
@@ -371,8 +384,19 @@ function aiProduction(pl, myCities, myUnits) {
 	var wantSoldiers = Math.ceil(myCities.length * (0.6 + a.military * 1.4)) + (atWarNow ? 2 : 0);
 	var wantShips = Math.round(myCities.filter(cityIsCoastal).length * (0.25 + a.military * 0.3 + a.trade * 0.15));
 	var wantPlanes = pl.era >= 2 ? Math.ceil(myCities.length * a.military * 0.7) : 0;
-	var wantSettler = settlers === 0 && myCities.length < 2 + a.expansion * 6 &&
+	var wantSettler = !pl.minor && settlers === 0 && myCities.length < 2 + a.expansion * 6 &&
 		myUnits.length < GameConfig.units.maxUnitsPerPlayer;
+
+	// Settlement missions replace settler production: pay gold + pop up front.
+	if (wantSettler && GameConfig.features.settlementMissions) {
+		if (pl.gold >= GameConfig.settle.goldCost * 1.5 && myCities.length) {
+			var site = aiBestSettleSiteFrom(pl, G.cities[pl.capital >= 0 ? pl.capital : myCities[0].id].tile);
+			if (site >= 0 && launchSettlementMission(pl.id, site) === null) {
+				aiLogGoal(pl, "settle", "launched a settlement mission", { target: site });
+			}
+		}
+		wantSettler = false;
+	}
 
 	var queued = [];
 	var unitBudgetLeft = function () { return myUnits.length + queued.length < GameConfig.units.maxUnitsPerPlayer; };
@@ -419,6 +443,7 @@ function aiProduction(pl, myCities, myUnits) {
 
 function aiTradeRoutes(pl, myCities) {
 	var a = pl.ai;
+	if (GameConfig.features.merchants) return; // merchant agents replace routes
 	if (a.trade <= 0.05) return;
 	if ((G.turn + pl.id) % 3 !== 0) return; // stagger the expensive search
 

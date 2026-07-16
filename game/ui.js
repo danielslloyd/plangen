@@ -1,6 +1,6 @@
 // ui.js — DOM panels and interactions: selection, orders, city management
 // (production, routes, subsidies), player personalities, the auto-generated
-// tuning panel, and the event log.
+// tuning panel, the event log, the Layers panel and the contextual action bar.
 
 var UI = {
 	tab: "info",
@@ -11,8 +11,19 @@ var UI = {
 	roadTargetMode: null, // city id when picking a road destination
 	deal: null,           // deal being built in the Diplomacy tab
 	dealPick: null,       // 'give'|'get' while picking tiles on the map
-	dropMode: false       // airborne paradrop targeting mode
+	dropMode: false,      // airborne paradrop targeting mode
+	fortifyMode: null,    // {level: 1|2} while picking an edge to fortify/wall
+	settleMode: false,    // picking a settlement-mission target
+	layersOpen: false
 };
+
+function uiClearModes() {
+	UI.dropMode = false;
+	UI.fortifyMode = null;
+	UI.settleMode = false;
+	UI.roadTargetMode = null;
+	R.routeCreateFrom = null;
+}
 
 function uiResetDeal(partnerId) {
 	var h = UI.humanId();
@@ -47,22 +58,17 @@ function initUI() {
 		cs.appendChild(el("<option value='" + cm.id + "'>" + cm.id + "</option>"));
 	});
 	cs.onchange = function () { R.priceCommodity = this.value; R._fillsKey = ""; R.dirty = true; };
-	$id("routesChk").onchange = function () { R.showRoutes = this.checked; R.dirty = true; };
-	$id("newGameBtn").onclick = function () {
-		var seed = parseInt($id("seedInput").value) || Math.floor(Math.random() * 1e9);
-		$id("seedInput").value = seed;
-		newGame(seed);
-		R.selectedUnit = null; R.selectedCity = null; R.selectedTile = -1; R.selectedRoute = null;
-		R._fillsKey = ""; R.dirty = true;
-		refreshUI();
-	};
+	$id("layersBtn").onclick = function () { toggleLayersPanel(); };
+	$id("newGameBtn").onclick = function () { showSetupScreen(); };
 	$id("mapFile").onchange = function (ev) {
 		var f = ev.target.files[0];
 		if (!f) return;
 		var reader = new FileReader();
 		reader.onload = function (e2) {
 			loadMapData(JSON.parse(e2.target.result));
-			$id("newGameBtn").onclick();
+			G = null;
+			R._fillsKey = ""; R.dirty = true;
+			showSetupScreen();
 		};
 		reader.readAsText(f);
 	};
@@ -97,6 +103,9 @@ function initUI() {
 			}
 		}
 	});
+	canvas.addEventListener("mouseleave", function () {
+		if (R.hoverTile !== -1) { R.hoverTile = -1; R.dirty = true; }
+	});
 	canvas.addEventListener("wheel", function (e) {
 		e.preventDefault();
 		var f = e.deltaY < 0 ? 1.15 : 1 / 1.15;
@@ -111,14 +120,76 @@ function initUI() {
 		handleTileClick(t);
 	});
 
+	renderLayersPanel();
 	refreshUI();
 }
 
 function doEndTurn() {
+	if (!G || (G.pendingStarts && G.pendingStarts.length)) return;
 	endTurn();
 	R._fillsKey = ""; R.dirty = true;
 	refreshUI();
 	showTurnToasts();
+}
+
+// ---------------------------------------------------------------------------
+// Layers panel: optional map detail, with three quick presets.
+// ---------------------------------------------------------------------------
+
+var LAYER_LABELS = [
+	["borders", "Territory borders"],
+	["rivers", "Rivers"],
+	["roads", "Roads & bridges"],
+	["routes", "Trade routes"],
+	["forts", "Fortifications & walls"],
+	["orders", "Unit orders (⚑)"],
+	["cities", "Cities"],
+	["cityNames", "City names"],
+	["healthBars", "Health bars"],
+	["units", "Units"],
+	["supplyWarnings", "Supply status"],
+	["occupation", "Occupation hatching"],
+	["camps", "Bandit / pirate camps"],
+	["ranges", "Movement ranges"],
+	["grid", "Tile grid"]
+];
+
+function toggleLayersPanel(force) {
+	UI.layersOpen = force !== undefined ? force : !UI.layersOpen;
+	$id("layersPanel").classList.toggle("hidden", !UI.layersOpen);
+	$id("layersBtn").classList.toggle("active", UI.layersOpen);
+	if (UI.layersOpen) renderLayersPanel();
+}
+
+function renderLayersPanel() {
+	var panel = $id("layersPanel");
+	var html = "<div class='lpTitle'>Map detail <button class='sm' id='lpClose'>✕</button></div>";
+	html += "<div class='lpPresets'>";
+	["minimal", "standard", "full"].forEach(function (p) {
+		html += "<button class='sm lpPreset' data-p='" + p + "'>" + p + "</button>";
+	});
+	html += "</div>";
+	LAYER_LABELS.forEach(function (pair) {
+		html += "<label class='lpRow'><input type='checkbox' data-k='" + pair[0] + "'" +
+			(R.layers[pair[0]] ? " checked" : "") + "> " + pair[1] + "</label>";
+	});
+	panel.innerHTML = html;
+	panel.querySelectorAll("input[type=checkbox]").forEach(function (cb) {
+		cb.onchange = function () {
+			R.layers[cb.dataset.k] = cb.checked;
+			R.dirty = true;
+		};
+	});
+	panel.querySelectorAll(".lpPreset").forEach(function (b) {
+		b.onclick = function () {
+			var src = LAYER_PRESETS[b.dataset.p];
+			for (var k in src) R.layers[k] = src[k];
+			R.dirty = true;
+			renderLayersPanel();
+		};
+	});
+	var lc = $id("lpClose");
+	if (lc) lc.onclick = function () { toggleLayersPanel(false); };
 }
 
 // ---------------------------------------------------------------------------
@@ -127,22 +198,31 @@ function doEndTurn() {
 
 function renderPlayerStrip() {
 	var strip = $id("playerStrip");
-	if (!strip) return;
+	if (!strip || !G) return;
 	var html = "";
 	G.players.forEach(function (pl) {
 		var wars = G.players.filter(function (o) { return o.id !== pl.id && atWar(pl.id, o.id); });
 		var cities = G.cities.filter(function (c) { return c.owner === pl.id; }).length;
-		html += "<div class='pchip" + (pl.alive ? "" : " dead") + "' data-p='" + pl.id + "' title='" +
+		html += "<div class='pchip" + (pl.alive ? "" : " dead") + (pl.minor ? " minor" : "") +
+			(pl.id === UI.humanId() ? " me" : "") + "' data-p='" + pl.id + "' title='" +
 			esc(pl.name) + " — " + ERA_NAMES[pl.era] + ", score " + pl.score +
+			(pl.minor ? " (independent city-state)" : "") +
+			(pl.isHuman && pl.id !== UI.humanId() ? " — click to switch to this player" : "") +
 			(wars.length ? ", at war with " + wars.map(function (w) { return w.name; }).join(", ") : "") + "'>" +
 			"<span class='chip' style='background:" + pl.color + "'></span>" +
-			esc(pl.name) + (pl.id === UI.humanId() ? " 👤" : "") +
+			esc(pl.name) + (pl.isHuman ? " 👤" : "") +
 			" <span class='sub'>" + cities + "🏛 " + pl.score + "pt" + (wars.length ? " ⚔" : "") + "</span></div>";
 	});
 	strip.innerHTML = html;
 	strip.querySelectorAll(".pchip").forEach(function (d) {
 		d.onclick = function () {
 			var pl = G.players[+d.dataset.p];
+			// hotseat: clicking another human player switches the UI perspective
+			if (pl.isHuman && pl.id !== UI.humanId()) {
+				GameConfig.setup.humanPlayer = pl.id;
+				showToast("Now playing as " + pl.name);
+				refreshUI();
+			}
 			var cap = G.cities[pl.capital];
 			if (cap) {
 				R.view.lonC = M.latLon[cap.tile * 2 + 1];
@@ -155,28 +235,31 @@ function renderPlayerStrip() {
 
 var TOAST_PATTERN = /declares war|captures|eliminated|enters the|Deal agreed|offers a deal|wins|annexes a tile|Tribute .* cancelled|starves \(out of supply\)/;
 
-function showTurnToasts() {
+function showToast(text) {
 	var wrap = $id("toasts");
-	if (!wrap || !G.replay || !G.replay.turns.length) return;
-	var entry = G.replay.turns[G.replay.turns.length - 1];
-	entry.events.filter(function (ev) { return TOAST_PATTERN.test(ev); }).slice(-4).forEach(function (ev) {
-		var d = document.createElement("div");
-		d.className = "toast";
-		d.textContent = ev;
-		wrap.appendChild(d);
-		setTimeout(function () { d.classList.add("fade"); }, 3500);
-		setTimeout(function () { d.remove(); }, 4300);
-	});
-	// cap the stack
+	if (!wrap) return;
+	var d = document.createElement("div");
+	d.className = "toast";
+	d.textContent = text;
+	wrap.appendChild(d);
+	setTimeout(function () { d.classList.add("fade"); }, 3500);
+	setTimeout(function () { d.remove(); }, 4300);
 	while (wrap.children.length > 6) wrap.firstChild.remove();
+}
+
+function showTurnToasts() {
+	if (!G.replay || !G.replay.turns.length) return;
+	var entry = G.replay.turns[G.replay.turns.length - 1];
+	entry.events.filter(function (ev) { return TOAST_PATTERN.test(ev); }).slice(-4).forEach(showToast);
 }
 
 function toggleAutoplay() {
 	UI.autoplay = !UI.autoplay;
 	$id("autoplayBtn").textContent = UI.autoplay ? "⏸ Pause" : "▶ Autoplay";
+	$id("autoplayBtn").classList.toggle("active", UI.autoplay);
 	if (UI.autoplay) {
 		UI.autoplayTimer = setInterval(function () {
-			if (G.winner !== null) { toggleAutoplay(); return; }
+			if (!G || G.winner !== null) { toggleAutoplay(); return; }
 			doEndTurn();
 		}, GameConfig.ui.autoplayDelayMs);
 	} else {
@@ -190,6 +273,30 @@ function toggleAutoplay() {
 
 function handleTileClick(t) {
 	var h = UI.humanId();
+
+	// start-position picking (the very first action of a game)
+	if (G.pendingStarts && G.pendingStarts.length) {
+		var pid = G.pendingStarts[0];
+		var problem = startPickProblem(t);
+		if (problem) { showToast(problem); return; }
+		humanPickStart(pid, t);
+		if (G.pendingStarts && G.pendingStarts.length) {
+			setupPrepareStartPick(); // next human picks
+			showToast(G.players[pid].name + " has settled — next player, choose your start.");
+		} else {
+			G._recommendedStarts = null;
+			showToast("All starting positions chosen — the game begins!");
+			var cap = G.cities[G.players[pid].capital];
+			if (cap) {
+				R.view.lonC = M.latLon[cap.tile * 2 + 1];
+				R.view.latC = M.latLon[cap.tile * 2];
+				R.view.scale = Math.max(R.view.scale, 6);
+			}
+		}
+		R._fillsKey = ""; R.dirty = true;
+		refreshUI();
+		return;
+	}
 
 	// diplomacy tile picking: toggle tiles (or whole cities) in the offer
 	if (UI.tab === "diplo" && UI.dealPick && UI.deal) {
@@ -212,13 +319,52 @@ function handleTileClick(t) {
 		return;
 	}
 
+	// settlement-mission target pick
+	if (UI.settleMode) {
+		var err = launchSettlementMission(h, t);
+		if (err) showToast(err);
+		else {
+			UI.settleMode = false;
+			showToast("Settlement mission dispatched — the caravan marches (⚑ on the map).");
+		}
+		R.dirty = true; refreshUI();
+		return;
+	}
+
+	// fortify/wall an edge: click the tile ACROSS the edge from the selected unit
+	if (UI.fortifyMode && R.selectedUnit && R.selectedUnit.owner === h) {
+		var fu = R.selectedUnit;
+		if (t === fu.tile) { showToast("Click a neighboring tile to pick the edge to fortify."); return; }
+		var fe = M.edgeBetween(fu.tile, t);
+		if (fe < 0) { showToast("Pick a tile next to the unit."); return; }
+		var ferr = buildFortEdge(h, fe, UI.fortifyMode.level);
+		if (ferr) showToast(ferr);
+		else {
+			showToast(UI.fortifyMode.level === 2 ? "Wall built." : "Edge fortified — keep it manned or it decays.");
+			UI.fortifyMode = null;
+		}
+		R.dirty = true; refreshUI();
+		return;
+	}
+
 	// pending "new route" / "road to" target picks
 	if (R.routeCreateFrom !== null) {
 		var cid = G.cityAt[t];
 		if (cid >= 0 && cid !== R.routeCreateFrom) {
 			var from = G.cities[R.routeCreateFrom];
 			var r = createRoute(from.owner, R.routeCreateFrom, cid);
-			if (!r) gameLog("Route failed (no slots, war, or unreachable)");
+			if (!r) showToast("Route failed (no slots, war, or unreachable)");
+			else {
+				// tell the player what the route will actually do
+				var bestCm = null, bestMargin = -Infinity;
+				COMMODITIES.forEach(function (cm) {
+					var m2 = routeMargin(r, cm.id);
+					if (m2 > bestMargin) { bestMargin = m2; bestCm = cm.id; }
+				});
+				showToast(bestMargin > 0
+					? "Route opened — will carry " + bestCm + " for ~+" + bestMargin.toFixed(1) + "g/unit each turn."
+					: "Route opened, but no commodity is profitable yet (it runs when prices diverge).");
+			}
 		}
 		R.routeCreateFrom = null;
 		refreshUI(); R.dirty = true;
@@ -238,7 +384,7 @@ function handleTileClick(t) {
 	// airborne paradrop mode: an airborne infantry drops onto the clicked tile
 	if (R.selectedUnit && R.selectedUnit.owner === h && UI.dropMode &&
 		R.selectedUnit.training === "airborne" && t !== R.selectedUnit.tile) {
-		if (!airborneDrop(R.selectedUnit, t)) gameLog("Can't drop there (range/occupied/terrain).");
+		if (!airborneDrop(R.selectedUnit, t)) showToast("Can't drop there (range/occupied/terrain).");
 		else UI.dropMode = false;
 		R.dirty = true; refreshUI();
 		return;
@@ -251,24 +397,35 @@ function handleTileClick(t) {
 		var cid = G.cityAt[t];
 		var carrierHere = unitsAt(t).find(function (x) { return x.owner === h && UNIT_TYPES[x.type].airbase; });
 		if (cid >= 0 && G.cities[cid].owner === h) {
-			if (!airRebase(au, cid)) gameLog("Out of ferry range.");
+			if (!airRebase(au, cid)) showToast("Out of ferry range.");
 		} else if (carrierHere) {
-			if (!airRebaseCarrier(au, carrierHere)) gameLog("Out of ferry range.");
+			if (!airRebaseCarrier(au, carrierHere)) showToast("Out of ferry range.");
 		} else {
 			var hasTarget = G.campAt[t] >= 0 ||
 				unitsAt(t).some(function (x) { return x.owner !== h && atWar(h, x.owner); }) ||
 				(cid >= 0 && atWar(h, G.cities[cid].owner));
-			if (!hasTarget) gameLog("No target there.");
-			else if (!airStrike(au, t)) gameLog("Out of strike range (or no mission left this turn).");
+			if (!hasTarget) showToast("No target there.");
+			else if (!airStrike(au, t)) showToast("Out of strike range (or no mission left this turn).");
 		}
 		R.dirty = true; refreshUI();
 		return;
 	}
 
-	// order a selected human unit to move/attack
+	// order a selected human unit to move/attack; the destination is remembered
+	// across turns (features.persistentOrders) until it arrives or is blocked
 	if (R.selectedUnit && R.selectedUnit.owner === h && t !== R.selectedUnit.tile && !myUnits.length &&
 		UNIT_TYPES[R.selectedUnit.type].domain !== "air") {
-		moveUnitTowards(R.selectedUnit, t);
+		var mu = R.selectedUnit;
+		// clicking an enemy/camp/hostile city is a one-off attack order, not a
+		// standing destination
+		var hostileAtT = G.campAt[t] >= 0 ||
+			(G.cityAt[t] >= 0 && G.cities[G.cityAt[t]].owner !== h) ||
+			unitsAt(t).some(function (x) { return x.owner !== h; });
+		moveUnitTowards(mu, t);
+		if (G.units.indexOf(mu) >= 0) {
+			if (GameConfig.features.persistentOrders && mu.tile !== t && !hostileAtT) setUnitOrders(mu, "move", t);
+			else mu.orders = null;
+		}
 		R.dirty = true; refreshUI();
 		return;
 	}
@@ -292,20 +449,231 @@ function handleTileClick(t) {
 }
 
 // ---------------------------------------------------------------------------
+// Action bar: always tells the player what they can do right now.
+// ---------------------------------------------------------------------------
+
+function renderActionBar() {
+	var bar = $id("actionBar");
+	if (!bar) return;
+	if (!G) { bar.classList.add("hidden"); return; }
+	var h = UI.humanId();
+	var html = "";
+
+	function modeBar(icon, title, hint, cancelId, cancelLabel) {
+		return "<div class='abMode'><span class='abIcon'>" + icon + "</span><div class='abText'><b>" +
+			title + "</b><span class='abHint'>" + hint + "</span></div>" +
+			(cancelId ? "<button id='" + cancelId + "'>" + (cancelLabel || "Cancel") + "</button>" : "") + "</div>";
+	}
+
+	if (G.pendingStarts && G.pendingStarts.length) {
+		var pl = G.players[G.pendingStarts[0]];
+		html = modeBar("⚑", "Choose a starting location for <span style='color:" + pl.color + "'>" + esc(pl.name) + "</span>",
+			"Gold halos mark recommended sites · hover: green = valid, red = invalid", null);
+		bar.innerHTML = html;
+		bar.classList.remove("hidden");
+		return;
+	}
+	if (R.routeCreateFrom !== null) {
+		html = modeBar("⇄", "New trade route from " + esc(G.cities[R.routeCreateFrom].name),
+			"Click a destination city — each turn the route carries its most profitable commodity there for gold", "abCancelRoute");
+	} else if (UI.settleMode) {
+		html = modeBar("⚑", "Settlement mission (" + GameConfig.settle.goldCost + "g + " +
+			GameConfig.settle.popCost + " pop)",
+			"Click target land ≥4 tiles from any city — settlers march there and found the city on arrival", "abCancelSettle");
+	} else if (UI.fortifyMode) {
+		var lvl = UI.fortifyMode.level;
+		html = modeBar("🛡", lvl === 2 ? "Build wall on an edge" : "Fortify an edge",
+			"Click the tile ACROSS the edge from the selected unit — " +
+			(lvl === 2 ? "permanent stone wall" : "decays if left unmanned"), "abCancelFort");
+	} else if (UI.roadTargetMode !== null) {
+		html = modeBar("🛣", "Build road from " + esc(G.cities[UI.roadTargetMode].name),
+			"Click a destination tile — roads are built with gold along the path", "abCancelRoad");
+	} else if (UI.dealPick) {
+		html = modeBar("🤝", "Picking " + (UI.dealPick === "give" ? "tiles/cities you GIVE" : "tiles/cities you GET"),
+			"Click tiles or cities on the map to toggle them in the deal", "abDonePick", "Done");
+	} else if (UI.dropMode && R.selectedUnit && R.selectedUnit.owner === h) {
+		html = modeBar("🪂", "Paradrop " + esc(UNIT_TYPES[R.selectedUnit.type].name),
+			"Click a free tile within the blue ring (uses fuel)", "abCancelDrop");
+	} else if (R.selectedUnit && R.selectedUnit.owner === h) {
+		var u = R.selectedUnit;
+		var def = UNIT_TYPES[u.type];
+		var hint = def.domain === "air"
+			? "Click an enemy in range to strike · your city / a carrier to rebase"
+			: "Hover a tile to preview the path · click to move or attack";
+		html = "<div class='abMode'><span class='abIcon' style='color:" + G.players[u.owner].color + "'>" + def.icon + "</span>" +
+			"<div class='abText'><b>" + def.name + "</b><span class='abHint'>HP " + Math.round(u.hp) +
+			" · " + (def.domain === "air" ? "missions " : "moves ") + Math.max(0, Math.round(u.moves)) +
+			(u.training ? " · " + u.training : "") + " — " + hint + "</span></div>";
+		if (u.type === "settler") html += "<button id='abFound' class='primary'>⚑ Found city</button>";
+		if (def.trainable && !u.training) {
+			var A = GameConfig.amphibious;
+			html += "<button id='abTrainAir'>🪂 Airborne " + A.trainAirborneCost + "g</button>" +
+				"<button id='abTrainAmp'>🌊 Amphibious " + A.trainAmphibiousCost + "g</button>";
+		}
+		if (u.training === "airborne" && u.moves > 0) html += "<button id='abDrop'>🪂 Paradrop…</button>";
+		if (GameConfig.features.edgeFortifications && def.combat && def.domain === "land" && M.isLand(u.tile)) {
+			var F = GameConfig.fort;
+			html += "<button id='abFortify'>🛡 Fortify " + F.fortCostGold + "g</button>" +
+				"<button id='abWallEdge'>🧱 Wall " + F.wallCostGold + "g</button>";
+		}
+		if (u.orders) html += "<button id='abCancelOrders'>⚑✕ Cancel orders</button>";
+		html += "<button id='abDeselect'>✕</button></div>";
+	} else if (R.selectedCity && UI.isHumanCity(R.selectedCity)) {
+		var c = R.selectedCity;
+		html = "<div class='abMode'><span class='abIcon' style='color:" + G.players[c.owner].color + "'>🏛</span>" +
+			"<div class='abText'><b>" + esc(c.name) + "</b><span class='abHint'>" +
+			(c.producing ? "producing " + (UNIT_TYPES[c.producing] ? UNIT_TYPES[c.producing].name : c.producing)
+				: "idle — production converts to gold") + " · manage in the City tab</span></div>";
+		if (GameConfig.features.merchants) {
+			var full = merchantsFrom(c.id).length >= cityMerchantSlots(c);
+			html += "<button id='abCaravan'" + (full ? " disabled" : "") + ">🐫 Caravan</button>";
+			if (cityIsCoastal(c)) html += "<button id='abFleet'" + (full ? " disabled" : "") + ">⛵ Fleet</button>";
+		} else {
+			html += "<button id='abNewRoute'" + (routesFrom(c.id).length >= cityRouteSlots(c) ? " disabled" : "") + ">⇄ Route</button>";
+		}
+		html += "<button id='abRoadTo'>🛣 Road</button>";
+		html += "<button id='abDeselect'>✕</button></div>";
+	} else if (R.selectedTile >= 0 && !R.selectedUnit && !R.selectedCity &&
+		GameConfig.features.merchants && GameConfig.merchant.tollMode === 0 &&
+		h >= 0 && G.owner[R.selectedTile] === h) {
+		// own empty tile selected: toll-gate placement (gate tolling mode)
+		var gated = G.tollGates[R.selectedTile];
+		html = "<div class='abMode'><span class='abIcon'>⛩</span><div class='abText'><b>" +
+			(gated ? "Toll gate here" : "Your territory") +
+			"</b><span class='abHint'>Gates charge foreign merchants " +
+			fmtNum(G.players[h].tollRate * GameConfig.merchant.gateScale, 1) +
+			"g per passage (toll-rate slider × gate scale) — merchants route around expensive gates</span></div>" +
+			"<button id='abGate'>" + (gated ? "Remove gate" : "⛩ Place gate") + "</button>" +
+			"<button id='abDeselect'>✕</button></div>";
+	} else {
+		// idle summary: what needs the player's attention
+		if (h < 0) {
+			html = modeBar("👁", "Spectating", "Autoplay to watch the AIs · pick a player in the Players tab to join", null);
+		} else {
+			var readyUnits = G.units.filter(function (u) { return u.owner === h && u.moves > 0; });
+			var idleCities = G.cities.filter(function (c) { return c.owner === h && !c.producing; });
+			var bits = [];
+			if (readyUnits.length) bits.push(readyUnits.length + " unit" + (readyUnits.length > 1 ? "s" : "") + " ready");
+			if (idleCities.length) bits.push(idleCities.length + " cit" + (idleCities.length > 1 ? "ies" : "y") + " idle");
+			var picks = GameConfig.features.powerups ? (G.players[h].powerupPicks || 0) : 0;
+			if (picks) bits.push(picks + " power-up pick" + (picks > 1 ? "s" : ""));
+			html = "<div class='abMode'><span class='abIcon'>◎</span><div class='abText'><b>" +
+				(bits.length ? bits.join(" · ") : "All orders given") +
+				"</b><span class='abHint'>Click a unit or city to act · drag to pan · scroll to zoom</span></div>" +
+				(picks ? "<button id='abPowerup' class='primary'>★ Choose power-up</button>" : "") +
+				(readyUnits.length ? "<button id='abNext'>➤ Next unit</button>" : "") +
+				(GameConfig.features.settlementMissions ? "<button id='abSettle'>⚑ Settle…</button>" : "") +
+				(bits.length === 0 && !picks ? "<button id='abEnd' class='primary'>End Turn ⏵</button>" : "") + "</div>";
+		}
+	}
+	bar.innerHTML = html;
+	bar.classList.remove("hidden");
+
+	// wire
+	var w;
+	if ((w = $id("abCancelRoute"))) w.onclick = function () { R.routeCreateFrom = null; R.dirty = true; refreshUI(); };
+	if ((w = $id("abCancelRoad"))) w.onclick = function () { UI.roadTargetMode = null; R.dirty = true; refreshUI(); };
+	if ((w = $id("abDonePick"))) w.onclick = function () { UI.dealPick = null; R.dirty = true; refreshUI(); };
+	if ((w = $id("abCancelDrop"))) w.onclick = function () { UI.dropMode = false; R.dirty = true; refreshUI(); };
+	if ((w = $id("abCancelSettle"))) w.onclick = function () { UI.settleMode = false; R.dirty = true; refreshUI(); };
+	if ((w = $id("abCancelFort"))) w.onclick = function () { UI.fortifyMode = null; R.dirty = true; refreshUI(); };
+	if ((w = $id("abSettle"))) w.onclick = function () { uiClearModes(); UI.settleMode = true; R.dirty = true; refreshUI(); };
+	if ((w = $id("abFortify"))) w.onclick = function () { UI.fortifyMode = { level: 1 }; UI.dropMode = false; R.dirty = true; refreshUI(); };
+	if ((w = $id("abWallEdge"))) w.onclick = function () { UI.fortifyMode = { level: 2 }; UI.dropMode = false; R.dirty = true; refreshUI(); };
+	if ((w = $id("abCancelOrders"))) w.onclick = function () {
+		if (R.selectedUnit) R.selectedUnit.orders = null;
+		R.dirty = true; refreshUI();
+	};
+	if ((w = $id("abDeselect"))) w.onclick = function () {
+		R.selectedUnit = null; R.selectedCity = null; R.selectedTile = -1;
+		UI.dropMode = false; UI.fortifyMode = null; R.dirty = true; refreshUI();
+	};
+	if ((w = $id("abFound"))) w.onclick = function () {
+		var c = foundCity(R.selectedUnit.owner, R.selectedUnit.tile, R.selectedUnit);
+		if (c) { R.selectedUnit = null; R.selectedCity = c; UI.tab = "city"; }
+		else showToast("Can't found a city here (too close to another city?).");
+		R.dirty = true; refreshUI();
+	};
+	if ((w = $id("abTrainAir"))) w.onclick = function () {
+		if (!trainUnit(R.selectedUnit, "airborne")) showToast("Can't train (need gold).");
+		R.dirty = true; refreshUI();
+	};
+	if ((w = $id("abTrainAmp"))) w.onclick = function () {
+		if (!trainUnit(R.selectedUnit, "amphibious")) showToast("Can't train (need gold).");
+		R.dirty = true; refreshUI();
+	};
+	if ((w = $id("abDrop"))) w.onclick = function () { UI.dropMode = true; R.dirty = true; refreshUI(); };
+	if ((w = $id("abNewRoute"))) w.onclick = function () { R.routeCreateFrom = R.selectedCity.id; refreshUI(); };
+	if ((w = $id("abCaravan"))) w.onclick = function () {
+		var err = spawnMerchant(R.selectedCity.id, "caravan");
+		showToast(err || "Caravan outfitted.");
+		R.dirty = true; refreshUI();
+	};
+	if ((w = $id("abFleet"))) w.onclick = function () {
+		var err = spawnMerchant(R.selectedCity.id, "fleet");
+		showToast(err || "Merchant fleet launched.");
+		R.dirty = true; refreshUI();
+	};
+	if ((w = $id("abGate"))) w.onclick = function () {
+		var err = toggleTollGate(h, R.selectedTile);
+		if (err) showToast(err);
+		R.dirty = true; refreshUI();
+	};
+	if ((w = $id("abPowerup"))) w.onclick = function () {
+		UI.tab = "players";
+		document.querySelectorAll("#tabs button").forEach(function (x) { x.classList.toggle("active", x.dataset.tab === "players"); });
+		refreshUI();
+	};
+	if ((w = $id("abRoadTo"))) w.onclick = function () { UI.roadTargetMode = R.selectedCity.id; refreshUI(); };
+	if ((w = $id("abNext"))) w.onclick = function () { selectNextReadyUnit(); };
+	if ((w = $id("abEnd"))) w.onclick = function () { doEndTurn(); };
+}
+
+function selectNextReadyUnit() {
+	var h = UI.humanId();
+	var ready = G.units.filter(function (u) { return u.owner === h && u.moves > 0; });
+	if (!ready.length) return;
+	var idx = ready.indexOf(R.selectedUnit);
+	var u = ready[(idx + 1) % ready.length];
+	R.selectedUnit = u;
+	R.selectedTile = u.tile;
+	R.selectedCity = null;
+	R.view.lonC = M.latLon[u.tile * 2 + 1];
+	R.view.latC = M.latLon[u.tile * 2];
+	R.dirty = true;
+	refreshUI();
+}
+
+// ---------------------------------------------------------------------------
 // Panels
 // ---------------------------------------------------------------------------
 
 function refreshUI() {
-	if (!G) return;
-	var status = "Turn " + G.turn;
+	if (!G) {
+		$id("statusSpan").textContent = "Set up a new game";
+		renderActionBar();
+		return;
+	}
+	var picking = G.pendingStarts && G.pendingStarts.length;
+	var status = picking ? "Choose your start" : "Turn " + G.turn;
 	var h = UI.humanId();
-	if (h >= 0 && G.players[h]) {
+	if (!picking && h >= 0 && G.players[h]) {
 		var me = G.players[h];
-		status += " · " + ERA_NAMES[me.era] + " · 💰" + Math.round(me.gold) + " · 🔬" + Math.round(me.science);
+		status += " · " + ERA_NAMES[me.era];
+		if (GameConfig.features.timedEras) {
+			var E = GameConfig.eras;
+			var next = me.era === 0 ? E.classicalTurns : me.era === 1 ? E.classicalTurns + E.napoleonicTurns : -1;
+			if (next > 0) status += " (" + Math.max(0, next - G.turn) + "t left)";
+		} else {
+			status += " · 🔬" + Math.round(me.science);
+		}
+		status += " · 💰" + Math.round(me.gold);
 	}
 	if (G.winner !== null) status += " — " + G.players[G.winner].name + " WINS";
 	$id("statusSpan").textContent = status;
+	$id("endTurnBtn").disabled = !!picking || G.winner !== null;
 	renderPlayerStrip();
+	renderActionBar();
 
 	// offer badge on the Diplomacy tab
 	var diploBtn = document.querySelector("#tabs button[data-tab=diplo]");
@@ -314,7 +682,6 @@ function refreshUI() {
 		diploBtn.textContent = n ? "Diplomacy (" + n + ")" : "Diplomacy";
 	}
 
-	var body = $id("tabBody");
 	if (UI.tab === "info") renderInfoTab();
 	else if (UI.tab === "city") renderCityTab();
 	else if (UI.tab === "players") renderPlayersTab();
@@ -328,50 +695,63 @@ function fmtNum(v, d) { return (+v).toFixed(d === undefined ? 1 : d); }
 
 function renderInfoTab() {
 	var body = $id("tabBody");
+	if (!G) return;
 	var html = "";
 	var h = UI.humanId();
+
+	if (G.pendingStarts && G.pendingStarts.length) {
+		html += "<h3>Founding a nation</h3><div class='hint'>Click the map to place your capital. " +
+			"Gold halos mark sites your advisors recommend (food, production, trade corridors). " +
+			"Hover a tile to inspect it below.</div><hr>";
+	}
 
 	if (R.selectedUnit) {
 		var u = R.selectedUnit;
 		var def = UNIT_TYPES[u.type];
-		html += "<h3>" + def.name + " (" + esc(G.players[u.owner].name) + ")</h3>" +
-			"<div>HP " + Math.round(u.hp) + " · str " + Math.round(u.str || unitStrength(u.type)) +
-			(def.domain === "air" ? " · missions " + fmtNum(u.moves, 0) : " · moves " + fmtNum(u.moves, 0)) +
-			" · " + def.domain + (u.training ? " · <b>" + u.training + "</b>" : "") + "</div>";
-		if (def.design) html += "<div class='sub'>" + esc(designLabel(u.type, designOf(G.players[u.owner], u.type))) + "</div>";
+		var pl0 = G.players[u.owner];
+		var str = Math.round(effStrength(u));
+		var baseStr = Math.round(u.str || unitStrength(u.type));
+
+		// unit ability card: everything the unit can do, at a glance
+		html += "<div class='unitCard' style='border-left-color:" + pl0.color + "'>";
+		html += "<div class='ucHead'><span class='ucIcon'>" + def.icon + "</span><div><b>" +
+			def.name + "</b><div class='sub'>" + esc(pl0.name) + " · " + def.domain +
+			(u.training ? " · " + u.training : "") + "</div></div></div>";
+		html += "<div class='ucStats'>";
+		html += ucStat("⚔", str + (str !== baseStr ? "<span class='sub'>/" + baseStr + "</span>" : ""), "strength (effective/base)");
+		html += ucStat("♥", Math.round(u.hp), "health");
+		html += ucStat(def.domain === "air" ? "✈" : "➜", fmtNum(u.moves, 0),
+			def.domain === "air" ? "missions left" : "move points left");
+		if (def.domain === "air") html += ucStat("◎", Math.round((u.strikeRange || GameConfig.air.strikeRange) * carrierAirBonus(u)), "strike range");
+		html += "</div>";
+		// ability badges
+		var badges = [];
+		if (def.siege) badges.push("🏰 siege ×" + GameConfig.combat.siegeCityBonus + " vs cities, bombards safely");
+		if (def.domain === "land" && def.combat) badges.push("🌊 can embark to cross water (weak at sea)");
+		if (u.training === "airborne") badges.push("🪂 paradrop within " + GameConfig.amphibious.paradropRange + " tiles");
+		if (u.training === "amphibious") badges.push("🌊 lands without disorganization");
+		if (def.trainable && !u.training) badges.push("★ can train airborne / amphibious");
+		if (def.airbase) badges.push("⊞ mobile airbase: aircraft can base here");
+		if (def.design) badges.push("⚙ " + esc(designLabel(u.type, designOf(pl0, u.type))));
+		if (u.type === "settler") badges.push("⚑ founds a city on suitable land");
+		badges.forEach(function (b) { html += "<div class='ucBadge'>" + b + "</div>"; });
+		// state warnings + orders
 		if (M.isWater(u.tile) && def.domain === "land") html += "<div class='warn'>⚓ embarked at sea (weak)</div>";
 		if (u.landedTurns > 0) html += "<div class='warn'>landing disorganization (" + u.landedTurns + "t)</div>";
 		if (u.carrierId) html += "<div class='sub'>✈ aboard carrier</div>";
+		if (u.orders) html += "<div class='sub'>⚑ standing orders: " + u.orders.type + " → tile " + u.orders.target + "</div>";
 		// supply status
 		var needs = unitNeeds(u);
 		var supBits = [];
-		if (needs.food) supBits.push((u.supply.food ? "🌾" : "<span class='warn'>🌾✗</span>"));
-		if (needs.ammo) supBits.push((u.supply.ammo ? "💥" : "<span class='warn'>💥✗</span>"));
-		if (needs.fuel) supBits.push((u.supply.fuel ? "⛽" : "<span class='warn'>⛽✗</span>"));
+		if (needs.food) supBits.push((u.supply.food ? "🌾" : "<span class='warn'>🌾✗</span>") + "<span class='sub'>" + needs.food + "/t</span>");
+		if (needs.ammo) supBits.push((u.supply.ammo ? "💥" : "<span class='warn'>💥✗</span>") + "<span class='sub'>" + needs.ammo + "/atk</span>");
+		if (needs.fuel) supBits.push((u.supply.fuel ? "⛽" : "<span class='warn'>⛽✗</span>") + "<span class='sub'>" + needs.fuel + "/mv</span>");
 		if (supBits.length) {
 			html += "<div>supply: " + supBits.join(" ") +
 				(u.supplyDist >= 0 ? " <span class='sub'>(line: " + u.supplyDist + " hops)</span>"
 					: " <span class='warn'>OUT OF SUPPLY</span>") + "</div>";
 		}
-		if (u.owner === h && u.type === "settler") {
-			html += "<button id='foundBtn'>Found city here</button>";
-		}
-		// WW2 infantry training (once, costs gold)
-		if (u.owner === h && def.trainable && !u.training) {
-			var A = GameConfig.amphibious;
-			html += "<div class='trainrow'>" +
-				"<button id='trainAirborne' class='sm'>Train airborne (" + A.trainAirborneCost + "g)</button> " +
-				"<button id='trainAmphib' class='sm'>Train amphibious (" + A.trainAmphibiousCost + "g)</button></div>";
-		}
-		if (u.owner === h && u.training === "airborne") {
-			html += "<div class='hint'>Airborne: click a tile within " + GameConfig.amphibious.paradropRange +
-				" hops to drop (uses fuel).</div>";
-			html += "<label><input type='checkbox' id='dropMode'" + (UI.dropMode ? " checked" : "") + "> paradrop mode</label>";
-		}
-		var orderHint = def.domain === "air"
-			? "Click an enemy in range to strike; click your city or a carrier to rebase."
-			: "Click a tile to move/attack. Land units embark to cross water.";
-		html += "<div class='hint'>" + orderHint + "</div><hr>";
+		html += "</div><hr>";
 	}
 
 	var t = R.hoverTile >= 0 ? R.hoverTile : R.selectedTile;
@@ -388,7 +768,11 @@ function renderInfoTab() {
 		}
 		if (G.annexed[t] !== undefined) html += row("annexed", "yes (by " + esc(G.players[G.annexed[t]].name) + ")");
 		html += row("province", M.layer("province")[t] || "—");
+		if (GameConfig.features.tilePopulation && G.tilePop && G.tilePop[t] > 0.1) {
+			html += row("population", fmtNum(G.tilePop[t], 1) + " <span class='sub'>(rural)</span>");
+		}
 		COMMODITIES.forEach(function (cm) {
+			if (!cm.layer) return; // manufactured (city-made) commodities
 			var v = M.layer(cm.layer)[t];
 			if (v > 0.05) html += row(cm.id, fmtNum(v, 2));
 		});
@@ -403,26 +787,13 @@ function renderInfoTab() {
 		html += "<div class='hint'>Hover the map for tile details. Click to select.</div>";
 	}
 	body.innerHTML = html;
-	var fb = $id("foundBtn");
-	if (fb) fb.onclick = function () {
-		var c = foundCity(R.selectedUnit.owner, R.selectedUnit.tile, R.selectedUnit);
-		if (c) { R.selectedUnit = null; R.selectedCity = c; UI.tab = "city"; }
-		R.dirty = true; refreshUI();
-	};
-	var ta = $id("trainAirborne");
-	if (ta) ta.onclick = function () {
-		if (!trainUnit(R.selectedUnit, "airborne")) gameLog("Can't train (need gold).");
-		R.dirty = true; refreshUI();
-	};
-	var tm = $id("trainAmphib");
-	if (tm) tm.onclick = function () {
-		if (!trainUnit(R.selectedUnit, "amphibious")) gameLog("Can't train (need gold).");
-		R.dirty = true; refreshUI();
-	};
-	var dm = $id("dropMode");
-	if (dm) dm.onchange = function () { UI.dropMode = this.checked; };
 
 	function row(k, v) { return "<tr><td>" + esc(k) + "</td><td>" + v + "</td></tr>"; }
+}
+
+function ucStat(icon, value, label) {
+	return "<div class='ucStat' title='" + esc(label) + "'><span class='ucStatIcon'>" + icon +
+		"</span><b>" + value + "</b><span class='ucStatLbl'>" + esc(label) + "</span></div>";
 }
 
 function renderCityTab() {
@@ -432,9 +803,10 @@ function renderCityTab() {
 	var pl = G.players[c.owner];
 	var mine = UI.isHumanCity(c);
 	var html = "<h3><span class='chip' style='background:" + pl.color + "'></span> " + esc(c.name) +
-		" <span class='sub'>(" + esc(pl.name) + ")</span></h3>";
+		" <span class='sub'>(" + esc(pl.name) + (pl.minor ? ", city-state" : "") + ")</span></h3>";
 	html += "<div>Pop <b>" + c.pop + "</b> · HP " + Math.round(c.hp) + " · food " + fmtNum(c.foodStore) +
-		" · " + Object.keys(c.buildings).join(", ") + "</div>";
+		(GameConfig.features.merchants ? " · 💎wealth " + fmtNum(c.wealth || 0, 0) : "") +
+		" · " + (Object.keys(c.buildings).join(", ") || "no buildings") + "</div>";
 	html += "<div>Yields: 🌾" + fmtNum(c.yields.food) + " ⚒" + fmtNum(c.yields.prod) +
 		" 💰" + fmtNum(c.yields.gold) + " 🔬" + fmtNum(c.yields.sci) + "</div>";
 
@@ -468,25 +840,60 @@ function renderCityTab() {
 	});
 	html += "</table><div class='hint'>🔒 = this player can't grow it yet; imports teach it over time. Subsidies raise the price paid here (from " + esc(pl.name) + "'s treasury), attracting routes.</div>";
 
-	// routes
-	html += "<h4>Trade routes from here (" + routesFrom(c.id).length + "/" + cityRouteSlots(c) + ")</h4>";
-	routesFrom(c.id).forEach(function (r) {
-		var to = G.cities[r.to];
-		html += "<div class='route' data-rid='" + r.id + "'>→ " + esc(to.name) +
-			" · " + (r.active ? (r.commodity + " ×" + fmtNum(r.lastFlow) + " (+" + fmtNum(r.lastProfit) + "g" +
-			(r.lastLoss > 0 ? ", ☠−" + fmtNum(r.lastLoss) : "") + ")") : "idle") +
-			(mine || r.owner === UI.humanId() ? " <button class='sm delroute' data-rid='" + r.id + "'>✕</button>" : "") +
-			"</div>";
-	});
-	if (mine) {
-		html += "<button id='newRouteBtn'" + (routesFrom(c.id).length >= cityRouteSlots(c) ? " disabled" : "") + ">＋ New route (click target city)</button> ";
-		html += "<button id='roadToBtn'>🛣 Build road to… (click tile)</button>";
+	// trade: merchant agents (features.merchants) or legacy abstract routes
+	if (GameConfig.features.merchants) {
+		var MC = GameConfig.merchant;
+		var ms = merchantsFrom(c.id);
+		html += "<h4>Merchants (" + ms.length + "/" + cityMerchantSlots(c) + ")</h4>";
+		if (!ms.length) html += "<div class='hint'>None yet. Merchants plan their own round trips from price histories; profits build the city's 💎wealth, which feeds growth.</div>";
+		ms.forEach(function (m) {
+			var dest = m.plan && G.cities[m.plan.to];
+			var stateTxt = m.state === "idle" ? "in port — looking for margins"
+				: (m.state === "outbound" ? "→ " : "← ") + (dest ? esc(dest.name) : "?") +
+				(m.cargo ? " carrying " + m.cargo.cm + " ×" + fmtNum(m.cargo.qty, 0) : " (empty)");
+			html += "<div class='route'>" + (m.kind === "fleet" ? "⛵" : "🐫") + " " + stateTxt +
+				" <span class='sub'>· " + m.trips + " trips, last " +
+				(m.trips ? (m.lastProfit >= 0 ? "+" : "") + fmtNum(m.lastProfit, 1) + "g" : "—") + "</span></div>";
+		});
+		if (mine) {
+			html += "<div class='trainrow'>" +
+				"<button id='spawnCaravanBtn' class='sm'>🐫 Caravan (" + MC.caravanGoldCost + "g + " + MC.caravanPopCost + " pop + horses)</button>" +
+				"<button id='spawnFleetBtn' class='sm'>⛵ Fleet (" + MC.fleetGoldCost + "g + " + MC.fleetPopCost + " pop + timber)</button></div>";
+			html += "<button id='roadToBtn'>🛣 Build road to… (click tile)</button>";
+		}
+	} else {
+		html += "<h4>Trade routes from here (" + routesFrom(c.id).length + "/" + cityRouteSlots(c) + ")</h4>";
+		routesFrom(c.id).forEach(function (r) {
+			var to = G.cities[r.to];
+			html += "<div class='route' data-rid='" + r.id + "'>→ " + esc(to.name) +
+				" · " + (r.active ? (r.commodity + " ×" + fmtNum(r.lastFlow) + " (+" + fmtNum(r.lastProfit) + "g" +
+				(r.lastLoss > 0 ? ", ☠−" + fmtNum(r.lastLoss) : "") + ")") : "idle") +
+				(mine || r.owner === UI.humanId() ? " <button class='sm delroute' data-rid='" + r.id + "'>✕</button>" : "") +
+				"</div>";
+		});
+		if (mine) {
+			html += "<button id='newRouteBtn'" + (routesFrom(c.id).length >= cityRouteSlots(c) ? " disabled" : "") + ">＋ New route (click target city)</button> ";
+			html += "<button id='roadToBtn'>🛣 Build road to… (click tile)</button>";
+		}
 	}
 	body.innerHTML = html;
 
+	var sc = $id("spawnCaravanBtn");
+	if (sc) sc.onclick = function () {
+		var err = spawnMerchant(c.id, "caravan");
+		if (err) showToast(err); else showToast("Caravan outfitted — it will seek out price margins on its own.");
+		R.dirty = true; refreshUI();
+	};
+	var sf = $id("spawnFleetBtn");
+	if (sf) sf.onclick = function () {
+		var err = spawnMerchant(c.id, "fleet");
+		if (err) showToast(err); else showToast("Merchant fleet launched — it will trade between coastal cities.");
+		R.dirty = true; refreshUI();
+	};
+
 	// wire
 	var ps = $id("prodSel");
-	if (ps) ps.onchange = function () { c.producing = this.value || null; };
+	if (ps) ps.onchange = function () { c.producing = this.value || null; refreshUI(); };
 	body.querySelectorAll(".sub\\+, .sub-").forEach(function (b) {
 		b.onclick = function () {
 			var cm = b.dataset.cm, step = GameConfig.trade.subsidyStep;
@@ -512,19 +919,77 @@ function renderCityTab() {
 		};
 	});
 	var nr = $id("newRouteBtn");
-	if (nr) nr.onclick = function () { R.routeCreateFrom = c.id; };
+	if (nr) nr.onclick = function () { R.routeCreateFrom = c.id; refreshUI(); };
 	var rt = $id("roadToBtn");
-	if (rt) rt.onclick = function () { UI.roadTargetMode = c.id; };
+	if (rt) rt.onclick = function () { UI.roadTargetMode = c.id; refreshUI(); };
 }
+
+var POLICY_LABELS = [
+	["taxation", "Taxation", "gold from population, at the cost of growth"],
+	["militarism", "Militarism", "cheaper units and harder cities, favors the army"],
+	["openness", "Openness", "more trade routes and faster crop learning"],
+	["infrastructure", "Infrastructure", "keeps food through growth (granaries)"]
+];
 
 function renderPlayersTab() {
 	var body = $id("tabBody");
 	var html = "";
+	var hh = UI.humanId();
+	var me = hh >= 0 ? G.players[hh] : null;
+
+	// --- your national controls first (power-ups + policies + doctrine) ---
+	if (me && GameConfig.features.powerups) {
+		var picks = me.powerupPicks || 0;
+		var taken = Object.keys(me.powerups || {});
+		html += "<h4>Power-ups" + (picks ? " — " + picks + " pick" + (picks > 1 ? "s" : "") + " available!" : "") + "</h4>";
+		if (taken.length) {
+			html += "<div class='sub'>adopted: " + taken.map(function (id) {
+				var p = puFind(id); return p ? p.name : id;
+			}).join(", ") + "</div>";
+		}
+		if (picks > 0) {
+			POWERUP_CATEGORIES.forEach(function (cat) {
+				var avail = puAvailable(me, cat);
+				if (!avail.length) return;
+				html += "<div class='puCat'>" + cat.toUpperCase() + "</div>";
+				avail.forEach(function (p) {
+					html += "<div class='puRow'><button class='sm puPick' data-id='" + p.id + "'>" +
+						esc(p.name) + "</button> <span class='sub'>" + esc(p.desc) + "</span></div>";
+				});
+			});
+		} else {
+			html += "<div class='hint'>Next pick in " +
+				(GameConfig.powerups.everyTurns - (G.turn % GameConfig.powerups.everyTurns)) + " turns.</div>";
+		}
+	}
+	if (me && GameConfig.features.policies) {
+		html += "<h4>Your policies</h4><div class='hint'>National sliders replace per-city buildings.</div>";
+		POLICY_LABELS.forEach(function (p) {
+			html += "<label class='slider' title='" + p[2] + "'>" + p[1] +
+				" <input type='range' class='polSl' data-k='" + p[0] + "' min='0' max='1' step='0.05' value='" +
+				(me.policies[p[0]] || 0) + "'><span>" + fmtNum(me.policies[p[0]] || 0, 2) + "</span></label>";
+		});
+	}
+	if (me && GameConfig.features.recruitment) {
+		html += "<h4>Force doctrine</h4><div class='hint'>Set how many of each unit the nation should field — idle cities recruit toward the quotas automatically.</div>";
+		var counts = {};
+		G.units.forEach(function (u) { if (u.owner === hh) counts[u.type] = (counts[u.type] || 0) + 1; });
+		Object.keys(UNIT_TYPES).forEach(function (t) {
+			var def = UNIT_TYPES[t];
+			if (!def.combat || def.era !== me.era) return;
+			html += "<div class='dealrow'>" + def.icon + " " + def.name +
+				" <span class='sub'>(" + (counts[t] || 0) + " fielded · " + unitCost(t, me) + "⚒)</span>" +
+				" <input type='number' class='quotaInp' data-t='" + t + "' min='0' max='30' value='" +
+				(me.quotas[t] || 0) + "'></div>";
+		});
+	}
+
 	G.players.forEach(function (pl) {
 		var human = pl.id === UI.humanId();
-		html += "<div class='player" + (pl.alive ? "" : " dead") + "'>";
+		html += "<div class='player" + (pl.alive ? "" : " dead") + (pl.minor ? " minorP" : "") + "'>";
 		html += "<h3><span class='chip' style='background:" + pl.color + "'></span> " + esc(pl.name) +
-			(human ? " 👤" : "") + (pl.alive ? "" : " ☠") + " <span class='sub'>" + ERA_NAMES[pl.era] + "</span></h3>";
+			(human ? " 👤" : "") + (pl.alive ? "" : " ☠") +
+			" <span class='sub'>" + ERA_NAMES[pl.era] + (pl.minor ? " · city-state" : "") + "</span></h3>";
 		html += "<div>💰" + fmtNum(pl.gold, 0) + " · 🔬" + fmtNum(pl.science, 0) + " · score " + pl.score +
 			" · cities " + G.cities.filter(function (x) { return x.owner === pl.id; }).length + "</div>";
 		html += "<div class='sub'>knows: " + Object.keys(pl.knowledge).join(", ") + "</div>";
@@ -552,10 +1017,32 @@ function renderPlayersTab() {
 		html += "</details></div>";
 	});
 	html += "<label class='slider'>Human player <select id='humanSel'><option value='-1'>spectate</option>" +
-		G.players.map(function (p) { return "<option value='" + p.id + "'" + (p.id === UI.humanId() ? " selected" : "") + ">" + esc(p.name) + "</option>"; }).join("") +
+		G.players.filter(function (p) { return !p.minor; }).map(function (p) {
+			return "<option value='" + p.id + "'" + (p.id === UI.humanId() ? " selected" : "") + ">" + esc(p.name) + "</option>";
+		}).join("") +
 		"</select></label>";
 	body.innerHTML = html;
 
+	body.querySelectorAll(".puPick").forEach(function (b) {
+		b.onclick = function () {
+			var err = pickPowerup(me, b.dataset.id);
+			if (err) showToast(err);
+			else showToast("Adopted " + puFind(b.dataset.id).name + "!");
+			R._fillsKey = ""; R.dirty = true;
+			refreshUI();
+		};
+	});
+	body.querySelectorAll(".polSl").forEach(function (sl) {
+		sl.oninput = function () {
+			me.policies[sl.dataset.k] = +sl.value;
+			sl.nextElementSibling.textContent = fmtNum(+sl.value, 2);
+		};
+	});
+	body.querySelectorAll(".quotaInp").forEach(function (inp) {
+		inp.onchange = function () {
+			me.quotas[inp.dataset.t] = Math.max(0, +inp.value || 0);
+		};
+	});
 	body.querySelectorAll(".tollSl").forEach(function (sl) {
 		sl.oninput = function () {
 			var pl = G.players[+sl.dataset.p];
@@ -632,13 +1119,15 @@ function renderDiploTab() {
 
 	html += "<h4>Negotiate</h4><label>with <select id='diploPartner'>";
 	partners.forEach(function (p) {
-		html += "<option value='" + p.id + "'" + (p.id === UI.deal.to ? " selected" : "") + ">" + esc(p.name) + "</option>";
+		html += "<option value='" + p.id + "'" + (p.id === UI.deal.to ? " selected" : "") + ">" + esc(p.name) +
+			(p.minor ? " (city-state)" : "") + "</option>";
 	});
 	html += "</select></label>";
 
 	var war = atWar(h, partner.id);
 	var myP = Math.round(playerPower(h)), thP = Math.round(playerPower(partner.id));
-	html += "<div class='sub'>" + (war ? "⚔ AT WAR" : "at peace") + " · power " + myP + " vs " + thP + "</div>";
+	html += "<div class='sub'>" + (war ? "⚔ AT WAR" : "at peace") + " · power " + myP + " vs " + thP +
+		(!war ? " <button id='declareWarBtn' class='sm'>⚔ Declare war</button>" : "") + "</div>";
 
 	// --- deal builder ---
 	html += "<div class='dealbox'><div class='dealcol'><b>You give</b>" + dealSideEditor("give", UI.deal.give) + "</div>" +
@@ -653,6 +1142,13 @@ function renderDiploTab() {
 	body.innerHTML = html;
 
 	// wire
+	var dw = $id("declareWarBtn");
+	if (dw) dw.onclick = function () {
+		declareWar(h, partner.id);
+		showToast("You declared war on " + partner.name + " — enemy units and cities are now attackable.");
+		R._fillsKey = ""; R.dirty = true;
+		refreshUI();
+	};
 	var ps = $id("diploPartner");
 	if (ps) ps.onchange = function () { uiResetDeal(+this.value); UI.dealHint = null; R.dirty = true; refreshUI(); };
 	var pc = $id("dealPeace");
@@ -738,7 +1234,6 @@ function renderDesignsTab() {
 	var pl = G.players[h];
 	initDesigns(pl);
 
-	var types = designableTypes().filter(function (t) { return UNIT_TYPES[t].era <= pl.era; });
 	var current = designableTypes().filter(function (t) { return UNIT_TYPES[t].era === pl.era; });
 	var html = "<div class='hint'>Configure your ship and aircraft classes. Higher attributes cost more; " +
 		"changing a design slows production of that type for " + GameConfig.design.retoolTurns + " turns.</div>";

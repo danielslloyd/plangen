@@ -1,19 +1,18 @@
-// main.js — bootstrap: load the default map, start a game, kick off the loop.
+// main.js — bootstrap: load the default map, open the setup screen, start the
+// render loop. The game itself begins from the setup screen's Start button.
 
 function bootGame(mapJson) {
 	loadMapData(mapJson);
-	var seed = parseInt(document.getElementById("seedInput").value) || 12345;
-	newGame(seed);
 	initRenderer(document.getElementById("mapCanvas"));
 	initUI();
-	// aim the camera at the first capital
-	if (G.cities.length) {
-		var t = G.cities[0].tile;
-		R.view.lonC = M.latLon[t * 2 + 1];
-		R.view.latC = M.latLon[t * 2];
-	}
+	// frame the whole world behind the setup screen
+	R.view.lonC = 0; R.view.latC = 10;
+	R.view.scale = Math.max(1.5, R.canvas.width / 400);
 	R.dirty = true;
 	renderLoop();
+	document.getElementById("tabBody").innerHTML =
+		"<div class='hint'>Set up a new game to begin.</div>";
+	showSetupScreen();
 }
 
 window.addEventListener("DOMContentLoaded", function () {

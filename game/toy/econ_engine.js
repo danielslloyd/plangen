@@ -7,7 +7,7 @@
 // the validated core (all layers no-op when tau=0 and there are no roads, so
 // the bare equilibrium reproduces §11.5 exactly).
 //
-// Design invariants (do not break — see hex_economy_v2_spec.md §11 / HANDOFF):
+// Design invariants (do not break — see hex_economy_v2_spec.md §11 / game/STATUS.md):
 //   * Bisection on the shadow wage w and on each city price P_k. Never
 //     fixed-step t'atonnement (that is what oscillated in v1).
 //   * Subsistence floor is mandatory: workers who can't earn the market wage

@@ -16,6 +16,8 @@ function makeRng(seed) {
 }
 
 var PLAYER_COLORS = ["#e4572e", "#3d9be9", "#7ac74f", "#f2c14e", "#b56cd6", "#40c9a2", "#e05780", "#9a8c98"];
+// Independent city-states get muted colors so majors stay visually dominant.
+var MINOR_COLORS = ["#8f9e6e", "#7e8fa6", "#a68f7e", "#96789e", "#6e9e94", "#a09a78"];
 var CITY_NAMES = ["Ur", "Kish", "Thebes", "Argos", "Tyre", "Byblos", "Nineveh", "Susa", "Memphis", "Hattusa",
 	"Mycenae", "Knossos", "Carthage", "Cumae", "Tanis", "Lagash", "Byzantion", "Sparta", "Veii", "Sidon",
 	"Akkad", "Uruk", "Larsa", "Mari", "Ebla", "Ugarit", "Gordium", "Sardis", "Miletus", "Rhodes"];
@@ -70,6 +72,11 @@ function unitCost(type, player) {
 		base *= designCostFactor(designOf(player, type));
 		if (player.retool && player.retool[type] > 0) base *= 1 + GameConfig.design.retoolPenalty;
 	}
+	// policies: militarism cheapens the war machine
+	if (player && GameConfig.features.policies && UNIT_TYPES[type] && UNIT_TYPES[type].combat) {
+		base *= 1 - GameConfig.policy.milUnitCostDiscount * (player.policies.militarism || 0);
+	}
+	if (player && UNIT_TYPES[type] && UNIT_TYPES[type].combat && puHas(player, "conscription")) base *= 0.85;
 	return Math.round(base);
 }
 // Undesigned strength (used for placement/AI estimates); per-unit strength is
@@ -105,6 +112,21 @@ var ERA_NAMES = ["Classical", "Napoleonic", "WW2"];
 function newGame(seed) {
 	var C = GameConfig;
 	var rng = makeRng(seed || 12345);
+
+	// Player slots: from the setup screen (C.setup.players) or generated.
+	var specs = C.setup.players;
+	if (!specs || !specs.length) {
+		specs = [];
+		for (var i = 0; i < C.setup.numPlayers; i++) {
+			specs.push({ control: i === C.setup.humanPlayer ? "human" : "ai", preset: "random" });
+		}
+	}
+	// Keep humanPlayer (the UI perspective) pointing at the first human slot.
+	C.setup.humanPlayer = -1;
+	specs.forEach(function (sp, i) {
+		if (sp.control === "human" && C.setup.humanPlayer < 0) C.setup.humanPlayer = i;
+	});
+
 	G = {
 		seed: seed || 12345,
 		rng: rng,
@@ -128,36 +150,66 @@ function newGame(seed) {
 		log: [],
 		nextId: 1,
 		winner: null,
-		usedNames: 0
+		usedNames: 0,
+		taken: [],           // capital tiles claimed so far (start placement)
+		pendingStarts: null  // human player ids still to pick a start tile
 	};
 
-	for (var p = 0; p < C.setup.numPlayers; p++) {
-		G.players.push({
-			id: p,
-			name: "Player " + (p + 1),
-			color: PLAYER_COLORS[p % PLAYER_COLORS.length],
-			isHuman: p === C.setup.humanPlayer,
-			ai: makePersonality(p, rng),
-			gold: C.setup.startGold,
-			science: 0, era: 0,
-			knowledge: {},      // commodityId -> true (can grow/raise it)
-			familiarity: {},    // commodityId -> 0..1 progress toward learning
-			tollRate: C.trade.tollDefault,
-			alive: true,
-			capital: -1,
-			score: 0,
-			designs: {},        // unitType -> { a, b } design attributes
-			retool: {}          // unitType -> turns of production penalty left
-		});
+	for (var p = 0; p < specs.length; p++) {
+		G.players.push(makePlayer(p, specs[p], rng));
 	}
-	G.players.forEach(function (pl) { initDesigns(pl); });
+	G.players.forEach(function (pl) { initDesigns(pl); derivePoliciesFromAI(pl); });
 
+	initForts();
+	initTilePopulation();
+	initMerchants();
 	initReplay();
 	placeStartingPositions(rng);
-	G.players.forEach(function (pl) { initNativeKnowledge(pl); });
-	recomputeTerritory();
 	gameLog("New game: " + G.players.length + " players, map seed " + (M.meta.seed || "?"));
 	return G;
+}
+
+function makePlayer(id, spec, rng) {
+	var C = GameConfig;
+	var minor = spec.control === "minor";
+	return {
+		id: id,
+		name: spec.name || "Player " + (id + 1),
+		color: minor ? MINOR_COLORS[id % MINOR_COLORS.length] : PLAYER_COLORS[id % PLAYER_COLORS.length],
+		isHuman: spec.control === "human",
+		minor: minor,
+		ai: makePersonality(id, rng, spec.preset),
+		gold: C.setup.startGold,
+		science: 0, era: 0,
+		knowledge: {},      // commodityId -> true (can grow/raise it)
+		familiarity: {},    // commodityId -> 0..1 progress toward learning
+		tollRate: C.trade.tollDefault,
+		alive: true,
+		capital: -1,
+		score: 0,
+		designs: {},        // unitType -> { a, b } design attributes
+		retool: {},         // unitType -> turns of production penalty left
+		quotas: {},         // unitType -> desired count (features.recruitment)
+		powerups: {},       // powerupId -> true (features.powerups)
+		powerupPicks: GameConfig.powerups.startPicks,
+		// High-level national policies, each 0..1 (features.policies). AIs
+		// derive theirs from personality; humans get sliders (Players tab).
+		policies: minor
+			? { taxation: 0.4, militarism: 0.3, openness: 0.7, infrastructure: 0.5 }
+			: { taxation: 0.5, militarism: 0.5, openness: 0.5, infrastructure: 0.5 }
+	};
+}
+
+// AIs run policies matching their personality (called after makePersonality).
+function derivePoliciesFromAI(pl) {
+	if (pl.isHuman) return;
+	var a = pl.ai;
+	pl.policies = {
+		taxation: Math.min(1, 0.35 + a.military * 0.3),
+		militarism: Math.min(1, a.military * 0.8 + a.aggression * 0.3),
+		openness: Math.min(1, a.trade),
+		infrastructure: Math.min(1, a.expansion * 0.5 + a.trade * 0.4)
+	};
 }
 
 function gameLog(msg) {
@@ -179,32 +231,134 @@ function makePeace(a, b) {
 }
 
 // ---------------------------------------------------------------------------
-// Start positions: personality-weighted site scores, spaced apart.
+// Start positions: personality-weighted site scores, spaced apart. Humans may
+// instead pick their tile on the map (setup.humanStartPick): the game waits in
+// G.pendingStarts until every human has chosen, then finalizeStarts() places
+// the AI players, independents and starting bandit camps.
 // ---------------------------------------------------------------------------
 
 function placeStartingPositions(rng) {
+	var humans = G.players.filter(function (p) { return p.isHuman; });
+	if (GameConfig.setup.humanStartPick && humans.length) {
+		G.pendingStarts = humans.map(function (p) { return p.id; });
+		return;
+	}
+	finalizeStarts(rng);
+}
+
+function placePlayerStart(pl, tile) {
+	G.taken.push(tile);
+	for (var k = 0; k < GameConfig.setup.startSettlers; k++) spawnUnit(pl.id, "settler", tile);
+	// Found the capital immediately so turn 1 isn't pure bookkeeping.
+	var settler = G.units.find(function (u) { return u.owner === pl.id && u.type === "settler"; });
+	foundCity(pl.id, tile, settler);
+	initNativeKnowledge(pl);
+}
+
+// Can a human place their capital here? Returns null when valid, else a reason.
+function startPickProblem(tile) {
+	if (!M.isPassable(tile)) return "Not habitable land.";
+	if (G.cityAt[tile] >= 0) return "There is already a city here.";
+	for (var j = 0; j < G.taken.length; j++) {
+		if (M.distTiles(tile, G.taken[j]) < GameConfig.setup.minHumanStartDistance) {
+			return "Too close to another starting position.";
+		}
+	}
+	return null;
+}
+
+function humanPickStart(pid, tile) {
+	if (!G.pendingStarts || G.pendingStarts.indexOf(pid) < 0) return false;
+	if (startPickProblem(tile)) return false;
+	placePlayerStart(G.players[pid], tile);
+	G.pendingStarts.splice(G.pendingStarts.indexOf(pid), 1);
+	if (!G.pendingStarts.length) finalizeStarts(G.rng);
+	recomputeTerritory();
+	return true;
+}
+
+function finalizeStarts(rng) {
 	var C = GameConfig;
-	var taken = [];
-	var order = G.players.slice().sort(function () { return rng() - 0.5; });
+	var order = G.players.filter(function (p) { return p.capital < 0; })
+		.sort(function () { return rng() - 0.5; });
 	order.forEach(function (pl) {
 		var best = -1, bestScore = -Infinity;
 		for (var i = 0; i < M.landTiles.length; i++) {
 			var t = M.landTiles[i];
 			var ok = true;
-			for (var j = 0; j < taken.length; j++) {
-				if (M.distTiles(t, taken[j]) < C.setup.minStartDistance) { ok = false; break; }
+			for (var j = 0; j < G.taken.length; j++) {
+				if (M.distTiles(t, G.taken[j]) < C.setup.minStartDistance) { ok = false; break; }
 			}
 			if (!ok) continue;
 			var s = aiSiteScore(pl, t) + rng() * 0.01;
 			if (s > bestScore) { bestScore = s; best = t; }
 		}
 		if (best < 0) best = M.landTiles[Math.floor(rng() * M.landTiles.length)];
-		taken.push(best);
-		for (var k = 0; k < C.setup.startSettlers; k++) spawnUnit(pl.id, "settler", best);
-		// Found the capital immediately so turn 1 isn't pure bookkeeping.
-		var settler = G.units.find(function (u) { return u.owner === pl.id && u.type === "settler"; });
-		foundCity(pl.id, best, settler);
+		placePlayerStart(pl, best);
 	});
+	if (C.setup.npcFill) spawnIndependents(rng);
+	G.pendingStarts = null;
+	recomputeTerritory();
+	// Minors were added after initReplay ran — refresh the personality record.
+	if (G.replay) {
+		G.replay.personalities = G.players.map(function (pl) {
+			var w = {};
+			for (var k in pl.ai) if (typeof pl.ai[k] === "number") w[k] = +pl.ai[k].toFixed(3);
+			return { id: pl.id, name: pl.name, preset: pl.ai.preset, minor: !!pl.minor, weights: w };
+		});
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Independents: when the map is sparse relative to the player count, seed
+// passive city-states (single-city minor players that trade and defend but
+// never expand or declare war) and a few bandit camps in the wilderness.
+// ---------------------------------------------------------------------------
+
+function spawnIndependents(rng) {
+	var C = GameConfig.setup;
+	var majors = G.players.filter(function (p) { return !p.minor; }).length;
+	var capacity = Math.floor(M.landTiles.length / Math.max(50, C.npcLandPerEntity));
+	var nMinors = Math.max(0, Math.min(C.npcMaxCityStates, capacity - majors));
+
+	for (var m = 0; m < nMinors; m++) {
+		var pl = makePlayer(G.players.length, { control: "minor", preset: "cityState" }, rng);
+		var best = -1, bestScore = -Infinity;
+		for (var i = 0; i < M.landTiles.length; i++) {
+			var t = M.landTiles[i];
+			var ok = true;
+			for (var j = 0; j < G.taken.length; j++) {
+				if (M.distTiles(t, G.taken[j]) < C.minStartDistance * 0.7) { ok = false; break; }
+			}
+			if (!ok) continue;
+			var s = aiSiteScore(pl, t) + rng() * 0.01;
+			if (s > bestScore) { bestScore = s; best = t; }
+		}
+		if (best < 0) break; // no room left
+		G.players.push(pl);
+		initDesigns(pl);
+		derivePoliciesFromAI(pl);
+		placePlayerStart(pl, best);
+		var cap = G.cities[pl.capital];
+		pl.name = "Free " + cap.name;
+		gameLog("The independent city-state of " + cap.name + " stands apart.");
+	}
+
+	// Starting bandit camps: remote, far from every capital and each other.
+	var T = GameConfig.trade;
+	var nCamps = Math.round(M.landTiles.length / Math.max(100, C.npcBanditLandDivisor));
+	var tries = 0;
+	while (nCamps > 0 && tries++ < 400) {
+		var t2 = M.landTiles[Math.floor(rng() * M.landTiles.length)];
+		if (G.cityAt[t2] >= 0 || G.campAt[t2] >= 0) continue;
+		var farEnough = G.taken.every(function (cap2) { return M.distTiles(t2, cap2) >= C.minStartDistance * 0.8; }) &&
+			G.camps.every(function (cp) { return M.distTiles(t2, cp.tile) >= T.campMinSeparation; });
+		if (!farEnough) continue;
+		var camp = { id: G.nextId++, tile: t2, kind: "bandits", strength: T.campStrengthBase * 1.5, loot: 10, born: 0 };
+		G.camps.push(camp);
+		G.campAt[t2] = camp.id;
+		nCamps--;
+	}
 }
 
 // Crops/animals native to the player's starting province (+ neighbours' averages).
@@ -251,6 +405,7 @@ function foundCity(playerId, tile, settler) {
 		pop: 1,
 		foodStore: 0,
 		prodStore: 0,
+		wealth: 0,       // trade surplus banked by merchants (drives growth)
 		hp: GameConfig.city.cityMaxHP,
 		buildings: {},
 		producing: null,
@@ -294,7 +449,10 @@ function recomputeTerritory() {
 	});
 	while (qi < q.length) {
 		var cur = q[qi++];
-		if (dist[cur] >= C.claimRadius) continue;
+		// Urban Planning power-up: that player's cities reach one tile further
+		var radius = C.claimRadius +
+			(G.ownerCity[cur] >= 0 && puHas(G.players[G.cities[G.ownerCity[cur]].owner], "urbanPlanning") ? 1 : 0);
+		if (dist[cur] >= radius) continue;
 		var nb = M.neighbors[cur];
 		for (var k = 0; k < nb.length; k++) {
 			var t = nb[k];
@@ -369,9 +527,11 @@ function tileFoodFor(pl, t) {
 	var best = 0;
 	for (var i = 0; i < COMMODITIES.length; i++) {
 		var cm = COMMODITIES[i];
-		if (cm.demandGroup !== "food") continue;
+		if (cm.demandGroup !== "food" || !cm.layer) continue;
 		if ((cm.kind === "crop" || cm.kind === "animal") && !pl.knowledge[cm.id]) continue;
 		var s = M.layer(cm.layer)[t];
+		if (cm.kind === "animal" && puHas(pl, "husbandry")) s *= 1.25;
+		if (cm.kind === "crop" && puHas(pl, "irrigation")) s *= 1.2;
 		if (s > best) best = s;
 	}
 	return best * GameConfig.yields.foodPerCalorie;
@@ -426,13 +586,32 @@ function cityEconomyTurn(city) {
 	});
 	var sci = city.pop * C.yields.sciencePerPop + (pl.capital === city.id ? C.yields.scienceCapital : 0);
 
+	// policies: taxation trades growth for treasury gold
+	if (C.features.policies) {
+		var tax = pl.policies.taxation || 0;
+		gold += city.pop * C.policy.taxGoldPerPop * tax;
+		var surplus = food - city.pop * C.city.baseFoodPerPop;
+		if (surplus > 0) food -= surplus * C.policy.taxGrowthPenalty * tax;
+	}
+
+	// merchant wealth: cities spend trade surplus on food/amenities -> growth
+	if (C.features.merchants && city.wealth > 0) {
+		var spend = Math.min(city.wealth, Math.max(0.5, city.wealth * C.merchant.wealthSpendRate));
+		city.wealth -= spend;
+		food += spend * C.merchant.wealthFoodFactor;
+	}
+
 	// growth
 	var eaten = city.pop * C.city.baseFoodPerPop;
 	city.foodStore += food - eaten;
 	var need = C.city.growthBase + C.city.growthPerPop * (city.pop - 1);
-	if (city.foodStore >= need && city.pop < C.city.maxPop) {
+	if (puHas(pl, "medicine")) need *= 0.8;
+	var maxPop = C.city.maxPop + (puHas(pl, "aqueducts") ? 5 : 0);
+	if (city.foodStore >= need && city.pop < maxPop) {
 		city.pop++;
-		city.foodStore = city.buildings.granary ? need * 0.4 : 0;
+		var keep = city.buildings.granary ? 0.4 : 0;
+		if (C.features.policies) keep = Math.max(keep, C.policy.infraGranaryKeep * (pl.policies.infrastructure || 0));
+		city.foodStore = need * keep;
 		recomputeTerritory();
 	} else if (city.foodStore < 0) {
 		city.foodStore = 0;
@@ -484,7 +663,9 @@ function cityIsCoastal(city) { return adjacentWaterTile(city.tile) >= 0; }
 
 function availableProduction(city) {
 	var pl = G.players[city.owner];
-	var items = ["settler"];
+	var F = GameConfig.features;
+	// settlement missions replace settler production; policies replace buildings
+	var items = F.settlementMissions ? [] : ["settler"];
 	var coastal = cityIsCoastal(city);
 	Object.keys(UNIT_TYPES).forEach(function (t) {
 		var def = UNIT_TYPES[t];
@@ -492,9 +673,11 @@ function availableProduction(city) {
 		if (def.domain === "sea" && !coastal) return;
 		items.push(t);
 	});
-	if (!city.buildings.walls) items.push("walls");
-	if (!city.buildings.market) items.push("market");
-	if (!city.buildings.granary) items.push("granary");
+	if (!F.policies) {
+		if (!city.buildings.walls) items.push("walls");
+		if (!city.buildings.market) items.push("market");
+		if (!city.buildings.granary) items.push("granary");
+	}
 	return items;
 }
 
@@ -553,12 +736,95 @@ function removeUnit(u) {
 }
 function unitsAt(tile) { return G.units.filter(function (u) { return u.tile === tile; }); }
 
+// Is this tile already holding the max stack of `owner`'s ground/sea units?
+function stackFull(tile, owner) {
+	var limit = GameConfig.features.unitStackLimit;
+	if (!limit) return false;
+	var n = 0;
+	G.units.forEach(function (x) {
+		if (x.tile === tile && x.owner === owner && UNIT_TYPES[x.type].domain !== "air") n++;
+	});
+	return n >= limit;
+}
+
+// ---------------------------------------------------------------------------
+// Persistent orders (features.persistentOrders): a unit remembers its
+// destination and keeps marching each turn until it arrives, is blocked too
+// long, or gets new orders. Settlement missions ride on the same mechanism.
+// ---------------------------------------------------------------------------
+
+function setUnitOrders(u, type, target) {
+	u.orders = { type: type, target: target, stuck: 0 };
+}
+
+function continueUnitOrders(pl) {
+	if (!GameConfig.features.persistentOrders) return;
+	G.units.slice().forEach(function (u) {
+		if (u.owner !== pl.id || !u.orders || u.moves <= 0) return;
+		if (UNIT_TYPES[u.type].domain === "air") { u.orders = null; return; }
+		var before = u.tile;
+		var target = u.orders.target;
+		if (u.tile !== target) moveUnitTowards(u, target);
+		if (G.units.indexOf(u) < 0) return; // died en route
+		if (u.tile === target) {
+			if (u.orders.type === "settle") {
+				var c = foundCity(u.owner, u.tile, u);
+				if (!c) { // site got blocked while marching — settle nearby or give up
+					var alt = M.neighbors[u.tile].find(function (n) {
+						return M.isPassable(n) && G.cityAt[n] < 0 && nearestCityDistance(n) >= 3;
+					});
+					if (alt !== undefined) { u.orders.target = alt; return; }
+					gameLog(G.players[u.owner].name + "'s settlers can't settle there — mission abandoned.");
+				}
+			}
+			u.orders = null;
+		} else if (u.tile === before) {
+			if (++u.orders.stuck >= 3) u.orders = null; // path blocked for 3 turns
+		} else {
+			u.orders.stuck = 0;
+		}
+	});
+}
+
+// ---------------------------------------------------------------------------
+// Settlement missions (features.settlementMissions): instead of building a
+// settler, pay gold + population and a mission marches to the chosen tile.
+// Returns null on success or a human-readable reason.
+// ---------------------------------------------------------------------------
+
+function launchSettlementMission(playerId, targetTile) {
+	var S = GameConfig.settle;
+	var pl = G.players[playerId];
+	if (!M.isPassable(targetTile) || G.cityAt[targetTile] >= 0) return "Not habitable land.";
+	if (nearestCityDistance(targetTile) < 4) return "Too close to an existing city.";
+	if (pl.gold < S.goldCost) return "Need " + S.goldCost + " gold.";
+	var src = null, sd = Infinity;
+	G.cities.forEach(function (c) {
+		if (c.owner !== playerId || c.pop <= S.popCost) return;
+		var d = M.distTiles(c.tile, targetTile);
+		if (d < sd) { sd = d; src = c; }
+	});
+	if (!src) return "Need a city with population to spare (pop ≥ " + (S.popCost + 1) + ").";
+	pl.gold -= S.goldCost;
+	src.pop -= S.popCost;
+	var u = spawnUnit(playerId, "settler", src.tile);
+	setUnitOrders(u, "settle", targetTile);
+	gameLog(pl.name + " sends a settlement mission from " + src.name);
+	return null;
+}
+
 // Movement cost stepping a->b, by movement domain (game rules, tunable).
 // Land units may traverse water (amphibious transport) at a high per-tile cost.
 function stepCost(a, b, domain) {
 	var mv = GameConfig.movement;
 	if (domain === "sea") return M.isWater(b) ? mv.seaCost : Infinity;
-	if (M.isWater(b)) return GameConfig.amphibious.transportCost; // land unit embarking / at sea
+	if (M.isWater(b)) {
+		// land unit embarking / at sea; leaving the shore costs extra so units
+		// don't "shortcut" over one sea tile instead of fording a river
+		var c0 = GameConfig.amphibious.transportCost;
+		if (!M.isWater(a)) c0 += GameConfig.amphibious.embarkCost;
+		return c0;
+	}
 	if (!M.isPassable(b)) return Infinity;
 	var ter = M.layer("terrain")[b];
 	var c = mv.flatCost;
@@ -641,6 +907,10 @@ function moveUnitTowards(u, target) {
 		if (hostileCity) { u.moves -= c; attackCity(u, G.cities[cityId]); return true; }
 		if (neutral.length || (cityId >= 0 && G.cities[cityId].owner !== u.owner)) break; // blocked, not at war
 
+		// stacking cap: up to N own ground/sea units may END on a tile; passing
+		// through a full stack is fine (wounded units can't block a column).
+		if (i === path.length - 1 && stackFull(next, u.owner)) break;
+
 		// amphibious landing: a land unit coming ashore from the sea is
 		// disorganized for a few turns unless trained for it.
 		if (def.domain === "land" && M.isWater(u.tile) && !M.isWater(next) && u.training !== "amphibious") {
@@ -676,6 +946,26 @@ function combatModifiers(defTile, attacker) {
 		var city = G.cities[cid];
 		mult += GameConfig.city.fortifyDefenseBonus;
 		if (city.buildings.walls) mult += GameConfig.city.wallsDefenseBonus;
+		// policies: militarism hardens cities (replaces the walls build)
+		if (GameConfig.features.policies) {
+			mult += GameConfig.policy.milWallsBonus * (G.players[city.owner].policies.militarism || 0);
+		}
+		if (puHas(G.players[city.owner], "masonry")) mult += 0.3;
+	}
+	// edge fortifications: bonus when the attack crosses a fort/wall owned by
+	// the defending side (adjacent attacks only — air strikes fly over)
+	if (GameConfig.features.edgeFortifications && attacker && G.fortLevel) {
+		var e = M.edgeBetween(attacker.tile, defTile);
+		if (e >= 0 && G.fortLevel[e] > 0) {
+			var defOwner = cid >= 0 ? G.cities[cid].owner :
+				(unitsAt(defTile)[0] ? unitsAt(defTile)[0].owner : -1);
+			if (G.fortOwner[e] === defOwner && defOwner >= 0) {
+				var fb = G.fortLevel[e] === 2 ? GameConfig.fort.wallDefenseBonus
+					: GameConfig.fort.fortDefenseBonus;
+				if (G.fortLevel[e] === 2 && puHas(G.players[defOwner], "masonry")) fb *= 1.5;
+				mult += fb;
+			}
+		}
 	}
 	return mult;
 }
@@ -693,6 +983,7 @@ function combatDamage(strA, strD) {
 function effStrength(u) {
 	var A = GameConfig.amphibious;
 	var s = (u.str || unitStrength(u.type)) * (u.hp / 100 * 0.5 + 0.5);
+	if (puHas(G.players[u.owner], "drill")) s *= 1.08;
 	var needs = unitNeeds(u);
 	if (needs.ammo && u.supply && !u.supply.ammo) s *= GameConfig.supply.noAmmoPenalty;
 	if (UNIT_TYPES[u.type].domain === "land" && M.isWater(u.tile)) s *= A.embarkedPenalty;
@@ -726,7 +1017,8 @@ function attackCity(att, city) {
 	var C = GameConfig.city;
 	att.attacksMade++;
 	var siege = UNIT_TYPES[att.type].siege;
-	var strA = effStrength(att) * (siege ? GameConfig.combat.siegeCityBonus : 1);
+	var siegeBonus = GameConfig.combat.siegeCityBonus + (puHas(G.players[att.owner], "siegecraft") ? 0.5 : 0);
+	var strA = effStrength(att) * (siege ? siegeBonus : 1);
 	var strD = (C.cityBaseStrength + C.cityStrengthPerPop * city.pop) * combatModifiers(city.tile, att);
 	var defUnits = unitsAt(city.tile).filter(function (x) { return x.owner === city.owner && unitStrength(x.type) > 0; });
 	if (defUnits.length) { attackUnit(att, defUnits[0]); return; }
@@ -925,6 +1217,128 @@ function trainUnit(u, kind) {
 }
 
 // ---------------------------------------------------------------------------
+// Edge fortifications (features.edgeFortifications): forts and walls built on
+// individual edges. Forts are cheap, give a defense bonus to units defending
+// behind them, and crumble if left unmanned; walls are permanent and can be
+// bought outright or as a discounted fort upgrade.
+// ---------------------------------------------------------------------------
+
+function initForts() {
+	G.fortLevel = new Uint8Array(M.nEdges);   // 0 none, 1 fortification, 2 wall
+	G.fortOwner = new Int16Array(M.nEdges).fill(-1);
+	G.fortDecay = {};                          // edge -> turns unmanned
+}
+
+function fortBuildCost(e, level, playerId) {
+	var F = GameConfig.fort;
+	var mult = puHas(G.players[playerId], "engineering") ? 0.7 : 1;
+	if (level === 1) return G.fortLevel[e] >= 1 ? 0 : Math.round(F.fortCostGold * mult);
+	// wall: discounted when upgrading an own fortification
+	if (G.fortLevel[e] === 1 && G.fortOwner[e] === playerId) {
+		return Math.round(F.wallCostGold * (1 - F.upgradeDiscount) * mult);
+	}
+	return Math.round(F.wallCostGold * mult);
+}
+
+// Build/upgrade a fort (level 1) or wall (level 2) on edge e. Returns null on
+// success or a reason string.
+function buildFortEdge(playerId, e, level) {
+	if (!GameConfig.features.edgeFortifications) return "Fortifications disabled.";
+	if (e < 0) return "No edge there.";
+	if (!M.isLand(M.edgeA[e]) && !M.isLand(M.edgeB[e])) return "Can't fortify open water.";
+	if (G.fortLevel[e] >= level) return "Already built.";
+	var pl = G.players[playerId];
+	var cost = fortBuildCost(e, level, playerId);
+	if (pl.gold < cost) return "Need " + cost + " gold.";
+	pl.gold -= cost;
+	G.fortLevel[e] = level;
+	G.fortOwner[e] = playerId;
+	delete G.fortDecay[e];
+	gameLog(pl.name + (level === 2 ? " walls" : " fortifies") + " an edge");
+	return null;
+}
+
+// A fortification is manned while a friendly combat unit stands on either of
+// its tiles. Unmanned forts decay; walls are permanent.
+function fortManned(e) {
+	var owner = G.fortOwner[e];
+	var a = M.edgeA[e], b = M.edgeB[e];
+	return G.units.some(function (u) {
+		return u.owner === owner && UNIT_TYPES[u.type].combat && (u.tile === a || u.tile === b);
+	});
+}
+
+function fortTurn() {
+	if (!GameConfig.features.edgeFortifications) return;
+	var F = GameConfig.fort;
+	for (var e = 0; e < M.nEdges; e++) {
+		if (G.fortLevel[e] !== 1) continue;
+		if (fortManned(e)) { delete G.fortDecay[e]; continue; }
+		G.fortDecay[e] = (G.fortDecay[e] || 0) + 1;
+		if (G.fortDecay[e] >= F.decayTurns) {
+			G.fortLevel[e] = 0;
+			G.fortOwner[e] = -1;
+			delete G.fortDecay[e];
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Tile population (features.tilePopulation): rural population settles where
+// the land can feed it. It adds food (and goods) demand to the governing
+// city's market — see cityDemand in trade.js.
+// ---------------------------------------------------------------------------
+
+function initTilePopulation() {
+	G.tilePop = new Float32Array(M.n);
+	if (!GameConfig.features.tilePopulation) return;
+	var P = GameConfig.population;
+	for (var t = 0; t < M.n; t++) {
+		if (!M.isLand(t)) continue;
+		var best = 0;
+		for (var i = 0; i < COMMODITIES.length; i++) {
+			var cm = COMMODITIES[i];
+			if (cm.demandGroup !== "food" || !cm.layer) continue;
+			var v = M.layer(cm.layer)[t];
+			if (v > best) best = v;
+		}
+		G.tilePop[t] = best * P.popPerFood;
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Recruitment quotas (features.recruitment): the player sets how many of each
+// unit type the nation should field; idle cities automatically produce toward
+// the quota with the largest deficit. Human players only — AIs have their own
+// production logic.
+// ---------------------------------------------------------------------------
+
+function recruitmentTurn(pl) {
+	if (!GameConfig.features.recruitment || !pl.quotas) return;
+	var counts = {};
+	G.units.forEach(function (u) { if (u.owner === pl.id) counts[u.type] = (counts[u.type] || 0) + 1; });
+	G.cities.forEach(function (c) {
+		if (c.owner === pl.id && c.producing && UNIT_TYPES[c.producing]) {
+			counts[c.producing] = (counts[c.producing] || 0) + 1;
+		}
+	});
+	G.cities.forEach(function (c) {
+		if (c.owner !== pl.id || c.producing) return;
+		var avail = availableProduction(c);
+		var best = null, bestDeficit = 0;
+		Object.keys(pl.quotas).forEach(function (t) {
+			if (!pl.quotas[t] || avail.indexOf(t) < 0) return;
+			var deficit = pl.quotas[t] - (counts[t] || 0);
+			if (deficit > bestDeficit) { bestDeficit = deficit; best = t; }
+		});
+		if (best) {
+			c.producing = best;
+			counts[best] = (counts[best] || 0) + 1;
+		}
+	});
+}
+
+// ---------------------------------------------------------------------------
 // Roads & bridges (built with gold, on edges)
 // ---------------------------------------------------------------------------
 
@@ -938,6 +1352,7 @@ function edgeBuildCost(e) {
 function buildRoadOnEdge(playerId, e) {
 	var pl = G.players[playerId];
 	var cost = edgeBuildCost(e);
+	if (puHas(pl, "engineering")) cost *= 0.5;
 	if (cost <= 0) return false;
 	if (M.edgeLayer("domain")[e] !== 1) return false; // land-land edges only
 	if (pl.gold < cost) return false;
@@ -970,6 +1385,9 @@ function buildRoadPath(playerId, fromTile, toTile) {
 
 function supplyTurn(pl, myUnits) {
 	var S = GameConfig.supply;
+	var logistics = puHas(pl, "logistics");
+	var maxRange = S.maxRange + (logistics ? 8 : 0);
+	var costMult = logistics ? 0.8 : 1;
 	var seeds = [];
 	G.cities.forEach(function (c) { if (c.owner === pl.id) seeds.push(c.tile); });
 	// Carriers are mobile supply bases for the fleet and its aircraft.
@@ -987,7 +1405,7 @@ function supplyTurn(pl, myUnits) {
 	myUnits.forEach(function (u) {
 		var needs = unitNeeds(u);
 		var d = dist ? dist[u.tile] : -1;
-		var reachable = d >= 0 && d <= S.maxRange;
+		var reachable = d >= 0 && d <= maxRange;
 		u.supplyDist = reachable ? d : -1;
 		if (!reachable) {
 			u.supply = {
@@ -995,7 +1413,7 @@ function supplyTurn(pl, myUnits) {
 			};
 			return;
 		}
-		var mult = 1 + d * S.perHop;
+		var mult = (1 + d * S.perHop) * costMult;
 		if (needs.food) cost += needs.food * S.foodCost * mult;
 		if (needs.ammo && u.attacksMade > 0) cost += needs.ammo * u.attacksMade * S.ammoCost * mult;
 		if (needs.fuel && u.stepsMoved > 0) cost += needs.fuel * Math.min(1.5, u.stepsMoved / 4) * S.fuelCost * mult;
@@ -1009,8 +1427,16 @@ function supplyTurn(pl, myUnits) {
 // ---------------------------------------------------------------------------
 
 function updateEra(pl) {
-	var T = GameConfig.tech;
-	var newEra = pl.science >= T.ww2Cost ? 2 : pl.science >= T.napoleonicCost ? 1 : 0;
+	var newEra;
+	if (GameConfig.features.timedEras) {
+		// eras are a fixed schedule shared by everyone (science is decorative)
+		var E = GameConfig.eras;
+		newEra = G.turn >= E.classicalTurns + E.napoleonicTurns ? 2
+			: G.turn >= E.classicalTurns ? 1 : 0;
+	} else {
+		var T = GameConfig.tech;
+		newEra = pl.science >= T.ww2Cost ? 2 : pl.science >= T.napoleonicCost ? 1 : 0;
+	}
 	if (newEra > pl.era) {
 		pl.era = newEra;
 		// A hard generational shift: the old army is obsolete and disbands, and
@@ -1036,18 +1462,32 @@ function updateEra(pl) {
 
 function endTurn() {
 	if (G.winner !== null) return;
+	if (G.pendingStarts && G.pendingStarts.length) return; // still picking starts
 	G.turn++;
 
 	// 0. Carrier-based aircraft ride with their carrier from last turn's moves
 	syncCarrierAircraft();
+
+	// 0b. Standing orders: units with a destination keep marching (human units
+	// and every settlement mission; AI combat units re-decide each turn and
+	// never carry orders)
+	G.players.forEach(function (pl) {
+		if (pl.alive) continueUnitOrders(pl);
+	});
 
 	// 1. AI decisions (human already gave orders through the UI)
 	G.players.forEach(function (pl) {
 		if (pl.alive && !pl.isHuman) aiTakeTurn(pl);
 	});
 
+	// 1b. Recruitment quotas fill idle human cities' production
+	G.players.forEach(function (pl) {
+		if (pl.alive && pl.isHuman) recruitmentTurn(pl);
+	});
+
 	// 2. Occupation: hostile units annex the ground they hold
 	occupationTurn();
+	fortTurn();
 
 	// 3. Economy
 	G.cities.forEach(function (city) {
@@ -1056,6 +1496,12 @@ function endTurn() {
 
 	// 4. Trade (prices, routes, tolls, subsidies, knowledge, pirates)
 	tradeTurn();
+
+	// 4a. Merchant agents plan/move/trade (features.merchants)
+	merchantsTurn();
+
+	// 4a2. Power-up picks accrue and AIs spend theirs (features.powerups)
+	powerupsTurn();
 
 	// 4b. Diplomacy bookkeeping: tribute payments, offer expiry
 	diplomacyTurn();
@@ -1121,13 +1567,16 @@ function endTurn() {
 
 function computeScore(pl) {
 	var s = pl.science * 0.1 + pl.gold * 0.05;
-	G.cities.forEach(function (c) { if (c.owner === pl.id) s += 10 + c.pop * 2; });
+	G.cities.forEach(function (c) { if (c.owner === pl.id) s += 10 + c.pop * 2 + (c.wealth || 0) * 0.02; });
 	s += Object.keys(pl.knowledge).length * 5;
+	if (pl.powerups) s += Object.keys(pl.powerups).length * 4;
 	return Math.round(s);
 }
 
 function checkVictory() {
-	var alive = G.players.filter(function (p) { return p.alive; });
+	// Independents (city-states) can survive forever without blocking victory.
+	var alive = G.players.filter(function (p) { return p.alive && !p.minor; });
+	if (!alive.length) return;
 	if (alive.length === 1) {
 		G.winner = alive[0].id;
 		gameLog("*** " + alive[0].name + " wins by conquest! ***");

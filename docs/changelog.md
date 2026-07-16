@@ -2,6 +2,95 @@
 
 > Deep-dive doc. CLAUDE.md links here. Newest first.
 
+- **Hex-economy toy runs on the game's DEFAULT MAP** (`game/toy/`): the validated
+  von-Thünen economy engine (`econ_engine.js`) — previously bound to rectangular
+  hex grids — now also runs on the real planet (`maps/sample-map.json`, a
+  `plangen-game-map`). The engine's geometry layer was generalised behind a graph
+  abstraction (precomputed adjacency, a `physDist` dispatch replacing axial
+  distance, directional edge costs, a heap Dijkstra, calorie-based capacity
+  overrides) with the **rectangular-hex path kept bit-identical** — all four
+  original Node gates (core/layers/organic/transport) still pass unchanged. New
+  `game_map_adapter.js` maps the `plangen-game-map` onto the engine using **the
+  map's baked bi-directional travel costs** (`moveCost`/`moveCostR`, normalised so
+  a median land hop ≈ K0; transport charges the toward-city direction so netback is
+  real) and **per-tile `calories` as food capacity** (scaled so a median land tile
+  ≈ the "farm" tier; coastal fishing from adjacent water calories); strategic
+  minerals are carried through as **inert display data** (not simulated). Cities
+  arise three selectable ways (seed the map's `cityPriority` spots and grow, one
+  bootstrap that self-ignites the rest, or manual placement). Both consumers are
+  wired: a new Node gate (`test/validate_planet.js`, `npm run validate:planet`),
+  the parallel sweep harness (`sweep_planet.json`, `npm run sweep:planet` — the
+  first sweep classes every rule-set DIVERGENT: laissez-faire wins population,
+  frontier wins wealth), and an interactive browser sandbox (`planet_economy.html`,
+  equirectangular renderer, six views, city + road tools, per-tile hover). Engine
+  runs **identically in Node and the browser** on the planet too (both settle at
+  N≈488 520 / 32 cities on the sample map).
+
+- **Game prototype wave 4: merchant agents, two tolling modes, civ power-ups**
+  (`game/`, flags `features.merchants` / `features.powerups`): (1) abstract
+  trade routes replaced by **concrete merchants** (`merchants.js`) — cities
+  spawn 🐫 caravans (gold+pop+livestock) and coastal cities ⛵ fleets
+  (gold+pop+timber) that plan autonomous **round trips** by expected return
+  from an EMA **price memory** of every city, buy/sell on the real price
+  ledger (self-damping arbitrage preserved), get raided by camps, detour
+  around tolls, and bank trip profit into `city.wealth`, which converts to
+  bonus food (growth) each turn. (2) **Two tolling modes**
+  (`merchant.tollMode`): per-tile ⛩ toll gates placed on own tiles (charged
+  per passage) vs a territory-wide entrance fee (once per trip); both scale
+  off the per-player toll slider; destination owners never toll their own
+  customers. (3) **Power-ups** (`powerups.js`): a pick every 75 turns from
+  trade/military/building/growth menus (16 total — Silk Roads, Toll Houses,
+  Drill, Logistics, Engineering, Aqueducts, Urban Planning, Irrigation…),
+  human chooser in the Players tab (★ action-bar prompt), AI picks weighted
+  by personality+policy, several picks deliberately stack with policy
+  sliders. Verified: 250-turn AI game = 84 merchants / 1,316 completed round
+  trips, both toll modes charge exactly rate×scale, all effects hook cleanly.
+
+- **Game prototype wave 3.5: clarity fixes + strategic-depth systems (all
+  feature-flagged)** (`game/`): every new dynamic sits behind its own
+  `GameConfig.features` flag (Tuning tab → Features) so they can be kept or
+  dropped independently — see the flag table in `game/README.md`.
+  *Fixes/UX:* territory borders now drawn from each tile's own unwrapped
+  polygon (`tileEdgeSegment`) — no more gaps near the antimeridian; embarking
+  costs extra (`amphibious.embarkCost`) so units ford rivers instead of
+  detouring by sea; unit **ability cards** in the Info tab; always-on floating
+  HP bar + supply pips above units; explicit **Declare war** button; trade
+  route creation explains its commodity/margin. *New systems:*
+  **persistent unit orders** (⚑, auto-march each turn); **3-unit stacking**
+  cap (pass-through always allowed); **edge fortifications/walls** (build,
+  man, decay, discounted upgrades, defense bonus when attacked across);
+  **timed eras** (fixed turn schedule, science scrapped); **settlement
+  missions** (gold + pop, no settler builds — AI uses them too);
+  **recruitment quotas** ("Force doctrine" — idle cities auto-recruit);
+  **tile population** (rural pop drives food demand; cities manufacture a
+  "goods" commodity from pop × wealth; Population overlay); **policies**
+  (Taxation/Militarism/Openness/Infrastructure sliders replace per-city
+  building micro; AIs derive theirs from personality). *Visuals:* thick
+  shorelines everywhere; overlays repainted on desaturated green/blue neutral
+  ground with flat light-blue dataless ocean so data pops.
+
+- **Game prototype wave 3: UI overhaul, setup screen, hover previews,
+  independents, slow eras** (`game/`): (1) **visual redesign** — bold
+  2px-line design system (`style.css` CSS variables, amber accent), bolder
+  map markers (city pills, capital rings, drop shadows). (2) **Renderer
+  split** into a cached base canvas + animated dynamic layer (`render.js`),
+  enabling pulsing selection halos, movement-range tinting, red attack-target
+  halos, range rings, and an **animated dashed path preview on hover** with a
+  turn-count badge (honors the full-budget-one-step rule). (3) **Layers
+  panel** (◈ Layers) — 13 toggleable detail layers + minimal/standard/full
+  presets. (4) **Contextual action bar** at the bottom of the map: always
+  shows what the current selection/mode can do (found city, train, paradrop,
+  route/road/deal pick modes with Cancel, idle-unit/city summary, next-unit
+  cycling). (5) **Setup screen** (`setup.js`): per-slot Human/AI-preset
+  choice (2–8 players, hotseat perspective switching via player chips), NPC
+  fill toggle, seed, and **click-to-choose starting location** with
+  recommended-site halos and validity feedback (engine: `G.pendingStarts`,
+  `humanPickStart`, `finalizeStarts`). (6) **Independents**: sparse maps get
+  passive single-city **city-states** ("Free X", `pl.minor`, never expand or
+  declare war, excluded from victory) and starting **bandit camps**.
+  (7) **Era pacing**: science slowed (`sciencePerPop` 0.25) and tech costs
+  raised (3500/12000) so each era runs ~200–450 turns; `maxTurns` 1500.
+
 - **Game prototype wave 2: era rosters, siege/amphibious/airborne, carriers,
   ship/plane designs, city trading** (`game/`): (1) per-era unit rosters with
   distinct ids (Classical militia/legion/cavalry/trireme; Napoleonic infantry/

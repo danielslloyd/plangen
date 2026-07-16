@@ -1,4 +1,4 @@
-// validate_layers.js — HANDOFF action items 1 & 2: the taxation -> road-crew ->
+// validate_layers.js — the taxation -> road-crew ->
 // garrison -> incremental-construction -> gradual-decay layer is STABLE, that
 // overreach genuinely bites, that crews/garrisons eat without breaking
 // conservation, and that construction stalls when it can't be afforded.

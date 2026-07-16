@@ -4,13 +4,114 @@
 // (AI_PERSONALITY_SCHEMA) and are equally slider-tunable per player.
 
 var GameConfig = {
+	// Each new game dynamic is behind its own flag (1 = on, 0 = off) so they
+	// can be kept or dropped independently. Toggles live in the Tuning tab
+	// ("Features" group); most take effect from the next new game.
+	features: {
+		persistentOrders: 1,    // units keep a destination across turns
+		unitStackLimit: 3,      // max own ground/sea units per tile (0 = unlimited)
+		edgeFortifications: 1,  // fortify/wall individual edges
+		timedEras: 1,           // eras advance on a fixed turn schedule (science scrapped)
+		settlementMissions: 1,  // found cities via gold+pop missions instead of settler builds
+		recruitment: 1,         // per-type army quotas; your cities auto-produce to fill them
+		tilePopulation: 1,      // per-tile population drives food demand + city "goods"
+		policies: 1,            // player-level policy sliders replace per-city building micro
+		merchants: 1,           // concrete caravan/fleet agents replace abstract trade routes
+		powerups: 1             // periodic civ power-up picks (trade/military/building/growth)
+	},
+
+	// Merchant agents (features.merchants): caravans and fleets are spawned by
+	// cities, plan round trips from remembered prices, and bank profit into the
+	// origin city's wealth (which feeds growth).
+	merchant: {
+		caravanGoldCost: 10,
+		caravanPopCost: 1,
+		caravanNeedsLivestock: 0.5, // home supply of livestock (horses/camels)
+		fleetGoldCost: 40,          // covers timber fittings, cloth sails, wages
+		fleetPopCost: 1,
+		fleetNeedsTimber: 0.5,      // home supply of timber
+		caravanCapacity: 8,         // units of cargo
+		fleetCapacity: 16,
+		caravanSpeed: 8,            // path-cost budget per turn
+		fleetSpeed: 16,
+		minExpectedReturn: 4,       // gold per round trip to bother leaving
+		priceMemAlpha: 0.1,         // EMA weight of the latest observed price
+		maxPerCity: 2,              // merchant slots per city (+openness/power-ups)
+		wealthFoodFactor: 0.4,      // city wealth spent -> bonus food (growth)
+		wealthSpendRate: 0.2,       // fraction of wealth a city can spend per turn
+		// Tolling: 0 = per-tile toll GATES (⛩, each gated tile charges per
+		// passage), 1 = territory-wide ENTRANCE FEE (charged once per trip on
+		// first entry). Both scale off the owner's toll-rate slider.
+		tollMode: 0,
+		gateScale: 2.0,             // per-gate charge = ownerTollRate x scale
+		entranceFeeScale: 10        // entrance fee = ownerTollRate x scale
+	},
+
+	// Power-ups (features.powerups): every N turns each civ picks one.
+	powerups: {
+		everyTurns: 75,
+		startPicks: 1
+	},
+
+	// Timed eras (features.timedEras): each era lasts a defined number of turns.
+	eras: {
+		classicalTurns: 250,
+		napoleonicTurns: 300     // WW2 starts at classicalTurns + napoleonicTurns
+	},
+
+	// Edge fortifications (features.edgeFortifications).
+	fort: {
+		fortCostGold: 8,         // dig in on one edge
+		wallCostGold: 26,        // stone wall on one edge (permanent)
+		upgradeDiscount: 0.4,    // fort -> wall upgrade costs (1 - discount) * wallCost
+		fortDefenseBonus: 0.35,  // defense mult bonus behind a manned fortification
+		wallDefenseBonus: 0.7,
+		decayTurns: 5            // unmanned fortifications crumble after this many turns
+	},
+
+	// Settlement missions (features.settlementMissions).
+	settle: {
+		goldCost: 60,
+		popCost: 1               // population drawn from the nearest city (pop must stay >= 1)
+	},
+
+	// Tile population (features.tilePopulation).
+	population: {
+		popPerFood: 6,           // rural pop per point of best food suitability
+		ruralFoodDemandPerPop: 0.12, // rural pop adds to the governing city's food demand
+		goodsPerPop: 0.5,        // city "goods" output per pop (x wealth factor)
+		goodsDemandPerPop: 0.3,  // everyone wants manufactured goods (more each era)
+		ruralGoodsDemandFactor: 0.04
+	},
+
+	// Player-level policies (features.policies), each 0..1.
+	policy: {
+		taxGoldPerPop: 0.15,     // taxation: gold per pop per turn at slider 1
+		taxGrowthPenalty: 0.35,  // taxation: food-surplus fraction lost at slider 1
+		milUnitCostDiscount: 0.25, // militarism: unit production discount at slider 1
+		milWallsBonus: 0.6,      // militarism: city defense bonus at slider 1
+		openRouteSlots: 2,       // openness: extra route slots at slider 1
+		openSpreadBonus: 1.0,    // openness: crop-knowledge spread multiplier bonus
+		infraGranaryKeep: 0.5    // infrastructure: food kept on growth at slider 1
+	},
+
 	setup: {
 		numPlayers: 4,
 		humanPlayer: 0,          // -1 = spectate (all AI)
+		// Per-slot control, built by the setup screen. Each entry:
+		// { control: "human"|"ai", preset: <AI_PRESETS key or "random"> }.
+		// When null, numPlayers slots are generated (slot humanPlayer = human).
+		players: null,
+		humanStartPick: true,    // humans click their starting tile on the map
+		npcFill: true,           // fill sparse land with city-states & bandit camps
+		npcLandPerEntity: 150,   // land tiles per major+minor entity ("sparse" gauge)
+		npcMaxCityStates: 6,
+		npcBanditLandDivisor: 400, // one starting bandit camp per this many land tiles
 		minStartDistance: 12,    // hops between starting positions
+		minHumanStartDistance: 7,// hops a human pick must keep from other capitals
 		startSettlers: 1,
 		startGold: 50,
-		maxTurns: 300
+		maxTurns: 1500
 	},
 
 	city: {
@@ -53,13 +154,15 @@ var GameConfig = {
 		prodBase: 0.5,           // production floor per worked land tile
 		goldRiver: 0.5,          // gold per worked river tile
 		goldCoast: 0.5,          // gold per worked coast-adjacent tile
-		sciencePerPop: 1.0,
-		scienceCapital: 2.0
+		sciencePerPop: 0.25,
+		scienceCapital: 0.5
 	},
 
+	// Era pacing: with the slowed science yields above, each era is meant to
+	// take a few hundred turns to play out at default settings.
 	tech: {
-		napoleonicCost: 350,     // accumulated science to reach the Napoleonic era
-		ww2Cost: 1000            // ... and the WW2 era
+		napoleonicCost: 3500,    // accumulated science to reach the Napoleonic era
+		ww2Cost: 12000           // ... and the WW2 era
 	},
 
 	units: {
@@ -97,6 +200,8 @@ var GameConfig = {
 	// Amphibious transport, opposed-landing penalty, and WW2 infantry training.
 	amphibious: {
 		transportCost: 5,        // movement cost per water edge for a land unit at sea
+		embarkCost: 12,          // extra cost stepping from land onto water (stops units
+		                         // "shortcutting" over the sea instead of crossing a river)
 		embarkedPenalty: 0.3,    // strength mult while a land unit sits on water
 		landingPenaltyTurns: 3,  // turns of reduced strength after an untrained landing
 		landingPenalty: 0.45,    // strength mult on the landing turn (ramps back to 1)
@@ -235,7 +340,10 @@ var COMMODITIES = [
 	{ id: "iron",      layer: "iron",    kind: "mineral", basePrice: 2.5, demandGroup: "mineral" },
 	{ id: "copper",    layer: "copper",  kind: "mineral", basePrice: 2.2, demandGroup: "mineral" },
 	{ id: "gold",      layer: "gold",    kind: "mineral", basePrice: 5.0, demandGroup: "luxury" },
-	{ id: "silver",    layer: "silver",  kind: "mineral", basePrice: 4.0, demandGroup: "luxury" }
+	{ id: "silver",    layer: "silver",  kind: "mineral", basePrice: 4.0, demandGroup: "luxury" },
+	// Manufactured in cities (no map layer): output scales with population and
+	// wealth; demanded everywhere. Only flows when features.tilePopulation is on.
+	{ id: "goods",     layer: null,      kind: "manufactured", basePrice: 2.0, demandGroup: "goods" }
 ];
 
 // ---------------------------------------------------------------------------
@@ -243,9 +351,60 @@ var COMMODITIES = [
 // itself from this list (see ui.js), so tweak freely.
 // ---------------------------------------------------------------------------
 var CONFIG_SCHEMA = [
-	{ g: "Setup", p: "setup.numPlayers", min: 2, max: 8, step: 1 },
+	{ g: "Features (0=off 1=on)", p: "features.persistentOrders", min: 0, max: 1, step: 1 },
+	{ g: "Features (0=off 1=on)", p: "features.unitStackLimit", min: 0, max: 6, step: 1 },
+	{ g: "Features (0=off 1=on)", p: "features.edgeFortifications", min: 0, max: 1, step: 1 },
+	{ g: "Features (0=off 1=on)", p: "features.timedEras", min: 0, max: 1, step: 1 },
+	{ g: "Features (0=off 1=on)", p: "features.settlementMissions", min: 0, max: 1, step: 1 },
+	{ g: "Features (0=off 1=on)", p: "features.recruitment", min: 0, max: 1, step: 1 },
+	{ g: "Features (0=off 1=on)", p: "features.tilePopulation", min: 0, max: 1, step: 1 },
+	{ g: "Features (0=off 1=on)", p: "features.policies", min: 0, max: 1, step: 1 },
+	{ g: "Features (0=off 1=on)", p: "features.merchants", min: 0, max: 1, step: 1 },
+	{ g: "Features (0=off 1=on)", p: "features.powerups", min: 0, max: 1, step: 1 },
+
+	{ g: "Merchants", p: "merchant.tollMode", min: 0, max: 1, step: 1 },
+	{ g: "Merchants", p: "merchant.caravanGoldCost", min: 0, max: 80, step: 5 },
+	{ g: "Merchants", p: "merchant.fleetGoldCost", min: 0, max: 200, step: 5 },
+	{ g: "Merchants", p: "merchant.caravanCapacity", min: 1, max: 40, step: 1 },
+	{ g: "Merchants", p: "merchant.fleetCapacity", min: 1, max: 80, step: 1 },
+	{ g: "Merchants", p: "merchant.caravanSpeed", min: 2, max: 30, step: 1 },
+	{ g: "Merchants", p: "merchant.fleetSpeed", min: 2, max: 40, step: 1 },
+	{ g: "Merchants", p: "merchant.minExpectedReturn", min: 0, max: 30, step: 1 },
+	{ g: "Merchants", p: "merchant.maxPerCity", min: 0, max: 8, step: 1 },
+	{ g: "Merchants", p: "merchant.gateScale", min: 0, max: 10, step: 0.5 },
+	{ g: "Merchants", p: "merchant.entranceFeeScale", min: 0, max: 40, step: 1 },
+	{ g: "Merchants", p: "merchant.wealthFoodFactor", min: 0, max: 2, step: 0.05 },
+
+	{ g: "Power-ups", p: "powerups.everyTurns", min: 10, max: 300, step: 5 },
+
+	{ g: "Eras (timed)", p: "eras.classicalTurns", min: 20, max: 1000, step: 10 },
+	{ g: "Eras (timed)", p: "eras.napoleonicTurns", min: 20, max: 1000, step: 10 },
+
+	{ g: "Fortifications", p: "fort.fortCostGold", min: 0, max: 50, step: 1 },
+	{ g: "Fortifications", p: "fort.wallCostGold", min: 0, max: 120, step: 2 },
+	{ g: "Fortifications", p: "fort.upgradeDiscount", min: 0, max: 1, step: 0.05 },
+	{ g: "Fortifications", p: "fort.fortDefenseBonus", min: 0, max: 2, step: 0.05 },
+	{ g: "Fortifications", p: "fort.wallDefenseBonus", min: 0, max: 2, step: 0.05 },
+	{ g: "Fortifications", p: "fort.decayTurns", min: 1, max: 20, step: 1 },
+
+	{ g: "Settlement", p: "settle.goldCost", min: 0, max: 300, step: 5 },
+
+	{ g: "Population", p: "population.popPerFood", min: 0, max: 20, step: 0.5 },
+	{ g: "Population", p: "population.ruralFoodDemandPerPop", min: 0, max: 1, step: 0.02 },
+	{ g: "Population", p: "population.goodsPerPop", min: 0, max: 3, step: 0.05 },
+	{ g: "Population", p: "population.goodsDemandPerPop", min: 0, max: 2, step: 0.05 },
+
+	{ g: "Policies", p: "policy.taxGoldPerPop", min: 0, max: 1, step: 0.05 },
+	{ g: "Policies", p: "policy.taxGrowthPenalty", min: 0, max: 1, step: 0.05 },
+	{ g: "Policies", p: "policy.milUnitCostDiscount", min: 0, max: 0.8, step: 0.05 },
+	{ g: "Policies", p: "policy.milWallsBonus", min: 0, max: 2, step: 0.05 },
+	{ g: "Policies", p: "policy.openRouteSlots", min: 0, max: 5, step: 1 },
+	{ g: "Policies", p: "policy.infraGranaryKeep", min: 0, max: 1, step: 0.05 },
+
 	{ g: "Setup", p: "setup.minStartDistance", min: 4, max: 30, step: 1 },
-	{ g: "Setup", p: "setup.maxTurns", min: 50, max: 1000, step: 10 },
+	{ g: "Setup", p: "setup.maxTurns", min: 50, max: 3000, step: 50 },
+	{ g: "Setup", p: "setup.npcLandPerEntity", min: 100, max: 1200, step: 25 },
+	{ g: "Setup", p: "setup.npcMaxCityStates", min: 0, max: 12, step: 1 },
 
 	{ g: "City", p: "city.claimRadius", min: 1, max: 5, step: 1 },
 	{ g: "City", p: "city.tilesPerPop", min: 1, max: 4, step: 1 },
@@ -272,10 +431,11 @@ var CONFIG_SCHEMA = [
 	{ g: "Yields", p: "yields.prodTimber", min: 0, max: 8, step: 0.1 },
 	{ g: "Yields", p: "yields.prodMinerals", min: 0, max: 10, step: 0.1 },
 	{ g: "Yields", p: "yields.prodHills", min: 0, max: 4, step: 0.1 },
-	{ g: "Yields", p: "yields.sciencePerPop", min: 0, max: 5, step: 0.1 },
+	{ g: "Yields", p: "yields.sciencePerPop", min: 0, max: 5, step: 0.05 },
+	{ g: "Yields", p: "yields.scienceCapital", min: 0, max: 5, step: 0.05 },
 
-	{ g: "Tech", p: "tech.napoleonicCost", min: 50, max: 2000, step: 25 },
-	{ g: "Tech", p: "tech.ww2Cost", min: 200, max: 5000, step: 50 },
+	{ g: "Tech", p: "tech.napoleonicCost", min: 50, max: 10000, step: 50 },
+	{ g: "Tech", p: "tech.ww2Cost", min: 200, max: 30000, step: 100 },
 
 	{ g: "Units", p: "units.movePoints", min: 4, max: 30, step: 1 },
 	{ g: "Units", p: "units.settlerCost", min: 10, max: 120, step: 5 },
@@ -283,6 +443,7 @@ var CONFIG_SCHEMA = [
 	// per-unit cost/str rows are appended programmatically below.
 
 	{ g: "Amphibious", p: "amphibious.transportCost", min: 1, max: 15, step: 1 },
+	{ g: "Amphibious", p: "amphibious.embarkCost", min: 0, max: 30, step: 1 },
 	{ g: "Amphibious", p: "amphibious.embarkedPenalty", min: 0.1, max: 1, step: 0.05 },
 	{ g: "Amphibious", p: "amphibious.landingPenaltyTurns", min: 0, max: 8, step: 1 },
 	{ g: "Amphibious", p: "amphibious.landingPenalty", min: 0.1, max: 1, step: 0.05 },

@@ -18,26 +18,52 @@ function citySupply(city) {
 	COMMODITIES.forEach(function (cm) { s[cm.id] = 0; });
 	city.worked.forEach(function (t) {
 		COMMODITIES.forEach(function (cm) {
+			if (!cm.layer) return; // manufactured, not gathered
 			if ((cm.kind === "crop" || cm.kind === "animal") && !pl.knowledge[cm.id]) return;
 			var v = M.layer(cm.layer)[t];
 			if (cm.id === "fish" && M.isLand(t)) v *= 0.5; // river fishing
 			if (v > 0.03) s[cm.id] += v;
 		});
 	});
+	// Manufactured goods: cities turn population and wealth into products
+	// (features.tilePopulation) — the city is a net food consumer that pays
+	// its way exporting goods.
+	if (GameConfig.features.tilePopulation) {
+		var P = GameConfig.population;
+		var wealth = 1 + Math.min(1, pl.gold / 500);
+		s.goods = city.pop * P.goodsPerPop * wealth;
+	}
 	return s;
+}
+
+// Rural population living on this city's territory (excluding the city tile).
+function cityRuralPop(city) {
+	if (!GameConfig.features.tilePopulation || !G.tilePop) return 0;
+	var pop = 0;
+	city.territory.forEach(function (t) { if (G.cityAt[t] < 0) pop += G.tilePop[t]; });
+	if (puHas(G.players[city.owner], "homesteading")) pop *= 1.25;
+	return pop;
 }
 
 function cityDemand(city) {
 	var T = GameConfig.trade;
+	var P = GameConfig.population;
 	var pl = G.players[city.owner];
 	var d = {};
 	var foodComms = COMMODITIES.filter(function (c) { return c.demandGroup === "food"; });
+	var rural = cityRuralPop(city); // 0 unless features.tilePopulation
 	COMMODITIES.forEach(function (cm) {
 		var base = 0;
-		if (cm.demandGroup === "food") base = city.pop * T.demandPerPop / Math.max(1, foodComms.length * 0.6);
+		if (cm.demandGroup === "food") {
+			base = city.pop * T.demandPerPop / Math.max(1, foodComms.length * 0.6);
+			base += rural * P.ruralFoodDemandPerPop / Math.max(1, foodComms.length * 0.6);
+		}
 		else if (cm.demandGroup === "material") base = city.pop * T.demandPerPop * 0.4;
 		else if (cm.demandGroup === "mineral") base = city.pop * T.mineralDemandPerPop * (1 + pl.era * 0.5);
 		else if (cm.demandGroup === "luxury") base = city.pop * T.luxuryDemandPerPop;
+		else if (cm.demandGroup === "goods" && GameConfig.features.tilePopulation) {
+			base = city.pop * P.goodsDemandPerPop * (1 + pl.era * 0.4) + rural * P.ruralGoodsDemandFactor;
+		}
 		d[cm.id] = base;
 	});
 	return d;
@@ -103,7 +129,13 @@ function tradePathfind(fromTile, toTile, routeOwner, destOwner) {
 
 function cityRouteSlots(city) {
 	var T = GameConfig.trade;
-	return T.routesPerCity + (city.buildings.market ? T.marketExtraRoutes : 0);
+	var slots = T.routesPerCity + (city.buildings.market ? T.marketExtraRoutes : 0);
+	// policies: openness grants what markets used to
+	if (GameConfig.features.policies) {
+		slots += Math.floor(GameConfig.policy.openRouteSlots * (G.players[city.owner].policies.openness || 0));
+	}
+	if (puHas(G.players[city.owner], "silkRoads")) slots += 1;
+	return slots;
 }
 function cityRouteCapacity(city) {
 	var T = GameConfig.trade;
@@ -255,7 +287,10 @@ function runRoute(r) {
 	if (cmDef.kind === "crop" || cmDef.kind === "animal") {
 		[G.players[to.owner], owner].forEach(function (pl) {
 			if (pl.knowledge[bestCm]) return;
-			pl.familiarity[bestCm] = (pl.familiarity[bestCm] || 0) + T.spreadPerTurn;
+			var spread = T.spreadPerTurn;
+			// policies: open societies absorb foreign know-how faster
+			if (GameConfig.features.policies) spread *= 1 + GameConfig.policy.openSpreadBonus * (pl.policies.openness || 0);
+			pl.familiarity[bestCm] = (pl.familiarity[bestCm] || 0) + spread;
 			if (pl.familiarity[bestCm] >= T.spreadThreshold) {
 				pl.knowledge[bestCm] = true;
 				gameLog(pl.name + " learns to produce " + bestCm + " (via trade)!");
@@ -336,12 +371,15 @@ function tradeTurn() {
 	});
 	G.cities.forEach(function (city) { city.flowIn = {}; city.flowOut = {}; });
 
-	// run every route
-	G.routes.slice().forEach(function (r) {
-		var from = G.cities[r.from], to = G.cities[r.to];
-		if (!from || !to || atWar(from.owner, to.owner)) { removeRoute(r); return; }
-		runRoute(r);
-	});
+	// run every route (legacy abstract routes — replaced by merchant agents
+	// when features.merchants is on)
+	if (!GameConfig.features.merchants) {
+		G.routes.slice().forEach(function (r) {
+			var from = G.cities[r.from], to = G.cities[r.to];
+			if (!from || !to || atWar(from.owner, to.owner)) { removeRoute(r); return; }
+			runRoute(r);
+		});
+	}
 
 	// traffic decay + camp lifecycle
 	for (var t = 0; t < M.n; t++) G.traffic[t] *= T.trafficDecay;

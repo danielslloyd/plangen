@@ -1,5 +1,9 @@
 # Hex Economy v2 — sandbox + balance harness
 
+> **Status & roadmap:** see [`game/STATUS.md`](../STATUS.md) for what's working,
+> what we're aiming for, and the to-do list. This file is the how-to reference for
+> the economy sandbox + harness.
+
 A browser sandbox for the labor / wealth / roads economy that will feed the main
 game, plus a headless harness that runs **thousands of test games** on fixed maps
 to find which parameter settings keep genuine strategic choice and which break or
