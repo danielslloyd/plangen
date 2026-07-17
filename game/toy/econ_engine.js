@@ -1239,6 +1239,18 @@
       cap[k] = cfg.merchantCapPerWorker * (world.cityN[k] || 0);
       slots[k] = cfg.merchantRoutes;
     }
+    // A city that has not been priced yet is INVISIBLE to merchants, not free. An emergent
+    // city is flipped by updateUrbanization at the END of a tick, after the solve, and
+    // unlike foundCity it never seeds world.prices — so it has no price until the next
+    // solve. Reading that as `prices[k] || 0` made a brand-new town look like it was giving
+    // grain away, which is the opposite of the truth (it has none). Skip it for one tick;
+    // innerP prices it immediately after.
+    var priced = {};
+    for (var pk = 0; pk < world.cities.length; pk++) {
+      var pkk = world.cities[pk];
+      priced[pkk] = (world.prices[pkk] != null && isFinite(world.prices[pkk]));
+    }
+
     // ---- how much does each city want IMPORTED this tick? -------------------
     // Computed per DESTINATION from its own demand curve — not from its realised deficit.
     // That distinction is load-bearing: a starved city has cityN -> 0, so its deficit AND
@@ -1261,11 +1273,12 @@
     var needLeft = {};
     for (var bi0 = 0; bi0 < world.cities.length; bi0++) {
       var Bk = world.cities[bi0];
+      if (!priced[Bk]) { needLeft[Bk] = 0; continue; }      // unpriced newborn: skip a tick
       // cheapest delivered cost from any other city => the arbitrage-free price at Bk
       var bestDeliv = Infinity;
       for (var ai0 = 0; ai0 < world.cities.length; ai0++) {
         var Ak = world.cities[ai0];
-        if (Ak === Bk || spare[Ak] <= 0 || cap[Ak] <= 0) continue;
+        if (Ak === Bk || !priced[Ak] || spare[Ak] <= 0 || cap[Ak] <= 0) continue;
         var t0 = world.transport[Bk] ? world.transport[Bk][Ak] : Infinity;
         if (!isFinite(t0)) continue;
         bestDeliv = Math.min(bestDeliv, (world.prices[Ak] || 0) + t0);
@@ -1306,10 +1319,10 @@
     var cands = [];
     for (var ai = 0; ai < world.cities.length; ai++) {
       var A = world.cities[ai];
-      if (spare[A] <= 0 || cap[A] <= 0) continue;
+      if (!priced[A] || spare[A] <= 0 || cap[A] <= 0) continue;
       for (var bi = 0; bi < world.cities.length; bi++) {
         var B = world.cities[bi];
-        if (A === B || needLeft[B] <= 1e-9) continue;
+        if (A === B || !priced[B] || needLeft[B] <= 1e-9) continue;
         // transport[B][A] = cost to ship one unit FROM tile A TO city B. Already
         // computed for the farm market — merchants ride the same roads and sea lanes.
         var t = world.transport[B] ? world.transport[B][A] : Infinity;
