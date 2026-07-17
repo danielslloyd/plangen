@@ -163,6 +163,27 @@
     // Set growth:'bangbang' to reproduce them.
     growth: 'deadband',
     growBand: 0.05,   // 'deadband': stop growing when unfilled room <= this x Ksub
+    // WHAT the growth controller keys off (Dan, 2026-07-17):
+    //   'global'       — the shipped signal: eq.w (labour scarce) / eq.room (subsistence
+    //                    room left). A map-wide abstraction with no notion of any city's
+    //                    actual food security.
+    //   'foodSecurity' — a city only contributes growth once its granary has been FULL for
+    //                    `growthFullTurns` consecutive ticks. The growth rate is scaled by
+    //                    the share of city population that is food-secure by that test.
+    //
+    // This is a better-motivated signal (grow when you have visibly banked a surplus, which
+    // is what a pre-modern population actually responds to) and it is hysteretic by
+    // construction. NOTE it changes the SIGNAL, not the architecture: the labour pool stays
+    // global and conserved — per-city pools would mean abandoning the wage bisection that
+    // the whole model rests on. Subsistence farmers have no granary, so they keep the
+    // room-based signal; only the urban share is gated.
+    //
+    // RISK, and the reason this is opt-in: grow -> demand rises -> granary drains -> growth
+    // stops -> refill -> grow is a negative feedback loop WITH A LAG, i.e. the textbook
+    // shape of a limit cycle, with period ~ (fill time + growthFullTurns). `deadband`
+    // already measures 0.0000 ripple, so there is no headroom to win here — only realism.
+    growthGate: 'global',
+    growthFullTurns: 5,
     wRef: 0.25,       // 'proportional': wage at which growth runs at ~76% of full speed
     malthus: true,    // growth on/off (off => fixed pool, reallocation only)
     N0: 15,           // starting pool
@@ -260,6 +281,32 @@
     // The granary's reference price is an EMA of the city's own past price —
     // adaptive expectations, so it needs no global tuning and each city learns what
     // grain "normally" costs at home.
+    // HOW a city expresses its wish to hold reserves. Two models:
+    //   'granary'   — the granary is a separate market participant with its own bid
+    //                 (storageBid: restock + price-timing motives). Shipped 2026-07-16.
+    //   'overshoot' — (Dan, 2026-07-17) the granary has NO bid at all. The CITY simply
+    //                 buys `demand x (1 + overshoot)` while its reserves are short, and
+    //                 exactly `demand` once they are full; whatever it buys above what it
+    //                 eats lands in the granary by the ordinary balance, and it eats its
+    //                 reserves when deliveries fall short. One demand curve instead of two.
+    //
+    // Why this is worth having: the granary's implicit bid is up to
+    // `storageRate x storageDays x cityN ~= 0.6x daily demand` of extra demand, spread
+    // across three knobs. `overshoot` is one explicit number. And the real prize is that a
+    // hungry city stays a buyer for MANY ticks (until its reserves refill) instead of
+    // spiking for one — which is exactly what the merchant route gate needs, since that
+    // gate is binary and one sub-margin tick deletes the whole caravan fleet.
+    //
+    // Monotonicity is safe: granary fullness is fixed during the solve (it is last tick's
+    // state), so this is a constant SCALING of an already-monotone demand curve, not a new
+    // P-dependent term.
+    foodPolicy: 'granary',
+    overshoot: 0.10,      // buy this much above demand while reserves are short
+    // Taper the overshoot to zero over the last `overshootBand` of the granary. Dan's
+    // sketch is a hard switch at full; a hard switch invites chatter exactly AT the
+    // boundary (full -> ov=0 -> buy less -> drain -> ov back on -> ...). The taper costs
+    // nothing and removes that. Set to 0 for the literal hard switch.
+    overshootBand: 0.25,
     storage: true,
     storageDays: 8,      // target stock = this x the city's own daily food demand
     // Max fraction of TARGET the granary moves in one tick, both directions. There is a
@@ -1154,6 +1201,22 @@
   // Strictly DECREASING in P either way (restock is P-independent, timing falls with P,
   // and clamping preserves monotonicity), which is what the bisection needs. Unlike farm
   // supply it is continuous, so excess demand actually crosses zero somewhere.
+  // How much ABOVE its own appetite city k tries to buy this tick (cfg.foodPolicy:'overshoot').
+  // Full reserves => 0, i.e. aim to hit demand exactly. Short reserves => cfg.overshoot,
+  // tapered over the last `overshootBand` of the granary so the switch at "full" cannot
+  // chatter. Depends only on LAST tick's stock, never on P — so the demand curve it scales
+  // stays monotone in P and the bisection is untouched.
+  function overshootOf(world, k) {
+    var cfg = world.cfg;
+    if (cfg.foodPolicy !== 'overshoot' || !cfg.storage) return 0;
+    var target = storageTarget(world, k);
+    if (!(target > 0)) return 0;
+    var stock = world.stock[k] || 0;
+    var band = cfg.overshootBand;
+    if (!(band > 0)) return stock >= target ? 0 : cfg.overshoot;   // literal hard switch
+    var shortfallFrac = (target - stock) / (band * target);        // 0 at full, 1 once band-deep
+    return cfg.overshoot * clamp(shortfallFrac, 0, 1);
+  }
   function storageBid(world, k, P) {
     var cfg = world.cfg;
     if (!cfg.storage) return 0;
@@ -1172,11 +1235,22 @@
     // linearly to zero as P rises to 2x remembered, which keeps q both CONTINUOUS and
     // monotone decreasing in P — the two properties the bisection actually needs.
     var restockWeight = clamp(1 + timing, 0, 1);
-    var restock = cfg.storageFill * ((target - stock) / target) * restockWeight;
+    // Under foodPolicy:'overshoot' the CITY does the restocking (see overshootOf), so the
+    // granary must not ALSO bid for it or the two double-count.
+    var restock = (cfg.foodPolicy === 'overshoot') ? 0
+                : cfg.storageFill * ((target - stock) / target) * restockWeight;
     var q = lim * clamp(restock + timing, -1, 1);
     var buyMax = Math.min(lim, Math.max(0, target - stock));
     var sellMax = Math.min(lim, stock);
-    return clamp(q, -sellMax, buyMax);
+    var bid = clamp(q, -sellMax, buyMax);
+    // ...but the SELL side is not optional, under any policy. The granary drains physically
+    // whether or not it bids, yet if it does not OFFER its grain the price solver cannot see
+    // it, and a single missed delivery pins the price at priceMax with a full granary
+    // sitting in the city. Measured with the sell side removed: an import-fed city hit the
+    // 600 cap on ~1 tick in 6 (mean price 101.8 against a true equilibrium of 2.16), while
+    // the same city with a selling granary peaked at 2.78 on its dry ticks.
+    // So: 'overshoot' folds BUYING into the city's demand, and leaves SELLING here.
+    return (cfg.foodPolicy === 'overshoot') ? Math.min(0, bid) : bid;
   }
 
   // A granary is keyed by its city's cluster rep, and a rep can STOP being a city two
@@ -1351,7 +1425,14 @@
     var cfg = world.cfg, S = world.solverConst;
     if (!(P > 0) || world.Aof[k] == null) return 0;
     var w = world.lastW || 0;
-    return cfg.c * NofCity(world.Aof[k], w + P * cfg.c, S.Z, S.alpha, S.pconc);
+    // MUST apply the same overshoot innerP does, or merchants size their caravans against
+    // a demand curve the market does not actually have. Measured when they disagreed: the
+    // destination demanded (1+ov)x while merchants shipped 1x, so it was permanently
+    // under-supplied and its price ran to 101.8 against a true equilibrium of ~2.2 — a 47x
+    // error out of a 5% mismatch, because demand is P^-2.857 and tiny quantity errors
+    // become enormous price errors. Any consumer of "what does city k want" must go
+    // through here.
+    return cfg.c * NofCity(world.Aof[k], w + P * cfg.c, S.Z, S.alpha, S.pconc) * (1 + overshootOf(world, k));
   }
 
   // ============================================================================
@@ -1509,7 +1590,13 @@
         var dem = cfg.c * (NofCity(world.Aof[key], w + P[key] * cfg.c, S.Z, S.alpha, S.pconc) + extra);
         dem -= displaceOf(cfg, desQ[key], dem);   // richest-first: desserts eaten instead of food
         if (trade) { dem += trade.exports[key] || 0; sup[key] += trade.imports[key] || 0; }
-        dem += storageBid(world, key, P[key]);    // the granary bids: continuous in P
+        // 'overshoot': the city buys a margin above its own appetite while reserves are
+        // short. 'granary': the granary bids for that margin itself. EITHER WAY the granary
+        // still offers its stock for sale at a high price (storageBid's sell side, which is
+        // all it returns under 'overshoot') — that is what keeps the price off the cap when
+        // a delivery is missed, and it is also the continuous term the bisection wants.
+        if (cfg.foodPolicy === 'overshoot') dem *= (1 + overshootOf(world, key));
+        dem += storageBid(world, key, P[key]);
         if (dem - sup[key] > 0) lo[key] = P[key]; else hi[key] = P[key];
         P[key] = 0.5 * (lo[key] + hi[key]);
       }
@@ -2230,6 +2317,26 @@
     // actually flowed and what each city grew for itself.
     world.lastImports = importsGot;
     world.lastDelivered = deliveredBy;
+
+    // ---- per-city food security (cfg.growthGate:'foodSecurity') --------------
+    // A city is "secure" once its granary has stayed FULL for growthFullTurns consecutive
+    // ticks. securityFrac = the share of city population living in secure cities, and it
+    // is what scales growth below. Tracked unconditionally (it is cheap and it is a useful
+    // readout either way), consumed only when the gate is on.
+    if (!world.fullTurns) world.fullTurns = {};
+    var secureN = 0, totalCityN = 0;
+    for (var fs = 0; fs < world.cities.length; fs++) {
+      var fk = world.cities[fs];
+      var ftgt = storageTarget(world, fk);
+      var full = ftgt > 0 && (world.stock[fk] || 0) >= 0.99 * ftgt;
+      world.fullTurns[fk] = full ? (world.fullTurns[fk] || 0) + 1 : 0;
+      var nk = world.cityN[fk] || 0;
+      totalCityN += nk;
+      if (world.fullTurns[fk] >= cfg.growthFullTurns) secureN += nk;
+    }
+    for (var ft in world.fullTurns) if (world.Aof[ft] == null) delete world.fullTurns[ft];
+    var securityFrac = totalCityN > 0 ? secureN / totalCityN : 0;
+    world.securityFrac = securityFrac;
     // A destroyed city's granary spoils. It must move on BOTH sides of the identity: it
     // rotted (+wasted) AND it left storage (-storageDelta). The two cancel, which is
     // exactly right — that grain was produced and banked in some earlier tick, so this
@@ -2267,6 +2374,16 @@
       // so the step is a fixed r*tanh(sig) (7.6% at r=0.10) and can only stop if sig hits
       // exactly 0. It rings at ~r peak-to-peak forever. `eps` above is nominally the
       // deadband but at 0.1% of Ksub the step vaults straight over it.
+      // FOOD-SECURITY GATE: growth only from cities that have visibly banked a surplus.
+      // Applied on top of whichever controller is selected — it can only ever SLOW growth,
+      // never speed it, and it never blocks the shrink branch (a starving world must still
+      // be allowed to shrink, and cities with empty granaries are exactly the starving case).
+      // Subsistence farmers keep the room-based signal: they have no granary to be full.
+      if (cfg.growthGate === 'foodSecurity' && sig > 0) {
+        var urbanShare = (eq.Nc || 0) / Math.max(1e-9, (eq.Lm || 0) + (eq.Nc || 0) + (eq.subs || 0));
+        // gate the URBAN share of the growth signal; leave the rural share alone
+        sig *= (1 - urbanShare) + urbanShare * world.securityFrac;
+      }
       if (cfg.growth === 'deadband') {
         // Stop growing once room falls within growBand of capacity. To CAPTURE the cycle
         // rather than relocate it the band must exceed one step's worth of population.
@@ -2356,6 +2473,7 @@
       // granaries & trade
       foodStock: stockTotal, storageDelta: storageDelta,
       merchantVolume: merchantVolume, merchantRoutes: trade.routes.length,
+      securityFrac: securityFrac,   // share of city pop whose granary has been full growthFullTurns ticks
       foodDelivered: delivered, foodGlut: glut, foodShortfall: foodShortfall,
       tileDeficit: tileDeficit,
       landTiles: landTiles, farmedTiles: farmedTiles, farmedOutsideBasin: farmedOutsideBasin,
@@ -2510,6 +2628,7 @@
     computeBasinEligibility: computeBasinEligibility, eligibleFor: eligibleFor,
     assignBasins: assignBasins, planMerchants: planMerchants,
     storageTarget: storageTarget, storageBid: storageBid, liveRep: liveRep,
+    overshootOf: overshootOf,
     Ffood: Ffood, mkt: mkt, netbackOf: netbackOf, localDraw: localDraw
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = API;

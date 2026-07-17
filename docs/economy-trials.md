@@ -346,6 +346,120 @@ extreme dessert configs. Desserts remain the one mechanic that can still reach i
 
 ---
 
+---
+
+## Part 3 — Dan's overshoot proposal (2026-07-17), tested
+
+> *"Instead of filling granaries as a distinct goal, cities just have a heuristic in which
+> they overshoot food demand by a tunable amount, unless granaries are full, in which case
+> they aim to exactly hit demand. Population growth can be done at a city level, and only
+> happens if granaries are full for ___ consecutive turns. This would probably make prices
+> more stable, as hungry cities would be buyers for longer than one turn."*
+
+Built behind `foodPolicy:'overshoot'` / `growthGate:'foodSecurity'` (both default off) and
+measured in three arenas. Verdict: **the buy-side idea is right and beats the shipped
+model; the sell side cannot be removed; the growth gate is safe but currently inert.**
+
+### It cuts the granary-fill tax by 70% — I predicted it wouldn't
+
+| policy | fill tax | fill ticks | N |
+|---|---|---|---|
+| granary (shipped) | **3.24%** | 72 | 197,995 |
+| **overshoot 0.05** | **0.97%** | 254 | 195,802 |
+| overshoot 0.10 | 1.74% | 137 | 195,802 |
+| overshoot 0.20 | 3.05% | 79 | 196,847 |
+
+I expected it to *rename* the tax at ~`(1+ov)^0.35` ≈ +3.4% and no better. Wrong, and the
+reason is a scale mismatch I had not noticed: **the granary's bid is a fraction of its
+TARGET** (`storageRate × storageDays × cityN` ≈ 0.6× daily demand), while **the overshoot
+is a fraction of DEMAND** (0.05×). Same job, ~12× gentler. And it collapses three tangled
+knobs into one number with an obvious meaning.
+
+The slower fill (254 ticks vs 72) costs nothing measurable — drought spike is *better*:
+
+| policy | drought spike | peak unfed |
+|---|---|---|
+| granary (shipped) | 4.0% | 94 |
+| **overshoot 0.05** | **3.6%** | 95 |
+| overshoot 0.20 | 4.2% | 94 |
+
+### But the granary's SELL side is load-bearing — the sketch would have shipped a bug
+
+Removing the granary's bid entirely (the literal proposal) pins an import-fed city at the
+`priceMax = 600` cap on roughly **1 tick in 6**: mean price **101.8** against a true
+equilibrium of **2.16**. The granary still drains *physically*, but if it makes no offer
+the price solver cannot see the grain sitting in the city.
+
+```
+dry tick (no caravan arrived), same tick, two policies:
+  granary   | P[B] =   2.78 | imports 0.0 | storageBid = -102.14  <- offers stock, caps the price
+  no-bid    | P[B] = 600.00 | imports 0.0 | storageBid =    0.00  <- silent, price hits the ceiling
+```
+
+**The fix is a hybrid, and it is better than either half:** the *city* does the buying
+(Dan's overshoot — gentle, tunable, persistent), the *granary* keeps doing the selling
+(price-elastic release). That is what `foodPolicy:'overshoot'` now means.
+
+### "Buyers for longer" is directionally right, but small — and it was already happening
+
+The claim targets a real, measured failure (the merchant route gate is binary; one
+sub-margin tick deletes the fleet). The mechanism does work — **dry ticks fall
+monotonically with overshoot**:
+
+| overshoot | dry ticks | P[B] ripple |
+|---|---|---|
+| granary (shipped) | 10% | 0.4643 |
+| 0.05 | 25% | 0.4561 |
+| 0.10 | 20% | 0.4934 |
+| 0.20 | 17% | 0.5029 |
+| 0.35 | **8%** | 0.4609 |
+
+Two things fall out. First, **price ripple barely moves** (~2%) — dry ticks were not what
+was driving it, so the ringing has another cause and item 7 (a transit pipeline) is still
+the fix. Second, and more interesting: **the granary's restock bid was already doing the
+persistent-buyer job**, implicitly, at ~0.6× demand. That is why ov=0.05 produces *more*
+dry ticks (25%) than the shipped granary (10%) — you need ov≈0.35 just to match what was
+already there. The overshoot's value is that it does this job **explicitly and 12× more
+cheaply**, not that it does something new.
+
+There is therefore a real tension to tune: **low overshoot minimises the fill tax, high
+overshoot maximises merchant continuity.** They are the same lever pulled in opposite
+directions, because both are "how hard does a hungry city bid".
+
+### The growth gate: safe, no limit cycle, currently inert
+
+| config | N | N ripple | secure share |
+|---|---|---|---|
+| global (shipped) | 197,995 | 0.0000 | 1.000 |
+| foodSecurity, full for 3 | 200,418 | 0.0000 | 0.943 |
+| foodSecurity, full for 5 | 197,824 | 0.0000 | 0.944 |
+| foodSecurity, full for 10 | 199,890 | 0.0000 | 0.944 |
+
+My grow→drain→refill limit-cycle worry was **wrong** — ripple stays 0.0000 at every
+setting, and the result is insensitive to `growthFullTurns` (3/5/10 identical). But it is
+also **inert**: `securityFrac` sits at 0.94–1.00, so the gate essentially never bites at
+equilibrium. Its value would be during transients and shocks, and it is a better-motivated
+signal (grow when you have visibly banked a surplus) than `eq.room`. Worth keeping as an
+option; not worth flipping on for a number.
+
+NOTE it changes the *signal*, not the architecture: the labour pool stays global and
+conserved. True per-city populations would mean abandoning the wage bisection the whole
+model rests on. It also does not touch **migration**, which is the thing that actually
+produced 233 workers in one tick — that is still stability item 3.
+
+### Recommendation
+
+**Adopt `foodPolicy:'overshoot'` with `overshoot` ≈ 0.05–0.10, keeping the granary's sell
+side.** It dominates the shipped granary policy on the planet: fill tax −70%, drought spike
+−10%, famine protection unchanged, ripple unchanged at 0.0000, N −1.1%. Left **off by
+default** pending your call, since it changes every price in the model by ~2%. Combine with
+`storageDays` 8 → 4–6 (Part 1, Q2).
+
+If merchants ever matter on a map (i.e. roads get built), revisit `overshoot` upward toward
+0.35 — the fill tax and merchant continuity pull the same lever in opposite directions.
+
+---
+
 ## Corrections I made to my own numbers
 
 Recorded because both were wrong in a way that looked convincing:
@@ -357,3 +471,10 @@ Recorded because both were wrong in a way that looked convincing:
 - **Large granaries do not destabilise population.** On partial data (~460 games) 40-day
   granaries showed an N ripple of 0.0789; on the full 1,890 it is **0.0000**. A
   small-sample artifact. The *price* ripple finding (0.0041) survived the full run.
+- **The overshoot proposal does NOT merely rename the fill tax.** I predicted +3.4% from
+  `(1+ov)^0.35` and no improvement. It cuts the tax 70%, because the granary's bid scales
+  with its TARGET (~0.6x daily demand) while an overshoot scales with DEMAND (0.05x) —
+  a 12x difference I had not noticed while writing the granary.
+- **The growth gate does not cause a limit cycle.** I flagged grow->drain->refill as
+  "negative feedback with a lag, the textbook shape of a limit cycle". Ripple is 0.0000
+  at every setting tested.
