@@ -1,3 +1,5 @@
 # generated sweep output (regenerate with `npm run sweep && npm run analyze`)
 out/
 node_modules/
+# per-machine Claude Code permissions; launch.json IS shared
+.claude/settings.local.json

@@ -49,9 +49,12 @@ function main() {
   var summary = {
     source: path.basename(inPath), games: rows.length, ruleSets: analyses.length,
     counts: tally(analyses.map(function (a) { return a.klass; })),
+    paramBreaks: paramBreakReport(rows),   // strategy-count-agnostic: per-axis break-finding
+    leverage: null,                        // filled below (derives from paramBreaks)
     axisTrends: axisTrends(analyses),
     ruleSetsRanked: analyses
   };
+  summary.leverage = leverageReport(summary.paramBreaks);
   var base = inPath.replace(/\.jsonl$/, '');
   fs.writeFileSync(base + '.analysis.json', JSON.stringify(summary, null, 2));
   fs.writeFileSync(base + '.analysis.md', renderMarkdown(summary));
@@ -59,15 +62,29 @@ function main() {
   console.log('Analyzed ' + rows.length + ' games across ' + analyses.length + ' rule-sets.');
   console.log('Classification: ' + JSON.stringify(summary.counts));
   console.log('Wrote ' + path.relative(process.cwd(), base + '.analysis.json') + ' and .analysis.md');
-  // headline
+
+  // headline: parameter break-finding (the current focus)
+  var breakers = [];
+  for (var k in summary.paramBreaks) summary.paramBreaks[k].forEach(function (r) {
+    if (r.brokenFrac >= 0.5) breakers.push({ k: k, r: r });
+  });
+  breakers.sort(function (a, b) { return b.r.brokenFrac - a.r.brokenFrac; });
+  if (breakers.length) {
+    console.log('\nParameter values that break the game (>=50% of games):');
+    breakers.slice(0, 10).forEach(function (b) {
+      console.log('  ' + b.k + '=' + b.r.value + '  -> ' + pct(b.r.brokenFrac) + ' broken (' + (dominantBreakMode(b.r) || 'mixed') + ')');
+    });
+  } else {
+    console.log('\nNo single axis value breaks >=50% of its games; see the .md param-break tables for finer effects.');
+  }
+
+  // secondary headline: strategy forks (only meaningful when >=2 strategies swept)
   var div = analyses.filter(function (a) { return a.klass === 'DIVERGENT'; });
   if (div.length) {
     console.log('\nMost promising (population-vs-wealth forks):');
     div.slice(0, 6).forEach(function (a) {
       console.log('  ' + a.key + '  -> ' + a.forkSummary);
     });
-  } else {
-    console.log('\nNo clearly DIVERGENT rule-sets found; widen the axes or check for dominance/flatness.');
   }
 }
 
@@ -134,6 +151,176 @@ function analyzeSet(set) {
   };
 }
 
+// ---- parameter break-finding (strategy-count-agnostic) --------------------
+// For each axis value, aggregate break-mode rates + descriptive medians over ALL
+// games holding that value (a marginal effect, averaged across the other axes).
+// Works with any strategy count (unlike analyzeSet, which needs >=2 live strategies
+// to compare). Directly answers: which knob values are too cheap / too expensive /
+// break the game when pushed too high?
+function paramBreakReport(rows) {
+  var axes = {};
+  rows.forEach(function (r) {
+    var combo = r.combo || {};
+    for (var k in combo) {
+      var v = combo[k], bkey = String(v);
+      axes[k] = axes[k] || {};
+      var a = axes[k][bkey] = axes[k][bkey] ||
+        { value: v, n: 0, broken: 0, collapsed: 0, runaway: 0, oscillation: 0, conservationFail: 0,
+          churn: 0, N: [], cities: [], roads: [], price: [], Y: [], funded: [],
+          // SHAPE is collected over HEALTHY runs only -- a collapsed game has 0 cities and
+          // 0 farmed tiles, which would drag a median toward "compact" for the worst reason.
+          hCities: [], hFarmed: [], hOutside: [], hOutsideFrac: [] };
+      a.n++;
+      var h = r.health || {}, f = r.final || {};
+      if (h.broken) a.broken++;
+      if (h.collapsed) a.collapsed++;
+      if (h.runaway) a.runaway++;
+      if (h.oscillation) a.oscillation++;
+      if (h.structuralChurn) a.churn++;
+      if (h.conservationOK === false) a.conservationFail++;
+      a.N.push(f.N); a.cities.push(f.cities); a.roads.push(f.roads);
+      a.price.push(f.avgPrice); a.Y.push(f.Ytotal); a.funded.push(f.fundedFrac);
+      if (!h.broken) {
+        a.hCities.push(f.cities); a.hFarmed.push(f.farmedTiles);
+        a.hOutside.push(f.farmedOutsideBasin); a.hOutsideFrac.push(f.outsideBasinFrac);
+      }
+    }
+  });
+  var out = {};
+  for (var k in axes) {
+    out[k] = Object.keys(axes[k]).sort(function (x, y) { return axes[k][x].value - axes[k][y].value; })
+      .map(function (bkey) {
+        var a = axes[k][bkey];
+        var rec = {
+          value: a.value, n: a.n,
+          brokenFrac: round(a.broken / a.n), collapsedFrac: round(a.collapsed / a.n),
+          runawayFrac: round(a.runaway / a.n), oscillationFrac: round(a.oscillation / a.n),
+          conservationFailFrac: round(a.conservationFail / a.n),
+          churnFrac: round(a.churn / a.n),
+          medianN: round1(median(a.N)), medianCities: round1(median(a.cities)),
+          medianRoads: round1(median(a.roads)), medianPrice: round(median(a.price)),
+          medianY: round1(median(a.Y)), medianFunded: round(median(a.funded)),
+          // healthy-only settlement shape
+          nHealthy: a.hCities.length,
+          medCitiesOK: round1(median(a.hCities)), medFarmedOK: round1(median(a.hFarmed)),
+          medOutsideOK: round1(median(a.hOutside)), medOutsideFracOK: round(median(a.hOutsideFrac))
+        };
+        rec.flags = degeneracyFlags(rec);
+        return rec;
+      });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// LEVERAGE — which knobs swing the settlement shape WITHOUT breaking the game?
+// A knob that only breaks things is a landmine; a knob that changes nothing is dead
+// weight. The interesting ones move cities / extent / the city-less carpet a long way
+// across their USABLE range. Values that mostly break are excluded, so leverage always
+// means "swing you can actually ship", never "swing into a crater".
+// ---------------------------------------------------------------------------
+var SHAPE = [
+  { key: 'medCitiesOK', label: 'cities' },
+  { key: 'medFarmedOK', label: 'farmed tiles' },
+  { key: 'medOutsideFracOK', label: 'city-less frac' }
+];
+function leverageReport(pb) {
+  var out = [];
+  Object.keys(pb || {}).forEach(function (k) {
+    var usable = pb[k].filter(function (r) { return r.brokenFrac < 0.5 && r.nHealthy > 0; });
+    if (usable.length < 2) return;                       // nothing to compare across
+    var rec = { axis: k, usableValues: usable.length, totalValues: pb[k].length, metrics: {} };
+    var worst = 0;
+    SHAPE.forEach(function (s) {
+      var vals = usable.map(function (r) { return r[s.key]; }).filter(function (x) { return x != null && isFinite(x); });
+      if (!vals.length) return;
+      var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+      // fold = relative swing. Guard the 0 case (a knob that turns something OFF entirely
+      // is infinite fold, which is real but useless to sort by) -- report span instead.
+      var fold = lo > 1e-9 ? hi / lo : (hi > 1e-9 ? Infinity : 1);
+      rec.metrics[s.label] = { lo: lo, hi: hi, fold: isFinite(fold) ? round1(fold) : 'inf',
+        atLo: usable[argmin(vals)].value, atHi: usable[argmax(vals)].value };
+      if (isFinite(fold) && fold > worst) worst = fold;
+    });
+    rec.maxFold = round1(worst);
+    out.push(rec);
+  });
+  out.sort(function (a, b) { return b.maxFold - a.maxFold; });
+  return out;
+}
+function argmin(a) { var b = 0; for (var i = 1; i < a.length; i++) if (a[i] < a[b]) b = i; return b; }
+function argmax(a) { var b = 0; for (var i = 1; i < a.length; i++) if (a[i] > a[b]) b = i; return b; }
+
+function renderLeverage(lev) {
+  var L = [];
+  L.push('## Leverage — knobs that swing the map without breaking it');
+  L.push('');
+  L.push('Swing of each shape metric across the axis values that are **usable** (broken <50%). ' +
+    '`fold` = max/min. High fold + low breakage = a real design dial. Fold ~1 = the knob does nothing here. ' +
+    '**city-less frac** is the share of worked land no city can reach at any price — the carpet.');
+  L.push('');
+  if (!lev.length) { L.push('_Not enough usable values per axis to compare._'); L.push(''); return L.join('\n'); }
+  L.push('| axis | usable | metric | min | max | fold | min@ | max@ |');
+  L.push('|---|---|---|---|---|---|---|---|');
+  lev.forEach(function (r) {
+    Object.keys(r.metrics).forEach(function (mk, i) {
+      var m = r.metrics[mk];
+      L.push('| ' + (i === 0 ? '**' + r.axis + '**' : '') + ' | ' +
+        (i === 0 ? r.usableValues + '/' + r.totalValues : '') + ' | ' + mk + ' | ' +
+        m.lo + ' | ' + m.hi + ' | ' + m.fold + ' | ' + m.atLo + ' | ' + m.atHi + ' |');
+    });
+  });
+  L.push('');
+  return L.join('\n');
+}
+
+// dominant failure mode for one axis-value record ("" if no breakage)
+function dominantBreakMode(rec) {
+  var modes = [['non-convergence', rec.oscillationFrac], ['collapse', rec.collapsedFrac],
+    ['runaway', rec.runawayFrac], ['conservation-fail', rec.conservationFailFrac]];
+  modes.sort(function (a, b) { return b[1] - a[1]; });
+  return modes[0][1] > 0 ? modes[0][0] : null;
+}
+
+// human-readable "too cheap / too expensive / breaks" tags from the medians
+function degeneracyFlags(rec) {
+  var fl = [];
+  if (rec.brokenFrac >= 0.5) fl.push('BREAKS (' + pct(rec.brokenFrac) + (dominantBreakMode(rec) ? ', mostly ' + dominantBreakMode(rec) : '') + ')');
+  else if (rec.brokenFrac > 0) fl.push('some breakage (' + pct(rec.brokenFrac) + (dominantBreakMode(rec) ? ', ' + dominantBreakMode(rec) : '') + ')');
+  if (rec.medianCities <= 1) fl.push('single-city dominance (transport/urban too cheap?)');
+  if (rec.medianRoads === 0) fl.push('no roads built (build cost/garrison too dear?)');
+  if (rec.medianFunded < 0.5) fl.push('network underfunded (med fundedFrac ' + rec.medianFunded + ')');
+  return fl;
+}
+
+function renderParamBreaks(pb) {
+  var L = [];
+  L.push('## Parameter break-finding (the current focus)');
+  L.push('');
+  L.push('Each axis value, averaged over all games holding it (marginal effect across the other axes). ' +
+    'Modes: **non-conv** never settles, **churn** N settled but cities/extent never stopped moving, ' +
+    '**collapse** population died, **runaway** exploded, **cons-fail** food not conserved. ' +
+    'Shape columns (cities/farmed/city-less) are medians over HEALTHY runs only.');
+  L.push('');
+  var keys = Object.keys(pb || {});
+  if (!keys.length) { L.push('_No swept axes._'); L.push(''); return L.join('\n'); }
+  keys.forEach(function (k) {
+    L.push('**' + k + '**');
+    L.push('');
+    L.push('| value | n | broken | non-conv | churn | collapse | runaway | cons-fail | med N | cities | farmed | city-less | notes |');
+    L.push('|---|---|---|---|---|---|---|---|---|---|---|---|---|');
+    pb[k].forEach(function (r) {
+      L.push('| ' + r.value + ' | ' + r.n + ' | ' + pct(r.brokenFrac) + ' | ' + pct(r.oscillationFrac) + ' | ' +
+        pct(r.churnFrac) + ' | ' +
+        pct(r.collapsedFrac) + ' | ' + pct(r.runawayFrac) + ' | ' + pct(r.conservationFailFrac) + ' | ' +
+        r.medianN + ' | ' + r.medCitiesOK + ' | ' + r.medFarmedOK + ' | ' + pct(r.medOutsideFracOK) + ' | ' +
+        (r.flags.join('; ') || '—') + ' |');
+    });
+    L.push('');
+  });
+  return L.join('\n');
+}
+
 // per-axis: for each axis value, average divergence & broken rates
 function axisTrends(analyses) {
   var axes = {};
@@ -172,6 +359,8 @@ function renderMarkdown(s) {
     if (s.counts[k]) L.push('| ' + k + ' | ' + s.counts[k] + ' | ' + meaning[k] + ' |');
   });
   L.push('');
+  L.push(renderLeverage(s.leverage || []));
+  L.push(renderParamBreaks(s.paramBreaks));
   L.push('## Population-vs-wealth forks (the interesting settings)');
   var div = s.ruleSetsRanked.filter(function (a) { return a.klass === 'DIVERGENT'; });
   if (!div.length) L.push('_None found in this sweep._');
@@ -220,6 +409,14 @@ function comboKey(combo) {
 }
 function rel(a, b) { return a > 0 ? (a - b) / a : 0; }
 function round(x) { return Math.round(x * 1000) / 1000; }
+function round1(x) { return Math.round(x * 10) / 10; }
+function median(arr) {
+  var a = (arr || []).filter(function (x) { return typeof x === 'number' && isFinite(x); })
+    .sort(function (x, y) { return x - y; });
+  if (!a.length) return 0;
+  var m = Math.floor(a.length / 2);
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+}
 function pct(x) { return (100 * x).toFixed(0) + '%'; }
 function tally(arr) { var t = {}; arr.forEach(function (x) { t[x] = (t[x] || 0) + 1; }); return t; }
 function modeKey(obj) {

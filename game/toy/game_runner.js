@@ -38,7 +38,7 @@ function runGame(mapData, params, stratName, opts) {
   }
   var strat = Strats.byName(stratName);
 
-  var traj = [], consRing = [];
+  var traj = [], consRing = [], cityRing = [], extentRing = [], nRing = [];
   var anyNonFinite = false, peakN = 0;
   var lastN = null, lastY = null, settledCount = 0, converged = false, ranTicks = 0;
   for (var t = 0; t < maxTicks; t++) {
@@ -48,6 +48,12 @@ function runGame(mapData, params, stratName, opts) {
     if (!isFinite(m.N) || !isFinite(m.Ytotal)) anyNonFinite = true;
     var rel = m.foodProduced > 1 ? m.conservationErr / m.foodProduced : m.conservationErr;
     consRing.push(rel); if (consRing.length > 12) consRing.shift();
+    // Structural churn rides UNDER a flat N: a map can hold population dead steady while
+    // cities ignite/revert and the frontier breathes. The settle test below only watches
+    // N and Ytotal, so it would call that converged. Watch the shape directly.
+    cityRing.push(m.cities); if (cityRing.length > 25) cityRing.shift();
+    extentRing.push(m.farmedTiles); if (extentRing.length > 25) extentRing.shift();
+    nRing.push(m.N); if (nRing.length > 30) nRing.shift();
     if (m.N > peakN) peakN = m.N;
     if (t % sampleEvery === 0) traj.push(sample(m));
     // early-stop on settling
@@ -72,8 +78,25 @@ function runGame(mapData, params, stratName, opts) {
   var conservationOK = maxConsErrRel < 0.03;   // steady-state; tolerates minor road-funding
                                                // flicker (strict gate lives in validate_core)
   var finite = !anyNonFinite;
-  var oscillation = !converged && !collapsed;                           // never reached equilibrium
-  var broken = oscillation || collapsed || runaway || !conservationOK || !finite;
+  // OSCILLATION is graded by AMPLITUDE, not by whether N settled to settleTol.
+  // The Malthus update is a bang-bang controller (sig = +1/0.5/0/-1, step r*tanh(sig)),
+  // so unless sig lands exactly on 0 it rings at roughly +/-r forever. At the default
+  // r=0.10 that is a ~11% peak-to-peak ripple with a completely stable structure
+  // (cities and extent dead steady) -- a stable limit cycle, not a broken rule-set.
+  // Measured identically on the pre-marginal-cap engine, so it is inherent, not new.
+  // Calling that "non-convergence" flagged ~44% of games as broken and buried the real
+  // signal. Judge it against the controller's own step size instead: ringing near r is
+  // expected; several times r means the rule-set genuinely cannot find an equilibrium.
+  var oscAmp = amplitude(nRing);
+  var oscTol = Math.max(0.25, 3 * (params.r != null ? params.r : 0.10));
+  var oscillation = oscAmp > oscTol && !collapsed;
+  // Churn = the SHAPE never stopped moving. This is the flip/limit-cycle the engine's
+  // damping (clSmooth/growInterval/reversalCooldown) exists to prevent, and it is a
+  // genuinely different failure from population ripple -- N can be glass-flat while
+  // cities ignite and revert underneath. Measured over the final window only.
+  var cityChurn = spread(cityRing), extentChurn = relStdev(extentRing);
+  var structuralChurn = cityChurn > 2 || extentChurn > 0.02;
+  var broken = oscillation || collapsed || runaway || !conservationOK || !finite || structuralChurn;
 
   return {
     map: mapData.name, strategy: stratName, params: params,
@@ -83,22 +106,73 @@ function runGame(mapData, params, stratName, opts) {
       subsistence: r1(m.subsistence), Ytotal: r1(m.Ytotal), treasury: r1(m.treasury),
       avgPrice: r3(m.avgPrice), cities: m.cities, roads: m.roadSegments,
       fundedFrac: r3(m.fundedFrac), Ksub: r1(world.Ksub),
-      perCapWealth: m.cityWorkers > 1 ? r3(m.Ytotal / (m.cityWorkers + m.marketFarmers + m.subsistence)) : 0
+      perCapWealth: m.cityWorkers > 1 ? r3(m.Ytotal / (m.cityWorkers + m.marketFarmers + m.subsistence)) : 0,
+      // ---- settlement SHAPE: how the rule-set spends the map, not just how much ----
+      // A rule-set can leave N untouched yet swing these wildly (one metropolis vs a
+      // hundred hamlets; a tight cultivated core vs squatters in every corner).
+      landTiles: m.landTiles, farmedTiles: m.farmedTiles,
+      farmedOutsideBasin: m.farmedOutsideBasin,
+      farmedFrac: m.landTiles > 0 ? r3(m.farmedTiles / m.landTiles) : 0,
+      // THE carpet metric: share of worked land that no city can reach at any price.
+      outsideBasinFrac: m.farmedTiles > 0 ? r3(m.farmedOutsideBasin / m.farmedTiles) : 0
     },
     health: { broken: broken, oscillation: oscillation, collapsed: collapsed,
       runaway: runaway, conservationOK: conservationOK, finite: finite,
-      maxConsErrRel: r3(maxConsErrRel) },
+      maxConsErrRel: r3(maxConsErrRel),
+      oscAmp: r3(oscAmp), oscTol: r3(oscTol), settled: converged,
+      structuralChurn: structuralChurn, cityChurn: cityChurn, extentChurn: r3(extentChurn) },
     traj: traj,
+    permalink: permalinkFor(mapData, params, siteIdx, ranTicks),
     meta: { ticks: ranTicks, converged: converged, wallMs: Date.now() - t0, peakN: r1(peakN) }
   };
+}
+
+// Permalink into planet_economy.html reproducing THIS game's starting position.
+// Mirrors the HTML's applyParams() contract: hash params, non-defaults only, `cities`
+// pins the exact seeded tiles, `ticks` fast-forwards. Sweep rows carry one so a run
+// that looks interesting in the analysis is one click from being inspected by hand.
+// Only meaningful for planet (graph) maps — the HTML loads sample-map.json.
+var UI_DEFAULTS = { K0: 1.0, roadMult: 0.30, urban: 0.5, kappa: 200, basinHyst: 0.08,
+  r: 0.10, migrate: 0.5, cityFoundPop: 1000, tau: 0.15, wageShare: 2.5,
+  garrisonPerDist: 3.0, degrade: 0.2, urbanDensityTarget: 2000, newCoreMinDist: 5,
+  newCoreMinFarmers: 1500, maxUrbanFrac: 0.5, growBand: 0.05, dessertX: 3.0,
+  dessertPremium: 0.5, dessertDisplace: 0, malthus: true, seaTravel: false,
+  urbanize: true, desserts: false, growth: 'bangbang' };
+function permalinkFor(mapData, params, siteIdx, ticks) {
+  if (!mapData.graph) return null;
+  var parts = [];
+  Object.keys(UI_DEFAULTS).forEach(function (k) {
+    if (params[k] === undefined || params[k] === UI_DEFAULTS[k]) return;
+    var v = params[k];
+    parts.push(k + '=' + (typeof v === 'boolean' ? (v ? '1' : '0') : v));
+  });
+  if (siteIdx && siteIdx.length) parts.push('cities=' + siteIdx.join(','));
+  if (ticks) parts.push('ticks=' + ticks);
+  return 'game/toy/planet_economy.html#' + parts.join('&');
 }
 
 function sample(m) {
   return { t: m.tick, N: r1(m.N), Y: r1(m.Ytotal), farm: r1(m.marketFarmers),
     sub: r1(m.subsistence), city: r1(m.cityWorkers), price: r3(m.avgPrice),
-    cities: m.cities, roads: m.roadSegments, funded: r3(m.fundedFrac), treas: r1(m.treasury) };
+    cities: m.cities, roads: m.roadSegments, funded: r3(m.fundedFrac), treas: r1(m.treasury),
+    farmed: m.farmedTiles, outside: m.farmedOutsideBasin };
 }
 
+// relative peak-to-peak of a ring — the ripple a rule-set settles INTO.
+function amplitude(a) {
+  if (a.length < 3) return 0;
+  var lo = Infinity, hi = -Infinity, s = 0;
+  for (var i = 0; i < a.length; i++) { if (a[i] < lo) lo = a[i]; if (a[i] > hi) hi = a[i]; s += a[i]; }
+  var mean = s / a.length;
+  return Math.abs(mean) < 1e-9 ? 0 : (hi - lo) / Math.abs(mean);
+}
+// max-min of a small integer ring (city counts): a count that keeps moving is churn.
+function spread(a) {
+  if (a.length < 2) return 0;
+  var lo = Infinity, hi = -Infinity;
+  for (var i = 0; i < a.length; i++) { if (a[i] < lo) lo = a[i]; if (a[i] > hi) hi = a[i]; }
+  return hi - lo;
+}
 function relStdev(a) {
   if (a.length < 2) return 0;
   var m = a.reduce(function (s, x) { return s + x; }, 0) / a.length;

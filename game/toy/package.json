@@ -12,7 +12,13 @@
     "sweep": "node harness.js",
     "sweep:quick": "node harness.js --quick",
     "sweep:planet": "node harness.js sweep_planet.json",
+    "sweep:test": "node harness.js sweep_planet_test.json",
+    "sweep:sample": "node harness.js sweep_planet_overnight.json --limit 300 --out out/sweep_planet_sample.jsonl",
+    "sweep:overnight": "node harness.js sweep_planet_overnight.json",
     "analyze": "node analyze.js out/sweep.jsonl",
+    "analyze:test": "node analyze.js out/sweep_planet_test.jsonl",
+    "analyze:sample": "node analyze.js out/sweep_planet_sample.jsonl",
+    "analyze:planet": "node analyze.js out/sweep_planet_overnight.jsonl",
     "steer": "node llm_steer.js out/sweep.analysis.json",
     "steer:ollama": "node llm_steer.js out/sweep.analysis.json --ollama",
     "loop": "npm run sweep && npm run analyze && npm run steer"

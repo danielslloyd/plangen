@@ -34,6 +34,7 @@
   .seg button.active{background:#26384a; border-radius:6px; color:#eaf6ff}
   .mapwrap{position:relative; background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; min-height:0}
   canvas{display:block; width:100%; height:100%; touch-action:none; cursor:crosshair}
+  #globeCanvas{position:absolute; top:0; left:0; visibility:hidden}
   .overlay{position:absolute; left:10px; bottom:10px; background:rgba(14,22,32,.86); border:1px solid var(--line);
     border-radius:8px; padding:8px 10px; font-size:11px; color:var(--muted); pointer-events:none; max-width:420px}
   .overlay .k{display:inline-flex;align-items:center;gap:5px;margin-right:10px}
@@ -88,6 +89,11 @@
       <button data-tool="city" title="Found / remove a city on a tile">◉ City</button>
       <button data-tool="road" title="Click two cities to queue a road project">╱ Road</button>
     </div>
+    <div class="seg" id="proj">
+      <button data-proj="globe" title="3D globe — drag to orbit, wheel to zoom">🌐 Globe</button>
+      <button data-proj="raisedGlobe" title="3D globe with elevation displacement">⛰ Raised Globe</button>
+      <button data-proj="mercator" class="active" title="Flat map — true Mercator projection, wraps seamlessly">▭ Mercator</button>
+    </div>
     <div class="spacer"></div>
     <div class="seg" id="views">
       <button data-view="territory" class="active">Territory</button>
@@ -106,6 +112,7 @@
 
   <div class="mapwrap">
     <canvas id="map"></canvas>
+    <canvas id="globeCanvas"></canvas>
     <div class="hint" id="hint" style="display:none"></div>
     <div class="overlay" id="legend"></div>
     <div id="tileTip"></div>
@@ -141,24 +148,39 @@
     <div id="knobs"></div>
     <div class="toggle"><input type="checkbox" id="malthus" checked><label for="malthus">Malthusian population growth (off = fixed pool, reallocation only)</label></div>
     <div class="toggle"><input type="checkbox" id="seaTravel"><label for="seaTravel">Harbour labour + coastal-town bias (sea <i>trade</i> always uses the map's baked costs)</label></div>
+    <div class="toggle"><input type="checkbox" id="desserts"><label for="desserts">Desserts (remote surplus ships as a dense luxury instead of grain)</label></div>
+    <div class="knob" style="grid-template-columns:112px 1fr"><label>Growth<span class="g">bang-bang rings at ±r forever; deadband stops near capacity</span></label>
+      <select id="growth" style="background:var(--panel-2);color:inherit;border:1px solid var(--line);border-radius:6px;padding:4px">
+        <option value="bangbang">bang-bang (legacy, oscillates)</option>
+        <option value="deadband">deadband (settles)</option>
+        <option value="proportional">proportional (experimental)</option>
+      </select></div>
+
+    <h2>Share / replay</h2>
+    <div style="display:flex;gap:6px;padding:8px 12px;flex-wrap:wrap;align-items:center">
+      <button id="copyLink" class="sm">Copy permalink</button>
+      <span class="g" id="linkNote" style="font-size:11px">encodes every non-default knob + the seeded cities</span>
+    </div>
 
     <h2>Overlay display</h2>
     <div class="toggle"><input type="checkbox" id="showCities" checked><label for="showCities">City markers</label></div>
     <div class="toggle"><input type="checkbox" id="showRoads" checked><label for="showRoads">Roads (dim = decaying toward overland)</label></div>
-    <div class="toggle"><input type="checkbox" id="showArrows"><label for="showArrows">Food-producer arrows (each farm → its city) — heavier</label></div>
+    <div class="toggle"><input type="checkbox" id="showArrows"><label for="showArrows">Trade routes (each farm/fishing tile → the city it ships to) — heavier = more surplus</label></div>
 
     <h2>Map</h2>
     <div style="display:flex;gap:6px;padding:8px 12px;flex-wrap:wrap;align-items:center">
       <label class="sm" style="border:1px solid var(--line);border-radius:7px;padding:6px 10px;cursor:pointer;background:var(--panel-2)">Load a map…<input type="file" id="mapFile" accept=".json" style="display:none"></label>
       <button id="fitBtn" class="sm">Fit view</button>
+      <button id="exportBtn" class="sm" title="Download the full economy state (every tile's basin/netback/transport costs, cities, roads) as JSON for offline analysis">⇩ Export state</button>
     </div>
     <div class="note" id="mapInfo"></div>
     <div class="note">
-      <b>Transport</b> uses the map's baked, <b>bi-directional</b> edge costs (moveCost / moveCostR) — shipping downhill/downwind is cheaper than the reverse. <b>Food capacity</b> = the map's per-tile calories (median land ≈ farm tier). <b>Roads</b>: pick two cities; a project auto-routes the cheapest land path and builds one segment/tick. <b>Minerals are shown but not simulated.</b> <span class="kbd">space</span> run · <span class="kbd">s</span> step · <span class="kbd">r</span> reset.
+      <b>Transport</b> uses the map's baked, <b>bi-directional</b> edge costs (moveCost / moveCostR) — shipping downhill/downwind is cheaper than the reverse. <b>Food capacity</b> = the map's per-tile calories (median land ≈ farm tier). <b>Roads</b>: pick two cities; a project auto-routes the cheapest land path and builds one segment/tick. <b>Minerals are shown but not simulated.</b> <span class="kbd">space</span> run · <span class="kbd">s</span> step · <span class="kbd">r</span> reset. On the globe, <span class="kbd">←</span><span class="kbd">→</span> spin east/west and <span class="kbd">↑</span><span class="kbd">↓</span> tilt north/south (north stays up).
     </div>
   </div>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r125/three.min.js"></script>
 <script src="econ_engine.js"></script>
 <script src="game_map_adapter.js"></script>
 <script>
@@ -183,7 +205,12 @@ const KNOBS={
   degrade:{v:0.2,min:0,max:1,step:0.05,g:"Fiscal & roads",label:"Road decay",hint:"drift back to overland when unfunded"},
   urbanDensityTarget:{v:2000,min:400,max:5000,step:200,g:"Emergence",label:"Urban density",hint:"gold workers per tile a city grows toward"},
   newCoreMinDist:{v:5,min:2,max:12,step:1,g:"Emergence",label:"New-town spacing",hint:"min hops from an existing city for a new town"},
+  newCoreMinFarmers:{v:1500,min:200,max:6000,step:100,g:"Emergence",label:"New-town threshold",hint:"local farmer mass (radius 2) needed to seed a town"},
   maxUrbanFrac:{v:0.5,min:0.1,max:0.9,step:0.05,g:"Emergence",label:"Max urban frac",hint:"urban tiles never exceed this share of land"},
+  growBand:{v:0.05,min:0,max:0.2,step:0.01,g:"Population",label:"Growth deadband",hint:"stop growing when unfilled room ≤ this × Ksub (needs Growth=deadband)"},
+  dessertX:{v:3.0,min:1.5,max:8,step:0.5,g:"Desserts",label:"Food per dessert",hint:"X food → 1 dessert (ships as ONE unit, so transport/food ÷ X)"},
+  dessertPremium:{v:0.5,min:0.1,max:0.95,step:0.05,g:"Desserts",label:"Premium (m)",hint:"price = m × X × P. MUST be <1 or every tile converts. Reach × = m×X"},
+  dessertDisplace:{v:0,min:0,max:8,step:0.5,g:"Desserts",label:"Displacement (D)",hint:"grain demand displaced per dessert, richest-first. Burn = X−D. D=X is food-neutral"},
 };
 
 /* ---------- terrain palette (game terrain names) ---------- */
@@ -197,8 +224,16 @@ function cityHue(i){ return (i*67)%360; }
 
 /* ---------- state ---------- */
 let md=null, world=null, view="territory", tool="pan", playing=false, timer=null;
-let vw={lonC:0, latC:8, scale:5}, hoverTile=-1, roadFrom=-1;
+let proj="mercator";   // "mercator" | "globe" | "raisedGlobe"
+let vw={lonC:0, latC:8, scale:5}, hoverTile=-1, roadFrom=-1, hoverLonQuery=0;
 const cv=$("map"), ctx=cv.getContext("2d");
+const mapWrap=document.querySelector(".mapwrap");
+// ---- Three.js globe state (Globe / Raised Globe) ----
+let renderer=null, scene=null, camera=null, globeMesh=null, globeFaceTile=null, raisedMode=false;
+let camAz=0, camEl=20, camDist=260;               // orbit camera: azimuth/elevation (deg), distance (units)
+const globeRadius=100, RAISED_MULT=8;             // elevation (~-1..1) * RAISED_MULT added to radius
+const raycaster=(typeof THREE!=="undefined")?new THREE.Raycaster():null;
+const mouseNDC=(typeof THREE!=="undefined")?new THREE.Vector2():null;
 
 function cfgFromKnobs(){
   const c={};
@@ -206,18 +241,102 @@ function cfgFromKnobs(){
   c.malthus=$("malthus").checked;
   c.seaTravel=$("seaTravel").checked;
   c.urbanize=$("urbanize").checked;
+  c.desserts=$("desserts").checked;
+  c.growth=$("growth").value;
   c.yieldVar=0;            // calories already carry the per-tile variation
   return c;
 }
 
-/* ---------- projection (equirectangular; scale = px/degree) ---------- */
+/* ---------- permalink: reproduce a game's STARTING POSITION from a URL ----------
+   Everything lives in the hash, so it never hits the server and works from file://.
+   Only non-default values are written, which keeps a typical link short and — more
+   usefully — makes it self-documenting: the link IS the diff from defaults.
+   `cities` pins the exact seeded tile indices, so a link replays the same start even
+   if the seeding mode or the map's site ranking later changes. `ticks` fast-forwards
+   on load, so a link can point at a settled state rather than turn 0.
+   Round-trip contract: paramsFromState() -> applyParams() must be a fixed point. */
+const TOGGLES=["malthus","seaTravel","urbanize","desserts"];
+const TOGGLE_DEFAULT={malthus:true,seaTravel:false,urbanize:true,desserts:false};
+function paramsFromState(opts){
+  opts=opts||{};
+  const p=new URLSearchParams();
+  for(const k in KNOBS) if(KNOBS[k].v!==KNOBS[k].def) p.set(k,String(KNOBS[k].v));
+  for(const t of TOGGLES) if($(t).checked!==TOGGLE_DEFAULT[t]) p.set(t,$(t).checked?"1":"0");
+  if($("growth").value!=="bangbang") p.set("growth",$("growth").value);
+  const mode=document.querySelector('input[name="mode"]:checked').value;
+  if(mode!=="priority") p.set("mode",mode);
+  if(+$("seedN").value!==5) p.set("seedN",$("seedN").value);
+  // Pin the actual seeded tiles — the "starting positions" proper.
+  const cities=(world&&world.cities&&world.cities.length)?world.cities.slice():seedCities();
+  if(cities.length) p.set("cities",cities.join(","));
+  if(opts.ticks) p.set("ticks",String(opts.ticks));
+  return p;
+}
+function permalink(opts){
+  return location.origin+location.pathname+"#"+paramsFromState(opts).toString();
+}
+// Returns {cities, ticks} for buildWorld to honour; applies everything else to the UI.
+let PENDING=null;
+function applyParams(){
+  const raw=location.hash.replace(/^#/,"");
+  if(!raw) return null;
+  const p=new URLSearchParams(raw), out={cities:null,ticks:0};
+  for(const k in KNOBS){
+    if(!p.has(k)) continue;
+    const v=+p.get(k);
+    if(!isFinite(v)) continue;                       // ignore junk rather than NaN the world
+    KNOBS[k].v=v;
+    const rng=$("kn_"+k), num=$("kn_"+k+"_n");
+    if(rng){ rng.value=v; num.value=v; }             // may exceed slider min/max; number field still shows truth
+  }
+  for(const t of TOGGLES) if(p.has(t)) $(t).checked=p.get(t)==="1";
+  if(p.has("growth")) $("growth").value=p.get("growth");
+  if(p.has("mode")){
+    const el=document.querySelector('input[name="mode"][value="'+p.get("mode")+'"]');
+    if(el) el.checked=true;
+  }
+  if(p.has("seedN")){ $("seedN").value=p.get("seedN"); $("seedN_n").value=p.get("seedN"); }
+  if(p.has("cities")){
+    const ids=p.get("cities").split(",").map(Number).filter(n=>Number.isInteger(n)&&n>=0);
+    if(ids.length) out.cities=ids;
+  }
+  if(p.has("ticks")) out.ticks=Math.max(0,Math.min(2000,+p.get("ticks")||0));
+  return out;
+}
+
+/* ---------- projection (true Mercator; scale = px per equator-degree) ----------
+   X is linear in longitude (unbounded — panning is continuous, no seam). Y uses
+   the real Mercator warp so it matches what "Mercator" actually means (poles
+   stretch); a fixed pole clamp keeps it finite. The canvas tiles the world THREE
+   (or more, at extreme zoom-out) times side by side — see copiesNeeded()/draw()
+   below — so panning across the antimeridian shows a seamless continuation
+   instead of empty background, and every line-drawing helper (roads/arrows/
+   cities) takes the SHORTEST path between its two endpoints (seamPair) before
+   projecting, so a link straddling the seam is never drawn as a giant line clear
+   across the map. */
+const MERC_CLAMP=85;   // standard web-Mercator pole cutoff (degrees)
+function mercY(latDeg){
+  const lat=clamp(latDeg,-MERC_CLAMP,MERC_CLAMP)*Math.PI/180;
+  return Math.log(Math.tan(Math.PI/4+lat/2))*180/Math.PI;   // ~= latDeg near the equator
+}
+function invMercY(my){ return (2*Math.atan(Math.exp(my*Math.PI/180))-Math.PI/2)*180/Math.PI; }
 function projX(lon){ return cv.clientWidth/2 + (lon - vw.lonC)*vw.scale; }
-function projY(lat){ return cv.clientHeight/2 - (lat - vw.latC)*vw.scale; }
+function projY(lat){ return cv.clientHeight/2 - (mercY(lat) - mercY(vw.latC))*vw.scale; }
 function invLon(px){ return vw.lonC + (px - cv.clientWidth/2)/vw.scale; }
-function invLat(py){ return vw.latC - (py - cv.clientHeight/2)/vw.scale; }
+function invLat(py){ return invMercY(mercY(vw.latC) - (py - cv.clientHeight/2)/vw.scale); }
 // tile center [lat,lon] in degrees
 function tLat(i){ return md.graph.coordsDeg[i*2]; }
 function tLon(i){ return md.graph.coordsDeg[i*2+1]; }
+// shift lonB to whichever ±360k copy is closest to lonA (shortest path between
+// two tiles — used for every road/arrow/city-pair line so it never crosses the
+// long way around the map).
+function seamPair(lonA,lonB){ let d=lonB-lonA; while(d>180)d-=360; while(d<-180)d+=360; return lonA+d; }
+// how many side-by-side world copies are needed to fill the current canvas width
+function copiesNeeded(){
+  const worldW=360*vw.scale;
+  if(worldW<=0) return 1;
+  return clamp(Math.ceil(cv.clientWidth/worldW/2)+1, 1, 6);
+}
 
 function fitView(){
   const cd=md.graph.coordsDeg, n=md.graph.n;
@@ -225,11 +344,321 @@ function fitView(){
   for(let i=0;i<n;i++){ const la=cd[i*2],lo=cd[i*2+1];
     if(lo<minLon)minLon=lo; if(lo>maxLon)maxLon=lo; if(la<minLat)minLat=la; if(la>maxLat)maxLat=la; }
   const w=cv.clientWidth||900, h=cv.clientHeight||560;
-  vw.scale=Math.min(w/(maxLon-minLon+8), h/(maxLat-minLat+8))*0.98;
+  const mercSpan=mercY(maxLat)-mercY(minLat);
+  vw.scale=Math.min(w/(maxLon-minLon+8), h/(mercSpan+8))*0.98;
   vw.lonC=(minLon+maxLon)/2; vw.latC=(minLat+maxLat)/2;
 }
 
-/* ---------- world lifecycle ---------- */
+/* ---------- 3D globe (Globe / Raised Globe) ----------
+   Not a port of PlanGen's rendering-3d.js code (that's tightly coupled to
+   geometry.js's Tile/Corner mesh classes) — this reuses the same TECHNIQUE:
+   an independent (unshared-vertex) triangle fan per tile so per-tile colors
+   stay flat/faceted, one THREE.BufferGeometry, MeshLambertMaterial with
+   vertexColors+flatShading. Colors come from the SAME fillFor(i) the 2D view
+   uses, so all 6 economic views work in 3D for free. */
+// THREE r125 predates CSS Color 4 space-separated hsl(h s% l%) syntax (used
+// throughout fillFor()/heat()) — it only parses the older comma form. Reformat
+// before handing a color string to THREE.Color; hex strings pass through as-is.
+function cssToThreeColor(str,out){
+  const m=str.match(/^hsl\(([^)]+)\)$/);
+  if(m) out.set('hsl('+m[1].trim().split(/\s+/).join(',')+')'); else out.set(str);
+  return out;
+}
+function llToXYZ(lonDeg,latDeg,r){
+  const lat=latDeg*Math.PI/180, lon=lonDeg*Math.PI/180;
+  const y=Math.sin(lat)*r, cl=Math.cos(lat)*r;
+  return [cl*Math.sin(lon), y, cl*Math.cos(lon)];   // matches the adapter's llFromXYZ axes (y=north pole)
+}
+function ensureGlobeScene(){
+  if(renderer) return;
+  scene=new THREE.Scene();
+  camera=new THREE.PerspectiveCamera(50,1,1,5000);
+  renderer=new THREE.WebGLRenderer({canvas:$("globeCanvas"), antialias:true, alpha:true});
+  renderer.setClearColor(0x0b121b,1);
+  scene.add(new THREE.AmbientLight(0xffffff,0.75));
+  const dl1=new THREE.DirectionalLight(0xffffff,0.7); dl1.position.set(-3,4,7).normalize(); scene.add(dl1);
+  const dl2=new THREE.DirectionalLight(0xffffff,0.3); dl2.position.set(4,-2,-5).normalize(); scene.add(dl2);
+}
+function resizeGlobe(){
+  if(!renderer) return;
+  const w=mapWrap.clientWidth||900, h=mapWrap.clientHeight||560;
+  renderer.setSize(w,h,false); camera.aspect=w/h; camera.updateProjectionMatrix();
+}
+// camAz is the longitude the camera sits over, camEl its latitude. North is
+// ALWAYS up: the up vector is pinned to +Y (the pole axis) and camEl is clamped
+// short of ±90°, so the view can never roll or flip over a pole.
+function updateGlobeCamera(){
+  const az=camAz*Math.PI/180, el=clamp(camEl,-85,85)*Math.PI/180;
+  camera.position.set(camDist*Math.cos(el)*Math.sin(az), camDist*Math.sin(el), camDist*Math.cos(el)*Math.cos(az));
+  camera.up.set(0,1,0); camera.lookAt(0,0,0);
+}
+
+/* ---------- globe: arrow-key orbit ----------
+   Left/right spin the view east/west (→ = eastward, matching the main app's
+   camera-travels-east convention); up/down tilt it north/south. Held keys drive a
+   rAF loop rather than relying on OS key-repeat, which would step jerkily — the
+   sandbox renders on demand, so there's no existing idle loop to hang this off.
+   The loop starts on the first arrow down and stops the moment the last one is
+   released, keeping the idle cost at zero. */
+const ARROW_KEYS={ArrowLeft:1,ArrowRight:1,ArrowUp:1,ArrowDown:1};
+const arrowHeld={};
+let orbitRAF=null, orbitLast=0;
+const ORBIT_DEG_PER_SEC=55;
+function anyArrowHeld(){ for(const k in ARROW_KEYS) if(arrowHeld[k]) return true; return false; }
+function orbitFrame(ts){
+  if(!anyArrowHeld()){ orbitRAF=null; orbitLast=0; return; }
+  if(!orbitLast) orbitLast=ts;
+  const dt=Math.min((ts-orbitLast)/1000, 0.1);   // cap dt so a backgrounded tab can't lurch
+  orbitLast=ts;
+  // zoomed in, the same angle sweeps far more screen — slow down so the globe
+  // stays controllable up close.
+  const zoomK=clamp((camDist-globeRadius)/(globeRadius*1.6), 0.15, 1);
+  // Steady degrees/sec, deliberately NOT scaled by 1/cos(lat) to hold the surface
+  // speed constant near the poles: up there you're looking down the axis, so that
+  // correction just whirls the whole view around the centre (~220°/s at 80°N).
+  // A predictable spin rate beats a constant ground speed.
+  const step=ORBIT_DEG_PER_SEC*dt*zoomK;
+  if(arrowHeld.ArrowRight) camAz+=step;
+  if(arrowHeld.ArrowLeft)  camAz-=step;
+  if(arrowHeld.ArrowUp)    camEl=clamp(camEl+step,-85,85);
+  if(arrowHeld.ArrowDown)  camEl=clamp(camEl-step,-85,85);
+  camAz=((camAz+180)%360+360)%360-180;           // keep az in ±180 over long spins
+  updateGlobeCamera(); renderGlobeFrame();
+  orbitRAF=requestAnimationFrame(orbitFrame);
+}
+function startOrbit(){ if(orbitRAF==null){ orbitLast=0; orbitRAF=requestAnimationFrame(orbitFrame); } }
+function releaseArrows(){ for(const k in ARROW_KEYS) arrowHeld[k]=false; }
+function renderGlobeFrame(){ if(renderer&&scene&&camera) renderer.render(scene,camera); }
+// tiny vec3 helpers (plain arrays — these run over every border segment)
+function v3sub(a,b){ return [a[0]-b[0],a[1]-b[1],a[2]-b[2]]; }
+function v3add(a,b){ return [a[0]+b[0],a[1]+b[1],a[2]+b[2]]; }
+function v3cross(a,b){ return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
+function v3norm(a){ const L=Math.hypot(a[0],a[1],a[2])||1; return [a[0]/L,a[1]/L,a[2]/L]; }
+function v3mad(a,d,s){ return [a[0]+d[0]*s, a[1]+d[1]*s, a[2]+d[2]*s]; }
+function v3scale(a,s){ return [a[0]*s,a[1]*s,a[2]*s]; }
+
+// the globe's per-tile ring vertices, in world XYZ, cached from the last
+// buildGlobeMesh — the border overlays trace the SAME vertices as the tile faces,
+// so they can never drift off the tiles they outline. globeCornerXYZ is the same
+// data keyed by corner id (shared corners resolve to one identical point, since
+// both position and node height are per-corner), for walking basin rings.
+let globeRing=null, globeCornerXYZ=null, globeGrid=null, globeBorders=null;
+
+// full rebuild: geometry (positions depend on raisedMode) + colors. Only needed
+// on first activation, a raised-mode toggle, or a new map load.
+function buildGlobeMesh(){
+  const G=md.graph, n=G.n, polys=G.polys, tc=G.tileCorners, ce=G.cornerElev;
+  let triCount=0; for(let i=0;i<n;i++){ const p=polys[i]; if(p) triCount+=p.length; }
+  const positions=new Float32Array(triCount*9), colors=new Float32Array(triCount*9);
+  const faceTile=new Int32Array(triCount);
+  const tmp=new THREE.Color();
+  globeRing=new Array(n);
+  globeCornerXYZ=(tc&&ce)?new Array(ce.length):null;
+  let vi=0, ti=0;
+  for(let i=0;i<n;i++){
+    const poly=polys[i]; if(!poly) continue;
+    // Raised globe: every ring vertex sits at its own NODE height (graph.cornerElev
+    // — 0 at any node touching water, else the median of its surrounding tiles).
+    // Nodes are SHARED between tiles, so adjacent tiles meet along their common
+    // edge and the globe reads as terrain instead of a mosaic of hovering slabs.
+    // The tile centre takes the mean of its own nodes, which keeps each tile a
+    // shallow facet of the surface rather than a spike.
+    const cring=tc?tc[i]:null;
+    let radii=null, rc=globeRadius;
+    if(raisedMode&&cring&&ce){
+      radii=new Array(poly.length); let sum=0;
+      for(let k=0;k<poly.length;k++){ const e=ce[cring[k]]||0; radii[k]=globeRadius+e*RAISED_MULT; sum+=e; }
+      rc=globeRadius+(sum/poly.length)*RAISED_MULT;
+    }
+    const center=llToXYZ(tLon(i),tLat(i),rc);
+    cssToThreeColor(fillFor(i),tmp);
+    if(view==="territory") tintTerritory(i,tmp);
+    const cr=tmp.r,cg=tmp.g,cb=tmp.b;
+    const ring=poly.map((p,k)=>llToXYZ(p[0],p[1],radii?radii[k]:globeRadius));
+    globeRing[i]=ring;
+    if(globeCornerXYZ&&cring) for(let k=0;k<cring.length;k++) globeCornerXYZ[cring[k]]=ring[k];
+    for(let k=0;k<ring.length;k++){
+      const v1=center, v2=ring[k], v3=ring[(k+1)%ring.length];
+      [v1,v2,v3].forEach(v=>{
+        positions[vi]=v[0]; positions[vi+1]=v[1]; positions[vi+2]=v[2];
+        colors[vi]=cr; colors[vi+1]=cg; colors[vi+2]=cb; vi+=3;
+      });
+      faceTile[ti++]=i;
+    }
+  }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions,3));
+  geo.setAttribute('color', new THREE.BufferAttribute(colors,3));
+  geo.computeVertexNormals();
+  const mat=new THREE.MeshLambertMaterial({vertexColors:true, flatShading:true, side:THREE.DoubleSide});
+  if(globeMesh){ scene.remove(globeMesh); globeMesh.geometry.dispose(); globeMesh.material.dispose(); }
+  globeMesh=new THREE.Mesh(geo,mat); scene.add(globeMesh);
+  globeFaceTile=faceTile;
+  buildGlobeGrid();
+}
+// THIN borders: the tile outlines, matching the 2D map's per-tile strokes. Plain
+// 1px LineSegments (THREE r125 ignores linewidth on most platforms — that's exactly
+// what "thin" wants). Static for a given raisedMode, so built with the mesh.
+function buildGlobeGrid(){
+  if(globeGrid){ scene.remove(globeGrid); globeGrid.geometry.dispose(); globeGrid.material.dispose(); globeGrid=null; }
+  if(!globeRing) return;
+  const tc=md.graph.tileCorners, n=md.graph.n, pts=[];
+  for(let i=0;i<n;i++){
+    const ring=globeRing[i], cring=tc?tc[i]:null; if(!ring) continue;
+    for(let k=0;k<ring.length;k++){
+      // draw each shared edge once (lower tile index owns it)
+      if(cring&&edgeTiles){ const j=acrossEdge(i,cring[k],cring[(k+1)%cring.length]); if(j>=0&&j<i) continue; }
+      const a=v3scale(ring[k],1.001), b=v3scale(ring[(k+1)%ring.length],1.001);
+      pts.push(a[0],a[1],a[2], b[0],b[1],b[2]);
+    }
+  }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pts),3));
+  globeGrid=new THREE.LineSegments(geo, new THREE.LineBasicMaterial({color:0x0a1119, transparent:true, opacity:0.55}));
+  scene.add(globeGrid);
+}
+// THICK borders: basin outlines. A GPU line is always 1px wide here, so each
+// border segment is a ribbon quad — widened along the surface (perpendicular to
+// the segment within the local tangent plane) and lifted clear of the tile faces.
+// Like the 2D map, the ribbon runs INSIDE its own territory (BORDER_INSET world
+// units off the shared edge) so two neighbouring basins show both borders rather
+// than one z-fighting over the other. World units, not pixels: the globe has no
+// fixed px-per-tile, and this keeps the inset pinned to the terrain as you zoom.
+const BORDER_W=0.9, BORDER_LIFT=1.004, BORDER_INSET=0.85;
+// A basin ring's corner points, pushed inward across the sphere's surface. Same
+// construction as insetRingScreen: per-segment inward is "toward the owning tile's
+// centre" projected into the local tangent plane (so the ring hugs the surface
+// instead of burrowing through it), averaged at each corner to keep the ring joined.
+function insetRingXYZ(chain, W){
+  const n=chain.length, P=new Array(n), Nrm=new Array(n);
+  for(let k=0;k<n;k++) P[k]=globeCornerXYZ[chain[k].c1];
+  for(let k=0;k<n;k++){
+    const a=P[k], b=P[(k+1)%n];
+    const dir=v3norm(v3sub(b,a)), up=v3norm(v3add(a,b));
+    let perp=v3norm(v3cross(up,dir));
+    const t=chain[k].tile, c=llToXYZ(tLon(t),tLat(t),globeRadius);
+    const mid=v3scale(v3add(a,b),0.5);
+    const toC=v3sub(c,mid);
+    if(toC[0]*perp[0]+toC[1]*perp[1]+toC[2]*perp[2] < 0) perp=v3scale(perp,-1);
+    Nrm[k]=perp;
+  }
+  const out=new Array(n);
+  for(let k=0;k<n;k++){
+    const a=Nrm[(k-1+n)%n], b=Nrm[k];
+    let s=v3add(a,b);
+    if(Math.hypot(s[0],s[1],s[2])<1e-6) s=b; else s=v3norm(s);
+    out[k]=v3mad(P[k],s,W);
+  }
+  return out;
+}
+function buildGlobeBorders(){
+  if(globeBorders){ scene.remove(globeBorders); globeBorders.geometry.dispose(); globeBorders.material.dispose(); globeBorders=null; }
+  if(view!=="territory"||!globeRing||!globeCornerXYZ||!world) return;
+  const rings=basinRings();
+  const strips=[];   // [pts, basin] per ring
+  let quads=0;
+  rings.forEach((chains,b)=>{
+    for(const chain of chains){
+      if(chain.some(l=>!globeCornerXYZ[l.c1])) continue;
+      const pts=insetRingXYZ(chain, BORDER_INSET);
+      strips.push([pts,b]); quads+=pts.length;   // closed ring -> one quad per point
+    }
+  });
+  if(!quads) return;
+  const positions=new Float32Array(quads*18), colors=new Float32Array(quads*18);
+  const tmp=new THREE.Color();
+  let vi=0;
+  for(const [pts,b] of strips){
+    cssToThreeColor(`hsl(${cityHue(b)} 85% 62%)`,tmp);
+    for(let k=0;k<pts.length;k++){
+      const p1=pts[k], p2=pts[(k+1)%pts.length];
+      const dir=v3norm(v3sub(p2,p1)), up=v3norm(v3add(p1,p2)), perp=v3norm(v3cross(up,dir));
+      // 2D gets clean corners free from lineJoin:"round"; a ribbon has no joins, so
+      // each quad is extended half a width past both ends (a square cap). Consecutive
+      // quads then overlap through the turn instead of leaving a notch at every vertex.
+      const e1=v3mad(p1,dir,-BORDER_W/2), e2=v3mad(p2,dir,BORDER_W/2);
+      const q=[ v3scale(v3mad(e1,perp, BORDER_W/2),BORDER_LIFT), v3scale(v3mad(e1,perp,-BORDER_W/2),BORDER_LIFT),
+                v3scale(v3mad(e2,perp, BORDER_W/2),BORDER_LIFT), v3scale(v3mad(e2,perp,-BORDER_W/2),BORDER_LIFT) ];
+      [q[0],q[1],q[2], q[1],q[3],q[2]].forEach(v=>{
+        positions[vi]=v[0]; positions[vi+1]=v[1]; positions[vi+2]=v[2];
+        colors[vi]=tmp.r; colors[vi+1]=tmp.g; colors[vi+2]=tmp.b; vi+=3;
+      });
+    }
+  }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions,3));
+  geo.setAttribute('color', new THREE.BufferAttribute(colors,3));
+  globeBorders=new THREE.Mesh(geo, new THREE.MeshBasicMaterial({vertexColors:true, side:THREE.DoubleSide}));
+  scene.add(globeBorders);
+}
+// the globe can't hatch, so farmland takes the owner's hue as a TINT over its
+// terrain colour — same reading as the 2D hatch (terrain visible underneath).
+const tintTmp=(typeof THREE!=="undefined")?new THREE.Color():null;
+function tintTerritory(i,col){
+  if(!isFarmed(i)) return col;
+  cssToThreeColor(`hsl(${cityHue(world.hexes[i].basin)} 80% 60%)`,tintTmp);
+  return col.lerp(tintTmp,0.36);
+}
+// cheap per-tick refresh: colors only, geometry (positions) untouched — keeps
+// stepping/knob-changes responsive without rebuilding ~24k triangles every time.
+// Basin borders DO move every tick, so those are rebuilt (territory view only).
+function updateGlobeColors(){
+  if(!globeMesh) return;
+  const G=md.graph, n=G.n, polys=G.polys;
+  const attr=globeMesh.geometry.attributes.color, tmp=new THREE.Color();
+  let vi=0;
+  for(let i=0;i<n;i++){
+    const poly=polys[i]; if(!poly) continue;
+    cssToThreeColor(fillFor(i),tmp);
+    if(view==="territory") tintTerritory(i,tmp);
+    const triVerts=poly.length*3;
+    for(let k=0;k<triVerts;k++){ attr.array[vi]=tmp.r; attr.array[vi+1]=tmp.g; attr.array[vi+2]=tmp.b; vi+=3; }
+  }
+  attr.needsUpdate=true;
+}
+function drawGlobeFrame(){ updateGlobeColors(); buildGlobeBorders(); renderGlobeFrame(); }
+function pickGlobeTile(mx,my){
+  if(!renderer||!globeMesh) return -1;
+  camera.updateMatrixWorld();   // raycasting needs a fresh matrix; don't rely on a render having just happened
+  const w=mapWrap.clientWidth, h=mapWrap.clientHeight;
+  mouseNDC.x=(mx/w)*2-1; mouseNDC.y=-(my/h)*2+1;
+  raycaster.setFromCamera(mouseNDC,camera);
+  const hits=raycaster.intersectObject(globeMesh);
+  if(!hits.length) return -1;
+  const t=globeFaceTile[hits[0].faceIndex];
+  return t==null?-1:t;
+}
+function globeMouseMove(e){
+  const [mx,my]=relXY(e);
+  if(dragging && tool==="pan"){
+    const dx=e.clientX-lastX, dy=e.clientY-lastY; if(Math.abs(dx)+Math.abs(dy)>2) dragMoved=true;
+    camAz-=dx*0.35; camEl=clamp(camEl+dy*0.35,-85,85); lastX=e.clientX; lastY=e.clientY;
+    updateGlobeCamera(); renderGlobeFrame(); return;
+  }
+  if(dragging) dragMoved=true;
+  const i=pickGlobeTile(mx,my);
+  if(i!==hoverTile){ hoverTile=i; if(i>=0&&world.hexes[i].isCity) updateCityCard(i); }
+  if(i>=0) showTip(i,mx,my); else $("tileTip").style.display="none";
+}
+function globeWheel(e){
+  camDist=clamp(camDist*(e.deltaY<0?0.9:1.111), globeRadius*1.15, globeRadius*8);
+  updateGlobeCamera(); renderGlobeFrame();
+}
+function setCursor(c){ cv.style.cursor=c; $("globeCanvas").style.cursor=c; }
+function setProjection(mode){
+  proj=mode;
+  const wantGlobe=(mode!=="mercator");
+  cv.style.visibility=wantGlobe?"hidden":"visible";
+  $("globeCanvas").style.visibility=wantGlobe?"visible":"hidden";
+  if(wantGlobe){
+    const firstActivation=!renderer;
+    ensureGlobeScene();
+    if(firstActivation){ camAz=vw.lonC; camEl=clamp(vw.latC,-85,85); resizeGlobe(); updateGlobeCamera(); }
+    raisedMode=(mode==="raisedGlobe");
+    if(world) buildGlobeMesh();
+  }
+  if(world) draw();
+}
 function seedCities(){
   const mode=document.querySelector('input[name="mode"]:checked').value;
   if(mode==="priority") return md.sites.slice(0, KNOBS_val("seedN"));
@@ -238,11 +667,111 @@ function seedCities(){
 }
 function KNOBS_val(id){ return +$(id).value; }
 function buildWorld(){
-  world=Econ.createWorld({ name:md.name, seed:md.seed, graph:md.graph, cities:seedCities(), config:cfgFromKnobs() });
+  // A pending permalink pins the exact starting cities (and may fast-forward), but only
+  // for the build it arrived on — after that the UI is live and the link is stale.
+  const pin=PENDING; PENDING=null;
+  const cities=(pin&&pin.cities)?pin.cities:seedCities();
+  world=Econ.createWorld({ name:md.name, seed:md.seed, graph:md.graph, cities:cities, config:cfgFromKnobs() });
   Econ.step(world);  // one solve so readouts + display fields populate
+  if(pin&&pin.ticks) for(let i=0;i<pin.ticks;i++) Econ.step(world);
   roadFrom=-1; updateReadouts(); draw();
 }
 function resetWorld(){ stop(); buildWorld(); }
+
+/* ---------- territory: basin identity + the tile-edge index ----------
+   A tile's territory id is the DOWNTOWN tile of the city it belongs to (urban
+   tiles) or ships its surplus to (farmland); -1 = no city. The engine keeps a
+   city's downtown sticky as it grows, so cityHue() gives it a stable colour for
+   the whole run. */
+function basinOf(i){
+  const h=world.hexes[i];
+  if(h.isCity) return h.clusterRep!=null?h.clusterRep:i;
+  return h.basin!=null?h.basin:-1;
+}
+function isFarmed(i){ const h=world.hexes[i]; return h.passable && !h.isCity && h.basin>=0; }
+// corner-pair -> the tiles sharing that polygon edge. Lets us walk a tile's ring
+// and ask "is the tile across THIS edge in another basin?", so basin borders land
+// on real tile boundaries rather than a blobby traced outline.
+let edgeTiles=null;
+function buildEdgeIndex(){
+  edgeTiles=null;
+  const tc=md.graph.tileCorners; if(!tc) return;
+  edgeTiles=new Map();
+  for(let t=0;t<tc.length;t++){
+    const ring=tc[t]; if(!ring) continue;
+    for(let k=0;k<ring.length;k++){
+      const a=ring[k], b=ring[(k+1)%ring.length], key=a<b?(a+"|"+b):(b+"|"+a);
+      let e=edgeTiles.get(key); if(!e){ e=[]; edgeTiles.set(key,e); }
+      e.push(t);
+    }
+  }
+}
+function acrossEdge(t,c1,c2){
+  const e=edgeTiles.get(c1<c2?(c1+"|"+c2):(c2+"|"+c1)); if(!e) return -1;
+  for(let k=0;k<e.length;k++) if(e[k]!==t) return e[k];
+  return -1;   // mesh boundary
+}
+// every ring edge that separates a basin from anything else -> cb(tile, ringPos, basin)
+function forEachBasinBorder(cb){
+  if(!edgeTiles) return;
+  const tc=md.graph.tileCorners, n=md.graph.n;
+  for(let i=0;i<n;i++){
+    const b=basinOf(i); if(b<0) continue;
+    const ring=tc[i]; if(!ring) continue;
+    for(let k=0;k<ring.length;k++){
+      const j=acrossEdge(i, ring[k], ring[(k+1)%ring.length]);
+      if(j<0 || basinOf(j)!==b) cb(i,k,b);
+    }
+  }
+}
+// Chain each basin's border edges into closed RINGS: {c1,c2,tile} links walked
+// head-to-tail. Rings (not loose segments) are what let the border be inset into
+// its own territory — an inset needs to know which way is "inward" and needs its
+// corners to join up. Safe because every tile's corner ring is wound the same way,
+// so a basin's border edges chain end-to-start all the way around (verified: 0
+// edges without a successor). A basin pinched to a point could offer two
+// successors at one corner; we take any unused one, which still consumes every
+// edge exactly once. Returns Map<basin, chain[]>.
+function basinRings(){
+  const tc=md.graph.tileCorners, starts=new Map();   // basin -> Map(startCorner -> links)
+  forEachBasinBorder((i,k,b)=>{
+    const ring=tc[i], link={c1:ring[k], c2:ring[(k+1)%ring.length], tile:i, used:false};
+    let m=starts.get(b); if(!m){ m=new Map(); starts.set(b,m); }
+    let l=m.get(link.c1); if(!l){ l=[]; m.set(link.c1,l); }
+    l.push(link);
+  });
+  const out=new Map();
+  starts.forEach((m,b)=>{
+    const rings=[];
+    m.forEach(list=>list.forEach(seed=>{
+      if(seed.used) return;
+      const chain=[];
+      let e=seed;
+      while(e && !e.used){
+        e.used=true; chain.push(e);
+        const nxt=m.get(e.c2);
+        e = nxt ? nxt.find(x=>!x.used) : null;
+      }
+      if(chain.length>=3) rings.push(chain);   // <3 links can't enclose anything
+    }));
+    if(rings.length) out.set(b,rings);
+  });
+  return out;
+}
+// 45° hatch in a city's hue, laid over the tile's own terrain colour so farmland
+// still reads as terrain while showing who it feeds. Screen-space (canvas
+// patterns aren't panned), which is fine — it's a texture, not a position.
+const hatchCache={};
+function hatchPattern(hue){
+  if(hatchCache[hue]) return hatchCache[hue];
+  const s=8, c=document.createElement("canvas"); c.width=c.height=s;
+  const x=c.getContext("2d");
+  x.strokeStyle=`hsl(${hue} 80% 60%)`; x.lineWidth=1.5;
+  x.beginPath();
+  x.moveTo(0,0); x.lineTo(s,s); x.moveTo(-s,0); x.lineTo(0,s); x.moveTo(s,0); x.lineTo(2*s,s);
+  x.stroke();
+  return hatchCache[hue]=ctx.createPattern(c,"repeat");
+}
 
 /* ---------- fill color per view ---------- */
 function heat(t){ t=clamp(t,0,1); return `hsl(${(1-t)*45+8} ${45+t*35}% ${18+t*30}%)`; }
@@ -252,8 +781,10 @@ function fillFor(i){
   if(view==="terrain") return terrColor(G.terrainName[i]);
   if(view==="capacity"){ const t=(G.capBase[i]||0)/900; return heat(t); }
   if(view==="territory"){
-    if(h.isCity) return `hsl(${cityHue(h.clusterRep!=null?h.clusterRep:i)} 55% 50%)`;
-    if(h.basin>=0) return `hsl(${cityHue(h.basin)} 34% 26%)`;
+    // base = terrain everywhere; a city tile is solid in its hue. Farmland keeps
+    // its terrain colour and gets the owner's hue as hatching (2D) / a tint (globe),
+    // plus a bold basin border — so terrain stays readable under the politics.
+    if(h.isCity) return `hsl(${cityHue(h.clusterRep!=null?h.clusterRep:i)} 60% 52%)`;
     return terrColor(G.terrainName[i]);
   }
   if(view==="population"){
@@ -273,51 +804,148 @@ function fillFor(i){
 }
 
 /* ---------- draw ---------- */
-function resize(){ const dpr=window.devicePixelRatio||1; cv.width=cv.clientWidth*dpr; cv.height=cv.clientHeight*dpr; ctx.setTransform(dpr,0,0,dpr,0,0); draw(); }
+function resize(){ const dpr=window.devicePixelRatio||1; cv.width=cv.clientWidth*dpr; cv.height=cv.clientHeight*dpr; ctx.setTransform(dpr,0,0,dpr,0,0);
+  if(renderer) resizeGlobe(); draw(); }
 function draw(){
   if(!world){ return; }
+  if(proj==="mercator") drawMercator(); else drawGlobeFrame();
+}
+function drawMercator(){
   const dpr=window.devicePixelRatio||1;
   ctx.setTransform(dpr,0,0,dpr,0,0);
   ctx.fillStyle="#0b121b"; ctx.fillRect(0,0,cv.clientWidth,cv.clientHeight);
   const polys=md.graph.polys, n=md.graph.n, drawEdges=vw.scale>3.2;
-  // tiles
-  for(let i=0;i<n;i++){
-    const poly=polys[i]; if(!poly) continue;
-    ctx.beginPath();
-    for(let k=0;k<poly.length;k++){ const x=projX(poly[k][0]), y=projY(poly[k][1]); if(k===0)ctx.moveTo(x,y); else ctx.lineTo(x,y); }
-    ctx.closePath();
-    ctx.fillStyle=fillFor(i); ctx.fill();
-    if(drawEdges){ ctx.strokeStyle="rgba(9,15,22,.55)"; ctx.lineWidth=0.5; ctx.stroke(); }
+  const nCopies=copiesNeeded();
+  const borders=(view==="territory")?basinRings():null;   // topology is copy-independent — chain once
+  // the whole map — tiles, roads, arrows, cities — is drawn once per visible
+  // world-copy (side by side, offset by a multiple of 360°) so panning across
+  // the antimeridian is seamless and the canvas never shows empty background.
+  // Centered on whichever copy vw.lonC currently sits in (not literal 0) — after
+  // panning many world-widths away, the visible copies are near vw.lonC, not near 0.
+  const baseCopy=Math.round(vw.lonC/360);
+  for(let c=baseCopy-nCopies;c<=baseCopy+nCopies;c++){
+    const off=c*360;
+    for(let i=0;i<n;i++){
+      const poly=polys[i]; if(!poly) continue;
+      ctx.beginPath();
+      for(let k=0;k<poly.length;k++){ const x=projX(poly[k][0]+off), y=projY(poly[k][1]); if(k===0)ctx.moveTo(x,y); else ctx.lineTo(x,y); }
+      ctx.closePath();
+      ctx.fillStyle=fillFor(i); ctx.fill();
+      if(view==="territory"&&isFarmed(i)){ ctx.fillStyle=hatchPattern(cityHue(world.hexes[i].basin)); ctx.fill(); }
+      if(drawEdges){ ctx.strokeStyle="rgba(9,15,22,.55)"; ctx.lineWidth=0.5; ctx.stroke(); }
+    }
+    if(borders) drawBasinBorders(borders,off);
+    if($("showArrows").checked) drawArrows(off);
+    if($("showRoads").checked) drawRoads(off);
+    if($("showCities").checked) drawCities(off);
   }
-  if($("showArrows").checked) drawArrows();
-  if($("showRoads").checked) drawRoads();
-  if($("showCities").checked) drawCities();
   if(hoverTile>=0) drawHoverHalo();
 }
-function drawRoads(){
+// Inset distance from the shared tile edge, in PIXELS (screen space, not map
+// space): two basins meeting along an edge each pull their border this far into
+// their OWN territory, so both stay visible side by side instead of one painting
+// over the other. Screen space is what keeps that true at every zoom — a map-space
+// inset would collapse to nothing when zoomed out, which is exactly where the
+// overlap was worst.
+const BORDER_INSET_PX=3.4;
+// ...but never more than a fraction of the tile itself. Zoomed out, tiles get to
+// ~4px across and a flat 3.4px inset is wider than a tile's half-width: the ring
+// turns inside-out through its own centre (measured: 17 of 33 rings inverted at
+// min zoom). Clamping to a share of the on-screen tile keeps the inset a proper
+// inset at every zoom, at the cost of the two borders sitting closer together when
+// zoomed way out — where the tiles are a few px anyway.
+const BORDER_INSET_TILE_FRAC=0.30;
+function borderInsetPx(){
+  const tilePx=(md.graph.hopLen*180/Math.PI)*vw.scale;   // ~one tile's width on screen
+  return Math.min(BORDER_INSET_PX, tilePx*BORDER_INSET_TILE_FRAC);
+}
+// A ring's screen points, pushed inward. Inward is decided per segment by the
+// tile that OWNS it (toward that tile's centre), which is right for a basin's
+// outer ring and for holes around enclaves alike — no winding assumptions.
+// Corners take the average of their two segment normals, so the inset ring stays
+// joined up instead of breaking into notched segments.
+function insetRingScreen(chain, off, W){
+  const cll=md.graph.cornerLL, n=chain.length;
+  const P=new Array(n), C=new Array(n);
+  let prevLon=null;
+  for(let k=0;k<n;k++){
+    const c=chain[k].c1;
+    let lon=cll[c*2+1];
+    // unwrap along the chain so a ring crossing the antimeridian stays continuous
+    if(prevLon!=null) lon=seamPair(prevLon,lon);
+    prevLon=lon;
+    P[k]=[projX(lon+off), projY(cll[c*2])];
+    const t=chain[k].tile;
+    C[k]=[projX(seamPair(lon,tLon(t))+off), projY(tLat(t))];
+  }
+  const Nrm=new Array(n);
+  for(let k=0;k<n;k++){
+    const a=P[k], b=P[(k+1)%n];
+    let dx=b[0]-a[0], dy=b[1]-a[1];
+    const L=Math.hypot(dx,dy)||1; dx/=L; dy/=L;
+    let nx=-dy, ny=dx;
+    const mx=(a[0]+b[0])/2, my=(a[1]+b[1])/2;          // point it at the owning tile
+    if((C[k][0]-mx)*nx + (C[k][1]-my)*ny < 0){ nx=-nx; ny=-ny; }
+    Nrm[k]=[nx,ny];
+  }
+  const out=new Array(n);
+  for(let k=0;k<n;k++){
+    const a=Nrm[(k-1+n)%n], b=Nrm[k];
+    let nx=a[0]+b[0], ny=a[1]+b[1];
+    const L=Math.hypot(nx,ny);
+    if(L<1e-6){ nx=b[0]; ny=b[1]; } else { nx/=L; ny/=L; }
+    out[k]=[P[k][0]+nx*W, P[k][1]+ny*W];
+  }
+  return out;
+}
+function drawBasinBorders(ringsByBasin,off){
+  ctx.lineCap="round"; ctx.lineJoin="round";
+  const W=borderInsetPx();
+  ringsByBasin.forEach((rings,b)=>{
+    ctx.beginPath();
+    for(const chain of rings){
+      const pts=insetRingScreen(chain, off, W);
+      ctx.moveTo(pts[0][0],pts[0][1]);
+      for(let k=1;k<pts.length;k++) ctx.lineTo(pts[k][0],pts[k][1]);
+      ctx.closePath();
+    }
+    ctx.strokeStyle="rgba(9,15,22,.9)"; ctx.lineWidth=4.4; ctx.stroke();     // dark casing -> reads bold on any terrain
+    ctx.strokeStyle=`hsl(${cityHue(b)} 85% 62%)`; ctx.lineWidth=2.2; ctx.stroke();
+  });
+}
+function drawRoads(off){
   ctx.lineCap="round";
   for(const key in world.roadState){
     const rs=world.roadState[key]; const p=key.split("-"), a=+p[0], b=+p[1];
-    const ax=projX(tLon(a)),ay=projY(tLat(a)),bx=projX(tLon(b)),by=projY(tLat(b));
+    const lonA=tLon(a), lonB=seamPair(lonA,tLon(b));
+    const ax=projX(lonA+off),ay=projY(tLat(a)),bx=projX(lonB+off),by=projY(tLat(b));
     const t=clamp(1-rs.decay,0,1);
     ctx.strokeStyle=`rgba(240,196,106,${0.28+0.6*t})`; ctx.lineWidth=1.4+2.2*t;
     ctx.beginPath(); ctx.moveTo(ax,ay); ctx.lineTo(bx,by); ctx.stroke();
   }
 }
-function drawArrows(){
+function drawArrows(off){
+  // one arrow per net food/fish producer, pointing to the city it ships to (its basin)
   let maxOut=1; for(const h of world.hexes) if(h.out>maxOut) maxOut=h.out;
   ctx.lineCap="round";
   for(let i=0;i<world.hexes.length;i++){ const h=world.hexes[i];
     if(h.isCity||h.basin<0||!(h.out>0.5)) continue;
-    const ax=projX(tLon(i)),ay=projY(tLat(i)),bx=projX(tLon(h.basin)),by=projY(tLat(h.basin));
+    const lonA=tLon(i), lonB=seamPair(lonA,tLon(h.basin));
+    const ax=projX(lonA+off),ay=projY(tLat(i)),bx=projX(lonB+off),by=projY(tLat(h.basin));
     const t=clamp(h.out/maxOut,0.1,1);
+    const ang=Math.atan2(by-ay,bx-ax);
     ctx.strokeStyle="rgba(111,176,127,"+(0.18+0.4*t)+")"; ctx.lineWidth=0.5+1.6*t;
     ctx.beginPath(); ctx.moveTo(ax,ay); ctx.lineTo(bx,by); ctx.stroke();
+    const hl=5+3*t;
+    ctx.beginPath(); ctx.moveTo(bx,by);
+    ctx.lineTo(bx-hl*Math.cos(ang-0.45),by-hl*Math.sin(ang-0.45));
+    ctx.lineTo(bx-hl*Math.cos(ang+0.45),by-hl*Math.sin(ang+0.45));
+    ctx.closePath(); ctx.fillStyle="rgba(111,176,127,"+(0.3+0.45*t)+")"; ctx.fill();
   }
 }
-function drawCities(){
+function drawCities(off){
   for(let ci=0; ci<world.cities.length; ci++){
-    const rep=world.cities[ci], x=projX(tLon(rep)), y=projY(tLat(rep));
+    const rep=world.cities[ci], x=projX(tLon(rep)+off), y=projY(tLat(rep));
     const N=(world.cityN&&world.cityN[rep])||0, rad=clamp(3+Math.sqrt(N)/40,3,14);
     ctx.beginPath(); ctx.arc(x,y,rad,0,Math.PI*2);
     ctx.fillStyle=`hsl(${cityHue(rep)} 70% 55%)`; ctx.globalAlpha=0.92; ctx.fill(); ctx.globalAlpha=1;
@@ -326,8 +954,10 @@ function drawCities(){
 }
 function drawHoverHalo(){
   const poly=md.graph.polys[hoverTile]; if(!poly) return;
+  // place the highlight on whichever world-copy the cursor is actually over
+  const off=Math.round((hoverLonQuery - tLon(hoverTile))/360)*360;
   ctx.beginPath();
-  for(let k=0;k<poly.length;k++){ const x=projX(poly[k][0]), y=projY(poly[k][1]); if(k===0)ctx.moveTo(x,y); else ctx.lineTo(x,y); }
+  for(let k=0;k<poly.length;k++){ const x=projX(poly[k][0]+off), y=projY(poly[k][1]); if(k===0)ctx.moveTo(x,y); else ctx.lineTo(x,y); }
   ctx.closePath(); ctx.strokeStyle="#eaf6ff"; ctx.lineWidth=2; ctx.stroke();
 }
 
@@ -409,6 +1039,101 @@ function updateCityCard(i){
   function r(n,v){ return `<div class="row"><span class="n">${n}</span><b>${v}</b></div>`; }
 }
 
+/* ---------- export: full economy state as JSON, for offline analysis ---------- */
+const er1=x=>Math.round((+x||0)*10)/10, er2=x=>Math.round((+x||0)*100)/100, er3=x=>Math.round((+x||0)*1000)/1000;
+// transport cost FROM tile i TO every reachable city (cityId -> cost). A city
+// missing from the map is unreachable from that tile (blocked terrain / no sea route).
+function transportFrom(i){
+  const m={};
+  for(let ci=0;ci<world.cities.length;ci++){
+    const rep=world.cities[ci], arr=world.transport[rep], c=arr?arr[i]:Infinity;
+    if(isFinite(c)) m[rep]=er3(c);
+  }
+  return m;
+}
+function exportTiles(){
+  const G=md.graph, n=G.n, out=new Array(n);
+  for(let i=0;i<n;i++){
+    const h=world.hexes[i];
+    const rec={ i, lat:+tLat(i).toFixed(4), lon:+tLon(i).toFixed(4),
+      terrain:G.terrainName[i], passable:h.passable, isCity:h.isCity, neighbors:world.adj[i] };
+    if(h.isCity){
+      const rep=h.clusterRep!=null?h.clusterRep:i;
+      rec.clusterRep=rep;
+      rec.goldWorkers=er2(h.goldWorkers); rec.goldProd=er2(h.goldProd); rec.govWorkers=er2(h.govWorkers);
+      if(h.fishCap>0){ // coastal city tiles also fish and pick a basin, like farmland
+        rec.fishCap=er2(h.fishCap); rec.fishermen=er2(h.fishermen);
+        rec.basin=h.basin; rec.netback=isFinite(h.netback)?er3(h.netback):null;
+        rec.transportToCity=transportFrom(i);
+      }
+    } else if(h.passable){
+      rec.capacity={farm:er2(h.C),fish:er2(h.fishCap),total:er2(h.Cfood)};
+      rec.labor={market:er2(h.Lmkt),subsistence:er2(h.Lsubw),maxSubsistence:er2(h.Lsub)};
+      rec.production={marketFood:er2(h.marketFood),subsFood:er2(h.subsFood),totalFood:er2(h.foodProd),netSurplus:er2(h.foodNet)};
+      rec.basin=h.basin; rec.netback=isFinite(h.netback)?er3(h.netback):null;
+      rec.transportToCity=transportFrom(i);
+    } else {
+      rec.water=!!G.water[i];
+    }
+    out[i]=rec;
+  }
+  return out;
+}
+function exportCities(){
+  const rows=(world.metrics&&world.metrics.cityRows)||[], byId={};
+  rows.forEach(r=>byId[r.city]=r);
+  return world.cities.map(rep=>{
+    const cl=world.clusterOf[rep], row=byId[rep]||{};
+    return { id:rep, tiles:cl?cl.tiles.slice():[rep],
+      lat:+tLat(rep).toFixed(4), lon:+tLon(rep).toFixed(4),
+      productivity:er2(world.Aof[rep]), population:er1((world.cityN&&world.cityN[rep])||0),
+      price:er3((world.prices&&world.prices[rep])||0),
+      output:er1(row.Y||0), tax:er1(row.tax||0), netGold:er1(row.netGold||0),
+      foodBill:er1(row.foodBill||0), crewFood:er2(row.crewFood||0), topShare:er3(row.topShare||0) };
+  });
+}
+function exportRoads(){
+  const segs=[];
+  for(const key in world.roadState){
+    const rs=world.roadState[key], p=key.split("-");
+    segs.push({a:+p[0],b:+p[1],decay:er3(rs.decay),banditHold:er3(rs.banditHold||0)});
+  }
+  return segs;
+}
+function exportProjects(){
+  return (world.projects||[]).map(pr=>({a:pr.a,b:pr.b,builtSegments:pr.built,totalSegments:pr.edges.length,
+    stalled:!!pr.stalled,stallReason:pr.stallReason||null}));
+}
+function downloadJSON(filename,obj){
+  const data=JSON.stringify(obj);
+  const blob=new Blob([data],{type:"application/json"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a"); a.href=url; a.download=filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  console.log("Exported "+filename+" ("+(data.length/1024).toFixed(1)+" KB)");
+}
+function exportMap(){
+  if(!world){ alert("No world to export yet."); return; }
+  const payload={
+    _notes:"Von Thünen hex economy export from planet_economy.html (game/toy/). Coordinates are [lat,lon] degrees. "+
+      "tiles[] covers every tile; farmland and fishing city tiles carry transportToCity: {cityId: cost FROM that tile TO the city} — "+
+      "only finite/reachable cities are listed, a city missing from the map is unreachable from that tile (blocked terrain or no sea route). "+
+      "basin = the cityId (a tile index) the tile currently ships its surplus to, or -1 if unserved. "+
+      "netback = price(basin) - transport(tile, basin) at the CURRENT basin; a rival city must beat it by more than cfg.basinHyst "+
+      "(fractional margin) to steal the tile next tick (hysteresis, prevents flip-flop) — compare price(candidate) - transportToCity[candidate] "+
+      "against netback to see why a specific tile isn't shipping to a specific city. cities[].id is the tile index of that city's cluster "+
+      "representative — the same id space as tile indices, basin, and transportToCity keys. roads[] lists built segments (decay 0=fresh, "+
+      "1=fully decayed to overland baseline, cost multiplier = cfg.roadMult + decay*(1-cfg.roadMult)); projects[] lists queued/building road "+
+      "projects (stalled=true means unaffordable this tick, see stallReason).",
+    exportedAt:new Date().toISOString(), mapName:md.name, tick:world.tick,
+    cfg:world.cfg,
+    metrics:Object.assign({},world.metrics,{cityRows:undefined}), // cities[] already carries this, avoid duplicating
+    cities:exportCities(), roads:exportRoads(), projects:exportProjects(), tiles:exportTiles()
+  };
+  downloadJSON("planet-economy-export-t"+world.tick+".json", payload);
+}
+
 /* ---------- run loop ---------- */
 function stepOnce(){ Econ.step(world); updateReadouts(); if(hoverTile>=0) updateCityCard(hoverTile); draw(); }
 function play(){ if(playing) return; playing=true; $("playBtn").textContent="⏸ Pause"; $("playBtn").classList.add("active");
@@ -417,37 +1142,52 @@ function stop(){ playing=false; if(timer) clearInterval(timer); timer=null; $("p
 function togglePlay(){ playing?stop():play(); }
 
 /* ---------- interaction ---------- */
+// listeners live on the WRAPPER (not either canvas) so they keep working
+// regardless of which canvas (2D map / 3D globe) is currently visible.
 let dragging=false, dragMoved=false, lastX=0, lastY=0;
-cv.addEventListener("mousedown",e=>{ dragging=true; dragMoved=false; lastX=e.clientX; lastY=e.clientY; });
+function relXY(e){ const r=mapWrap.getBoundingClientRect(); return [e.clientX-r.left, e.clientY-r.top]; }
+mapWrap.addEventListener("mousedown",e=>{ dragging=true; dragMoved=false; lastX=e.clientX; lastY=e.clientY; });
 window.addEventListener("mouseup",e=>{
   if(dragging && !dragMoved) handleClick(e);
   dragging=false;
 });
-cv.addEventListener("mousemove",e=>{
-  const rect=cv.getBoundingClientRect(), mx=e.clientX-rect.left, my=e.clientY-rect.top;
+mapWrap.addEventListener("mousemove",e=>{
+  if(!world) return;
+  if(proj!=="mercator"){ globeMouseMove(e); return; }
+  const [mx,my]=relXY(e);
   if(dragging && tool==="pan"){
     const dx=e.clientX-lastX, dy=e.clientY-lastY; if(Math.abs(dx)+Math.abs(dy)>2) dragMoved=true;
-    vw.lonC-=dx/vw.scale; vw.latC+=dy/vw.scale; lastX=e.clientX; lastY=e.clientY; draw(); return;
+    vw.lonC-=dx/vw.scale; vw.latC=clamp(vw.latC+dy/vw.scale,-MERC_CLAMP,MERC_CLAMP);
+    lastX=e.clientX; lastY=e.clientY; draw(); return;
   }
   if(dragging) dragMoved=true;
-  const i=pickTile(invLon(mx), invLat(my));
+  hoverLonQuery=invLon(mx);
+  const i=pickTile(hoverLonQuery, invLat(my));
   if(i!==hoverTile){ hoverTile=i; if(world.hexes[i]&&world.hexes[i].isCity) updateCityCard(i); draw(); }
   if(i>=0) showTip(i, mx, my); else $("tileTip").style.display="none";
 });
-cv.addEventListener("mouseleave",()=>{ hoverTile=-1; $("tileTip").style.display="none"; draw(); });
-cv.addEventListener("wheel",e=>{
+mapWrap.addEventListener("mouseleave",()=>{
+  hoverTile=-1; $("tileTip").style.display="none";
+  if(!world) return;
+  if(proj==="mercator") draw(); else renderGlobeFrame();
+});
+mapWrap.addEventListener("wheel",e=>{
   e.preventDefault();
-  const rect=cv.getBoundingClientRect(), mx=e.clientX-rect.left, my=e.clientY-rect.top;
+  if(!world) return;
+  if(proj!=="mercator"){ globeWheel(e); return; }
+  const [mx,my]=relXY(e);
   const lon0=invLon(mx), lat0=invLat(my);
   vw.scale=clamp(vw.scale*(e.deltaY<0?1.12:0.89), 1.2, 60);
   // keep cursor anchored
-  vw.lonC=lon0-(mx-cv.clientWidth/2)/vw.scale; vw.latC=lat0+(my-cv.clientHeight/2)/vw.scale;
+  vw.lonC=lon0-(mx-cv.clientWidth/2)/vw.scale; vw.latC=clamp(lat0+(my-cv.clientHeight/2)/vw.scale,-MERC_CLAMP,MERC_CLAMP);
   draw();
 },{passive:false});
 
 function handleClick(e){
-  const rect=cv.getBoundingClientRect(), mx=e.clientX-rect.left, my=e.clientY-rect.top;
-  const i=pickTile(invLon(mx), invLat(my)); if(i<0) return;
+  if(!world) return;
+  const [mx,my]=relXY(e);
+  const i=proj==="mercator" ? pickTile(invLon(mx), invLat(my)) : pickGlobeTile(mx,my);
+  if(i<0) return;
   const h=world.hexes[i];
   if(tool==="city"){
     if(h.isCity) Econ.removeCity(world,i); else if(h.passable) Econ.foundCity(world,i);
@@ -465,6 +1205,9 @@ function flash(msg){ const el=$("hint"); if(!msg){el.style.display="none";return
 /* ---------- controls wiring ---------- */
 function buildKnobs(){
   const groups={}; const host=$("knobs");
+  // Snapshot defaults BEFORE any permalink touches them — paramsFromState() diffs
+  // against these to decide what is worth writing into a link.
+  for(const k in KNOBS) if(KNOBS[k].def===undefined) KNOBS[k].def=KNOBS[k].v;
   for(const k in KNOBS){ const kn=KNOBS[k]; (groups[kn.g]=groups[kn.g]||[]).push(k); }
   for(const g in groups){
     const gh=document.createElement("div"); gh.className="group";
@@ -485,14 +1228,22 @@ function buildKnobs(){
 document.querySelectorAll("#tools button").forEach(b=>b.addEventListener("click",()=>{
   document.querySelectorAll("#tools button").forEach(x=>x.classList.remove("active"));
   b.classList.add("active"); tool=b.dataset.tool; roadFrom=-1;
-  cv.style.cursor = tool==="pan"?"grab":"crosshair";
+  setCursor(tool==="pan"?"grab":"crosshair");
+}));
+document.querySelectorAll("#proj button").forEach(b=>b.addEventListener("click",()=>{
+  document.querySelectorAll("#proj button").forEach(x=>x.classList.remove("active"));
+  b.classList.add("active"); setProjection(b.dataset.proj);
 }));
 document.querySelectorAll("#views button").forEach(b=>b.addEventListener("click",()=>{
   document.querySelectorAll("#views button").forEach(x=>x.classList.remove("active"));
   b.classList.add("active"); view=b.dataset.view; draw(); buildLegend();
 }));
 $("playBtn").onclick=togglePlay; $("stepBtn").onclick=()=>{stop();stepOnce();}; $("resetBtn").onclick=resetWorld;
-$("fitBtn").onclick=()=>{fitView();draw();};
+$("fitBtn").onclick=()=>{
+  if(proj==="mercator"){ fitView(); draw(); }
+  else { camAz=0; camEl=20; camDist=globeRadius*2.6; updateGlobeCamera(); renderGlobeFrame(); }
+};
+$("exportBtn").onclick=exportMap;
 ["malthus","seaTravel","urbanize"].forEach(id=>$(id).addEventListener("change",()=>{
   if(!world) return; world.cfg[id]=$(id).checked; Econ.reconfigure(world); if(!playing) stepOnce();
 }));
@@ -501,17 +1252,28 @@ $("fitBtn").onclick=()=>{fitView();draw();};
 $("seedN").addEventListener("input",()=>$("seedN_n").value=$("seedN").value);
 $("seedN_n").addEventListener("change",()=>$("seedN").value=$("seedN_n").value);
 window.addEventListener("keydown",e=>{
-  if(e.target.tagName==="INPUT") return;
+  if(e.target.tagName==="INPUT") return;   // let arrows nudge the knob sliders
+  if(ARROW_KEYS[e.key]){
+    if(proj==="mercator") return;          // the flat map pans by drag; leave its arrows alone
+    e.preventDefault();                    // don't scroll the page while orbiting
+    arrowHeld[e.key]=true; startOrbit(); return;
+  }
   if(e.code==="Space"){ e.preventDefault(); togglePlay(); }
   else if(e.key==="s"){ stop(); stepOnce(); }
   else if(e.key==="r"){ resetWorld(); }
 });
+window.addEventListener("keyup",e=>{ if(ARROW_KEYS[e.key]) arrowHeld[e.key]=false; });
+// a key held while the tab loses focus never fires keyup -> the globe would spin forever
+window.addEventListener("blur",releaseArrows);
 window.addEventListener("resize",resize);
 
 function buildLegend(){
   const L=$("legend"); const sw=(c,t)=>`<span class="k"><span class="sw" style="background:${c}"></span>${t}</span>`;
   let html="";
-  if(view==="terrain"||view==="territory") html=sw(TERRCOL.grassland,"land")+sw(TERRCOL.ocean,"sea")+sw(TERRCOL.mountain,"mountain")+sw("hsl(40 60% 50%)","city / basin");
+  if(view==="territory") html=sw(TERRCOL.grassland,"terrain (base)")+sw("hsl(40 60% 52%)","city tile")+
+    `<span class="k"><span class="sw" style="background:${TERRCOL.grassland};background-image:repeating-linear-gradient(45deg,hsl(40 80% 60%) 0 1.5px,transparent 1.5px 5px)"></span>farmland (owner's hue)</span>`+
+    `<span class="k"><span class="sw" style="background:transparent;border:2px solid hsl(40 85% 62%);border-radius:2px"></span>basin border</span>`;
+  else if(view==="terrain") html=sw(TERRCOL.grassland,"land")+sw(TERRCOL.ocean,"sea")+sw(TERRCOL.mountain,"mountain");
   else if(view==="capacity") html=sw(heat(0.1),"poor")+sw(heat(0.5),"farm")+sw(heat(0.95),"rich")+" — from the map's calories";
   else if(view==="population") html=sw(heat(0.1),"sparse")+sw(heat(0.9),"dense")+sw("#f0c46a","city");
   else if(view==="wealth") html=sw(heat(0.1),"low netback")+sw(heat(0.9),"high")+sw("#f0c46a","city");
@@ -522,11 +1284,28 @@ function buildLegend(){
 /* ---------- boot ---------- */
 function initFrom(json){
   md=GameMapAdapter.adaptGameMap(json, {withPolys:true, name:"default map"});
+  buildEdgeIndex();
   $("loading").style.display="none";
   $("mapInfo").innerHTML=`<b>${md.graph.n}</b> tiles · <b>${md.graph.polys?md.sites.length:0}</b> candidate city sites · calorie scale ×${md.graph.capScale.toFixed(2)} · median land hop cost ${md.graph.mcNorm.toFixed(1)}<br>Minerals present: ${Object.keys(md.graph.minerals).filter(k=>md.graph.minerals[k].some(v=>v>0)).join(", ")||"none"}`;
   resize(); fitView(); buildWorld(); buildLegend();
+  if(proj!=="mercator") buildGlobeMesh();
 }
 buildKnobs();
+// Must run AFTER buildKnobs (the knob DOM has to exist to be written to) and BEFORE
+// the map load calls buildWorld(), which consumes PENDING.
+PENDING=applyParams();
+
+$("copyLink").addEventListener("click",()=>{
+  const url=permalink({ticks:world?world.tick:0});
+  const note=$("linkNote");
+  const done=ok=>{ note.textContent=ok?("copied — "+url.length+" chars, replays at tick "+(world?world.tick:0)):"copy failed — link is in the address bar"; setTimeout(()=>{note.textContent="encodes every non-default knob + the seeded cities";},4000); };
+  location.hash=url.split("#")[1]||"";                 // always reflect it in the address bar
+  if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(()=>done(true),()=>done(false));
+  else done(false);
+});
+// Pasting a different link into the same tab should rebuild, not silently do nothing.
+window.addEventListener("hashchange",()=>{ PENDING=applyParams(); if(md) resetWorld(); });
+
 fetch(MAP_URL).then(r=>{ if(!r.ok) throw new Error(r.status); return r.json(); })
   .then(initFrom)
   .catch(e=>{ $("loading").innerHTML=`Couldn't load <code>${MAP_URL}</code> (${e}).<br><span style="font-size:11px;color:var(--dim)">Serve the repo root (e.g. <span class="kbd">python -m http.server 8765</span>) and open <span class="kbd">/game/toy/planet_economy.html</span>, or use “Load a map…”.</span>`; });

@@ -24,7 +24,9 @@
       name: spec.name, label: spec.label, spec: spec,
       reset: function () { st = { founded: [], idx: 0, nextAt: 0, roadKeys: {} }; },
       onTick: function (world, t, siteIdx) {
-        Econ.setTax(world, spec.tau);
+        // tau == null => NEUTRAL: leave the swept cfg.tax untouched (so tax can be
+        // a clean sweep axis for break-finding). Otherwise the strategy sets it.
+        if (spec.tau != null) Econ.setTax(world, spec.tau);
         // ---- found next city on schedule ----
         if (st.idx < spec.cities && t >= st.nextAt) {
           // advance to next unsettled site
@@ -79,7 +81,11 @@
     policy({ name: 'urban_tall',    label: 'Urban (tall)',    cities: 2, interval: 10, tau: 0.30, roads: 'line' }),
     policy({ name: 'mercantile',    label: 'Mercantile',      cities: 5, interval: 12, tau: 0.35, roads: 'full' }),
     policy({ name: 'frontier',      label: 'Frontier',        cities: 6, interval: 18, tau: 0.20, roads: 'tree' }),
-    policy({ name: 'balanced',      label: 'Balanced',        cities: 3, interval: 14, tau: 0.15, roads: 'tree' })
+    policy({ name: 'balanced',      label: 'Balanced',        cities: 3, interval: 14, tau: 0.15, roads: 'tree' }),
+    // NEUTRAL DRIVER for parameter break-finding: founds a fixed set of the best
+    // sites and wires a simple road tree, but touches NO swept knob (tau: null =>
+    // no setTax), so every cost/economy knob — including tax — is a clean axis.
+    policy({ name: 'probe',         label: 'Probe (neutral)', cities: 6, interval: 10, tau: null, roads: 'tree' })
   ];
 
   function roster() { ROSTER.forEach(function (s) { s.reset(); }); return ROSTER; }

@@ -1,0 +1,20 @@
+{
+  "_comment": "SHAPE sweep on the game's default map. Question is not 'how big does it get' but 'how does the rule-set SPEND the map': how many cities, how much land worked, and how much of that land no city can reach at any price (the city-less carpet). Axes are the levers from the marginal-cap + dessert rework: kappa sets the viability cliff at C=kappa*c (EXTENT), desserts/premium/displace set market reach and how much grain a luxury burns, newCoreMinFarmers gates town ignition. dessertX fixed at 3 so premium*X (the frontier multiplier) stays in the sane 1.5-2.4 band. urbanize:true is REQUIRED — with it off no city ever ignites and every shape metric is meaningless. One neutral 'probe' strategy so each axis reads as a clean parameter. Run: node harness.js sweep_planet_shape.json",
+  "maps": ["planet"],
+  "strategies": ["probe"],
+  "axes": {
+    "kappa": [120, 200, 300, 400],
+    "desserts": [false, true],
+    "dessertDisplace": [0, 1, 3],
+    "dessertPremium": [0.5, 0.8],
+    "newCoreMinFarmers": [1000, 1500, 2500],
+    "K0": [0.5, 1.0]
+  },
+  "fixed": {
+    "dessertX": 3.0,
+    "roadMult": 0.30, "edgeVar": 0.55, "migrate": 0.5, "r": 0.10,
+    "malthus": true, "urbanize": true, "seaTravel": false, "yieldVar": 0
+  },
+  "runOpts": { "maxTicks": 300, "minTicks": 120, "sampleEvery": 15 },
+  "out": "out/sweep_planet_shape.jsonl"
+}

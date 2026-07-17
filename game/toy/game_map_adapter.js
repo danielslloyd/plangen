@@ -5,8 +5,9 @@
 //
 //   adaptGameMap(rawJson, opts) -> {
 //     name, seed,
-//     graph: { n, adj, passable, water, terrainName, capBase, fishBonus,
-//              costOut, costIn, coords, hopLen, minerals, polys },
+//     graph: { n, adj, passable, water, terrainName, capBase, fishBonus, elevation,
+//              costOut, costIn, coords, hopLen, minerals,
+//              polys, tileCorners, cornerElev, cornerLL },  // rendering only; null when withPolys:false
 //     sites,          // candidate city tiles (from cityPriority) for strategies
 //     meta
 //   }
@@ -86,14 +87,21 @@
     return chosen;
   }
 
-  // Per-tile [lon,lat] (degrees) polygon rings, corner longitudes unwrapped to the
-  // tile centre (so tiles crossing the antimeridian stay contiguous). Rendering only.
-  function buildPolys(g, nCorners, coordsDeg) {
+  // Per-corner [lat,lon] degrees (same layout as coordsDeg), NOT unwrapped — each
+  // corner has one canonical position. Callers that chain corners into a path
+  // across the antimeridian must unwrap longitudes as they walk it.
+  function buildCornerLL(g, nCorners) {
     var cornerLL = new Float64Array(nCorners * 2);
     for (var c = 0; c < nCorners; c++) {
       var ll = llFromXYZ(g.corners[c * 3] / 10000, g.corners[c * 3 + 1] / 10000, g.corners[c * 3 + 2] / 10000);
       cornerLL[c * 2] = ll[0] * 180 / Math.PI; cornerLL[c * 2 + 1] = ll[1] * 180 / Math.PI;
     }
+    return cornerLL;
+  }
+
+  // Per-tile [lon,lat] (degrees) polygon rings, corner longitudes unwrapped to the
+  // tile centre (so tiles crossing the antimeridian stay contiguous). Rendering only.
+  function buildPolys(g, cornerLL, coordsDeg) {
     var polys = new Array(g.tileCorners.length);
     for (var t = 0; t < g.tileCorners.length; t++) {
       var cLon = coordsDeg[t * 2 + 1], ring = g.tileCorners[t], poly = new Array(ring.length);
@@ -108,6 +116,37 @@
     return polys;
   }
 
+  // Per-CORNER (mesh node) elevation, for the raised globe. A tile's own elevation
+  // is a single number for the whole polygon, which renders as a flat slab hovering
+  // at its own height; giving every shared node a height instead makes the tiles
+  // meet along their shared edges and read as terrain. Rule (Dan, 2026-07-16): a
+  // node touching ANY water tile sits at sea level, so coastlines pin to 0 and land
+  // slopes down into the sea; otherwise the node takes the MEDIAN of its (usually
+  // three) surrounding tiles' elevations. Never negative — the sea floor isn't drawn.
+  function buildCornerElev(g, nCorners, elevation, water) {
+    var out = new Float64Array(nCorners);
+    if (!elevation) return out;
+    var around = new Array(nCorners);
+    for (var t = 0; t < g.tileCorners.length; t++) {
+      var ring = g.tileCorners[t];
+      for (var k = 0; k < ring.length; k++) {
+        var c = ring[k];
+        (around[c] || (around[c] = [])).push(t);
+      }
+    }
+    for (var ci = 0; ci < nCorners; ci++) {
+      var ts = around[ci];
+      if (!ts) continue;
+      var elevs = [], wet = false;
+      for (var m = 0; m < ts.length; m++) {
+        if (water[ts[m]]) { wet = true; break; }
+        elevs.push(elevation[ts[m]]);
+      }
+      out[ci] = wet ? 0 : Math.max(0, median(elevs));
+    }
+    return out;
+  }
+
   function adaptGameMap(json, opts) {
     opts = opts || {};
     if (!json || json.format !== 'plangen-game-map') throw new Error('Not a plangen-game-map file');
@@ -118,6 +157,8 @@
     var TN = json.legend.terrain;
     var terrain = decodeLayer(json.tileLayers.terrain, n);
     var calories = decodeLayer(json.tileLayers.calories, n);
+    // signed elevation (<=0 water), display/rendering only — NOT used by the economy.
+    var elevation = json.tileLayers.elevation ? decodeLayer(json.tileLayers.elevation, n) : null;
 
     // classify tiles ---------------------------------------------------------
     var water = new Uint8Array(n), passable = new Uint8Array(n), terrainName = new Array(n);
@@ -188,7 +229,11 @@
     var cityPriority = json.tileLayers.cityPriority ? decodeLayer(json.tileLayers.cityPriority, n) : null;
     var sites = pickSites(n, passable, cityPriority, capBase, coords, hopLen, maxSites, minSpacing);
 
-    var polys = (opts.withPolys === false) ? null : buildPolys(g, nC, coordsDeg);
+    // rendering-only data — the harness skips it (withPolys:false)
+    var wantRender = (opts.withPolys !== false);
+    var cornerLL = wantRender ? buildCornerLL(g, nC) : null;
+    var polys = wantRender ? buildPolys(g, cornerLL, coordsDeg) : null;
+    var cornerElev = wantRender ? buildCornerElev(g, nC, elevation, water) : null;
 
     return {
       name: opts.name || ('planet-' + (json.meta.seed || 'map')),
@@ -196,11 +241,13 @@
       graph: {
         n: n, adj: adj,
         passable: passable, water: water, terrainName: terrainName,
-        capBase: capBase, fishBonus: fishBonus,
+        capBase: capBase, fishBonus: fishBonus, elevation: elevation,
         costOut: costOut, costIn: costIn,
         coords: coords, coordsDeg: coordsDeg, hopLen: hopLen,
         capScale: capScale, mcNorm: mcNorm,
         minerals: minerals, polys: polys,
+        tileCorners: wantRender ? g.tileCorners : null,
+        cornerElev: cornerElev, cornerLL: cornerLL,
         cityPriority: cityPriority ? Array.from(cityPriority) : null
       },
       sites: sites, meta: json.meta

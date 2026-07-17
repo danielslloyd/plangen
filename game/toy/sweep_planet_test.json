@@ -1,0 +1,9 @@
+{
+  "_comment": "TEST sweep on the game's default map (the planet). Tiny grid to validate the pipeline, the graceful-interrupt behavior, and to MEASURE per-game wall time before sizing sweep_planet_overnight.json. One neutral 'probe' strategy so every axis is a clean parameter (no per-tick setTax override); focus is break-finding, not strategy comparison. Run: node harness.js sweep_planet_test.json  (or npm run sweep:test)",
+  "maps": ["planet"],
+  "strategies": ["probe"],
+  "axes": { "K0": [0.5, 1.0, 2.0], "roadBatchGold": [4, 8, 16] },
+  "fixed": { "roadMult": 0.30, "edgeVar": 0.55, "migrate": 0.5, "r": 0.10, "malthus": true, "urbanize": false, "seaTravel": false, "yieldVar": 0 },
+  "runOpts": { "maxTicks": 300, "minTicks": 120, "sampleEvery": 15 },
+  "out": "out/sweep_planet_test.jsonl"
+}

@@ -1,0 +1,18 @@
+{
+  "_comment": "OVERNIGHT break-finding sweep on the game's default map (the planet). One neutral 'probe' strategy so every axis is a clean parameter (games == rule-sets). Axes push the key cost/economy knobs toward their extremes to find where the game breaks (runaway / collapse / non-convergence) or goes degenerate (single-city dominance, roads never built, network underfunded). 8 axes -> 5*3*3*4*4*3*3*3 = 19440 games. At ~1-2 games/s on ~20 workers this is a few hours; it is crash-safe (append-on-batch + manifest checkpoint every 100 games) and Ctrl-C-safe (partial jsonl + partial:true manifest kept). Resize the axes to taste. Run: node harness.js sweep_planet_overnight.json --jobs <cpus-1>  (or npm run sweep:overnight). Then: npm run analyze:planet",
+  "maps": ["planet"],
+  "strategies": ["probe"],
+  "axes": {
+    "K0":              [0.2, 0.5, 1.0, 2.0, 3.0],
+    "roadMult":        [0.15, 0.45, 0.9],
+    "garrisonPerDist": [0, 3, 6],
+    "wageShare":       [1.0, 2.5, 4.0, 6.0],
+    "tau":             [0.0, 0.15, 0.35, 0.55],
+    "mCrew":           [0, 1, 3],
+    "urban":           [0.3, 0.6, 0.8],
+    "r":               [0.05, 0.10, 0.20]
+  },
+  "fixed": { "edgeVar": 0.55, "migrate": 0.5, "malthus": true, "urbanize": false, "seaTravel": false, "yieldVar": 0 },
+  "runOpts": { "maxTicks": 300, "minTicks": 120, "sampleEvery": 15 },
+  "out": "out/sweep_planet_overnight.jsonl"
+}

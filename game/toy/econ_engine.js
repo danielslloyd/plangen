@@ -50,6 +50,29 @@
     // farming / consumption
     c: 1.0,           // food eaten per worker / turn
     kappa: 200,       // farm labor-saturation scale (big => hundreds/hex)
+    // ---- desserts: value-density arbitrage --------------------------------
+    // dessertX food -> 1 dessert, which ships as ONE unit (so per-food-equivalent
+    // transport is divided by dessertX) and sells for dessertPremium * dessertX * P.
+    // The premium is a FRACTION (<1) of the embodied food value: at >=1 desserts would
+    // beat food even at the city gate and every tile would convert. Under 1, food wins
+    // near the city and desserts win beyond
+    //     d* = X*P*(1 - premium) / (K0 * (X - 1))
+    // which is the whole point: remote rich land ships whisky, not barley.
+    // Settled radius multiplies by premium*dessertX -- keep that product ~1.5-2.5 or the
+    // frontier outruns the map. desserts:false reproduces the pre-dessert equilibrium exactly.
+    desserts: false,
+    dessertX: 3.0,        // food per dessert (>1)
+    dessertPremium: 0.5,  // m: dessert price = m * dessertX * P  (MUST be < 1)
+    // D: units of city food demand displaced per dessert consumed, richest-first.
+    // Net grain BURNED per dessert is (dessertX - D), so D runs from most to least wasteful:
+    //   D = 0        -> pure export: X grain leaves the map and feeds nobody (default)
+    //   D = 1        -> X-1 burned
+    //   D = dessertX -> food-neutral: the dessert displaces exactly the grain it ate
+    //   D > dessertX -> grain from nothing; clamped in displaceOf().
+    // So D is a RELIEF valve, not an accelerator: raising it feeds more people, because
+    // less of the harvest is burned to make a luxury nobody eats. Measured on sample-map
+    // (X=3, m=0.5): D=0 -> N=182616, D=3 -> N=220928.
+    dessertDisplace: 0,
     // city / urbanization  (collapsed slider — see deriveUrban)
     urban: 0.5,       // 0 = agrarian, 1 = urban. Sets alpha, p, Abase.
     Abase: null,      // if null, derived from urban. City productivity coefficient.
@@ -103,11 +126,26 @@
     // New cores ignite in food-RICH, populous areas FAR from any city; spacing
     // self-limits how many (once cities cover the map, nowhere is "far" enough).
     newCoresPerTick: 1,
-    newCoreMinFarmers: 6000, // local farmer mass (radius 2) needed to seed a town
+    // Local farmer mass (radius 2) needed to seed a town. RECALIBRATED 6000 -> 1500 for
+    // the marginal cap: the whole point of that rule is fewer farmers per tile, so the
+    // old threshold silently stopped igniting anything (5 cities, 81% subsistence).
+    // Farmer mass is now a poor proxy for "can this place support a town" -- the honest
+    // gate is local SURPLUS (what actually feeds a city), which the marginal rule makes
+    // available per-tile. Left as farmer mass here to keep the knob's meaning stable for
+    // existing sweeps; see STATUS notes.
+    newCoreMinFarmers: 1500,
     newCoreMinDist: 5,       // physical hexes from the nearest city
     maxUrbanFrac: 0.5,  // hard backstop: urban tiles never exceed this of the land
     // population dynamics
     r: 0.10,          // Malthusian growth rate
+    // Growth controller. 'bangbang' = legacy (fixed +/-r*tanh(sig) step; rings at ~r
+    // peak-to-peak forever because it can only stop when sig is exactly 0).
+    // 'deadband'     = stop growing within growBand below the target (captures the cycle
+    //                  only if the band is wider than one step; settles BELOW capacity).
+    // 'proportional' = scale the step by the relative gap (settles ON capacity, no ripple).
+    growth: 'bangbang',
+    growBand: 0.05,   // 'deadband': stop growing when unfilled room <= this x Ksub
+    wRef: 0.25,       // 'proportional': wage at which growth runs at ~76% of full speed
     malthus: true,    // growth on/off (off => fixed pool, reallocation only)
     N0: 15,           // starting pool
     // migration (fractional flow toward equilibrium; 1 = instant)
@@ -499,10 +537,19 @@
 
   // ---- Clusters: connected components of urban (isCity) tiles = ONE city ----
   // Each cluster is fed to the equilibrium solver via a representative tile
-  // (its densest core); world.cities holds the reps, world.Aof[rep] its
+  // (its "downtown"); world.cities holds the reps, world.Aof[rep] its
   // agglomerated productivity, world.transport[rep] its multi-source distances.
+  //
+  // The rep is the cluster's OLDEST urban tile (world.urbanSince), NOT its
+  // densest one: growing a city must never move its downtown, because the rep is
+  // the city's identity everywhere else — its id in world.prices/Aof/transport,
+  // the key the UI colours it by, and the anchor road projects point at. Density
+  // only breaks ties among tiles urbanised on the same tick (e.g. the seeds at
+  // t=0). Two clusters that grow into each other still merge, and the merged city
+  // keeps the older of the two downtowns.
   function rebuildClusters(world) {
     var hexes = world.hexes, seen = {}, clusters = [];
+    var us = world.urbanSince || (world.urbanSince = {});
     for (var i = 0; i < hexes.length; i++) {
       if (!hexes[i].isCity || seen[i]) continue;
       var stack = [i], tiles = []; seen[i] = true;
@@ -514,12 +561,15 @@
           if (hexes[v].isCity && !seen[v]) { seen[v] = true; stack.push(v); }
         }
       }
-      // rep = densest tile (most urban neighbours), tie-break lowest index
-      var rep = tiles[0], repDeg = -1;
+      // rep = oldest urban tile; ties -> densest (most urban neighbours) -> lowest index
+      var rep = -1, repAge = Infinity, repDeg = -1;
       for (var t = 0; t < tiles.length; t++) {
-        var deg = 0, nb2 = neighborsOf(world, tiles[t]);
+        var ti = tiles[t], age = (us[ti] != null) ? us[ti] : 0;
+        var deg = 0, nb2 = neighborsOf(world, ti);
         for (var q = 0; q < nb2.length; q++) if (hexes[nb2[q]].isCity) deg++;
-        if (deg > repDeg || (deg === repDeg && tiles[t] < rep)) { repDeg = deg; rep = tiles[t]; }
+        if (age < repAge || (age === repAge && (deg > repDeg || (deg === repDeg && ti < rep)))) {
+          repAge = age; repDeg = deg; rep = ti;
+        }
       }
       clusters.push({ rep: rep, tiles: tiles });
     }
@@ -609,6 +659,7 @@
     if (!world.flipDir) world.flipDir = {};   // last flip direction per tile (+1 urban, -1 farm)
     if (!world.clMma) world.clMma = {};       // per-cluster EMA of the median-wage signal
     if (!world.growTick) world.growTick = {}; // last tick each cluster (by rep) added a tile
+    if (!world.urbanSince) world.urbanSince = {}; // tick each tile turned urban -> sticky downtown
     // COOLED: no flip of any kind within flipCooldown ticks (anti-flicker).
     var cooled = function (i) { return (world.tick - (world.flipTick[i] || -1e9)) >= cfg.flipCooldown; };
     // CANFLIP: also forbids reversing the last flip within reversalCooldown ticks,
@@ -744,6 +795,10 @@
       if (!canFlip(fl.i, fl.urban)) continue;
       hexes[fl.i].isCity = fl.urban;
       if (fl.urban && !hexes[fl.i].paved) { hexes[fl.i].paved = true; computeCapacity(world, fl.i); pavedKsub = true; } // farmland gone for good
+      // urbanSince drives the sticky downtown (see rebuildClusters). A tile that
+      // reverts loses its age, so re-growing a shrunk fringe can't hijack downtown.
+      if (fl.urban) { if (world.urbanSince[fl.i] == null) world.urbanSince[fl.i] = world.tick; }
+      else delete world.urbanSince[fl.i];
       if (!fl.urban) { delete world.prices[fl.i]; hexes[fl.i].Lmkt = 0; hexes[fl.i].Lsubw = 0; }
       world.flipTick[fl.i] = world.tick;
       world.flipDir[fl.i] = fl.urban ? 1 : -1;
@@ -755,45 +810,94 @@
     return changed;
   }
 
-  // ---- Subsistence capacity per hex: L where F(L)=L*c -----------------------
+  // ---- Max farmer population per hex: L where MARGINAL product = c ----------
+  // MARGINAL, not average. The old rule (F(L) = L*c -- keep adding people until the
+  // COLLECTIVE just feeds itself) let a tile pack in nearly C/c farmers, because the
+  // only ceiling is total yield / appetite. That is what carpeted the map. Stopping
+  // where the NEXT worker's own output falls to c is far tighter:
+  //     C*kappa/(L+kappa)^2 = c   =>   L = sqrt(C*kappa/c) - kappa
+  // Closed form (no bisection), sublinear in C, and it self-generates the viability
+  // cliff at C <= kappa*c with no special-casing. Rich land still fits ~8x what poor
+  // land does; it just no longer fits EVERYONE.
+  //
+  // TENURE: a marginal cap leaves visible spare food on the tile (F(L) > L*c), so it
+  // only holds where someone can EXCLUDE the next hungry arrival. This is a deliberate
+  // world-model commitment -- enclosed land, not open commons. See surplus handling in
+  // step(): that spare food ships to a basin city or rots.
   function Lsub(C, kappa, c) {
     if (C <= kappa * c) return 0;
-    var lo = 0, hi = 50 * kappa / 4; // scale bracket with kappa
-    for (var i = 0; i < 60; i++) {
-      var L = 0.5 * (lo + hi);
-      if (C * (1 - Math.exp(-L / kappa)) > L * c) lo = L; else hi = L;
-    }
-    return 0.5 * (lo + hi);
+    return Math.sqrt(C * kappa / c) - kappa;
   }
-  // RESIDUAL subsistence capacity on a tile already worked by Lmkt market farmers.
-  // Subsistence is DESPERATION farming: idle people pile onto land they can reach and
-  // work it (on the SAME production curve, no separate self-feeding bucket) until the
-  // marginal worker's net food is zero. Since F starting at Lmkt is a fresh diminishing
-  // curve of effective capacity A = C*exp(-Lmkt/kappa), that break-even extent is just
-  // Lsub(A). This shares the land with market labour (so total food never exceeds
-  // capacity — no double count) and self-limits where the land can't feed another mouth.
+  // RESIDUAL room on a tile already worked by Lmkt market farmers. Market labour stops
+  // where MPL = c + w/nb; subsisters have neither wage nor market, so they stop where
+  // MPL = c -- strictly further along the SAME curve. Since marginal product depends
+  // only on TOTAL labour, the stopping point is Lsub(C) regardless of Lmkt, and the
+  // room left is simply the gap.
+  //
+  // Under the marginal rule the old shared-curve and legacy-independent formulations
+  // COINCIDE (the exponential's memorylessness trick, C*exp(-Lmkt/kappa), was only ever
+  // needed to avoid double-counting under the average rule). cfg.subsistenceShare is
+  // therefore inert now; kept so existing configs/sweeps still load.
   function residualSub(C, Lmkt, kappa, c) {
-    if (C <= 0) return 0;
-    return Lsub(C * Math.exp(-Lmkt / kappa), kappa, c);
+    return Math.max(0, Lsub(C, kappa, c) - Lmkt);
   }
-  // Subsistence room a tile still offers given its market labour, under the active
-  // model (shared-curve break-even, or the legacy independent Lsub − Lmkt).
   function subRoomTile(world, h, Lmkt) {
     var cfg = world.cfg;
-    return cfg.subsistenceShare ? residualSub(h.Cfood, Lmkt, cfg.kappa, cfg.c)
-                                : Math.max(0, h.Lsub - Lmkt);
+    return residualSub(h.Cfood, Lmkt, cfg.kappa, cfg.c);
   }
 
   // ============================================================================
   //  EQUILIBRIUM SOLVER  (ported verbatim in spirit from hex_economy_v2_core.js)
   // ============================================================================
-  // Market farming on hex with capacity C, netback nb, wage w.
-  function mkt(C, nb, w, kappa, c) {
-    if (nb <= 0) return { L: 0, F: 0 };
-    var E = (c + w / nb) * kappa / C;
-    if (E >= 1) return { L: 0, F: 0 };
-    return { L: -kappa * Math.log(E), F: C * (1 - E) };
+  // Food produced by L workers on a tile of total-possible-yield C.
+  // Michaelis-Menten: F -> C as L -> infinity, F' = C*kappa/(L+kappa)^2.
+  // (Was C*(1-exp(-L/kappa)). MM's fatter tail is what makes the marginal cap
+  // below sublinear in C rather than pinned just under the C/c ceiling.)
+  function Ffood(C, L, kappa) {
+    if (C <= 0 || L <= 0) return 0;
+    return C * L / (L + kappa);
   }
+  // Market farming on hex with capacity C, netback nb, wage w.
+  // Hire until marginal product = marginal cost m = c + w/nb (unchanged rule --
+  // the exponential form solved exactly this). With MM, MPL = C*kappa/(L+kappa)^2 = m
+  // gives the closed form below; E = sqrt(kappa*m/C) plays the role the old
+  // E = (c + w/nb)*kappa/C played, including the E>=1 "not worth farming" guard.
+  function mkt(C, nb, w, kappa, c) {
+    if (nb <= 0 || C <= 0) return { L: 0, F: 0 };
+    var E = Math.sqrt(kappa * (c + w / nb) / C);
+    if (E >= 1) return { L: 0, F: 0 };
+    return { L: kappa * (1 / E - 1), F: C * (1 - E) };
+  }
+  // ---- Netback: what one unit of this tile's food is worth at the FARM GATE ----
+  // Food ships raw:      value/food = P - t
+  // Dessert ships dense: X food -> 1 unit shipped at cost t, sold for m*X*P
+  //                      value/food = (m*X*P - t)/X
+  // The tile takes whichever is higher. Crucially BOTH still carry the -t term, so a
+  // dessert tile is still priced by its distance to a city -- this is what separates
+  // desserts from a flat food->gold conversion, which would put a FLOOR under netback
+  // at every tile on the map and dissolve the basins entirely.
+  //
+  // Monotonicity (the bisection depends on it): with the premium pinned to P, the
+  // food/dessert switch distance d* = X*P*(1-m)/(K0*(X-1)) is PROPORTIONAL to P, so a
+  // higher food price pushes the boundary OUTWARD -- fewer dessert tiles, more food.
+  // Self-correcting, and it keeps excess demand monotone in P (see displaceOf).
+  function netbackOf(cfg, P, t) {
+    var food = P - t;
+    if (!cfg.desserts) return { v: food, dessert: false };
+    var X = cfg.dessertX;
+    if (!(X > 1)) return { v: food, dessert: false };
+    var des = (cfg.dessertPremium * X * P - t) / X;
+    return des > food ? { v: des, dessert: true } : { v: food, dessert: false };
+  }
+  // City food demand displaced by `qty` desserts, richest-consumer-first. Clamped to
+  // D <= dessertX (above that a dessert would free more food than it consumed -- a pump)
+  // and to the food the cohort actually eats (can't displace demand that isn't there).
+  function displaceOf(cfg, qty, foodDemand) {
+    if (!cfg.desserts || qty <= 0) return 0;
+    var D = clamp(cfg.dessertDisplace, 0, cfg.dessertX);
+    return Math.min(D * qty, Math.max(0, foodDemand));
+  }
+
   // City workforce at "total reservation" T = w + P*c :  y_margin(N)=T.
   function NofCity(A, T, Z, alpha, pconc) {
     if (T <= 0) return 1e12;
@@ -812,28 +916,33 @@
       lo[k] = 0.001; hi[k] = 600;
     }
     for (var rd = 0; rd < cfg.priceRounds; rd++) {
-      var sup = {};
-      for (var b = 0; b < cities.length; b++) sup[cities[b]] = 0;
+      var sup = {}, desQ = {};
+      for (var b = 0; b < cities.length; b++) { sup[cities[b]] = 0; desQ[cities[b]] = 0; }
       for (var hi2 = 0; hi2 < hexes.length; hi2++) {
         var h = hexes[hi2];
         var cap = foodCapOf(h); if (cap <= 0) continue;  // farm=farm+fish, coastal city=fish
-        var bestv = -Infinity, bk = -1;
+        var bestv = -Infinity, bk = -1, bestDes = false;
         for (var ci = 0; ci < cities.length; ci++) {
           var kk = cities[ci];
           var t = world.transport[kk] ? world.transport[kk][h.i] : Infinity;
           if (!isFinite(t)) continue;
-          var v = P[kk] - t;
-          if (v > bestv) { bestv = v; bk = kk; }
+          var nbk = netbackOf(cfg, P[kk], t);
+          if (nbk.v > bestv) { bestv = nbk.v; bk = kk; bestDes = nbk.dessert; }
         }
         if (bestv > 0 && bk >= 0) {
           var f = mkt(cap, bestv, w, cfg.kappa, cfg.c);
-          sup[bk] += Math.max(0, f.F - f.L * cfg.c);
+          var surplus = Math.max(0, f.F - f.L * cfg.c);
+          // A dessert tile ships NO food -- its surplus leaves as desserts, which only
+          // touch the food market via displacement below.
+          if (bestDes) desQ[bk] += surplus / cfg.dessertX;
+          else sup[bk] += surplus;
         }
       }
       for (var ci2 = 0; ci2 < cities.length; ci2++) {
         var key = cities[ci2];
         var extra = crewFood ? (crewFood[key] || 0) : 0;
         var dem = cfg.c * (NofCity(world.Aof[key], w + P[key] * cfg.c, S.Z, S.alpha, S.pconc) + extra);
+        dem -= displaceOf(cfg, desQ[key], dem);   // richest-first: desserts eaten instead of food
         if (dem - sup[key] > 0) lo[key] = P[key]; else hi[key] = P[key];
         P[key] = 0.5 * (lo[key] + hi[key]);
       }
@@ -854,7 +963,7 @@
       for (var ci = 0; ci < world.cities.length; ci++) {
         var kk = world.cities[ci];
         var t = world.transport[kk] ? world.transport[kk][h.i] : Infinity;
-        if (isFinite(t)) best = Math.max(best, P[kk] - t);
+        if (isFinite(t)) best = Math.max(best, netbackOf(cfg, P[kk], t).v);
       }
       if (best > 0) { var f = mkt(cap, best, w, cfg.kappa, cfg.c); Lm += f.L; mktL[h.i] = f.L; }
     }
@@ -1053,6 +1162,8 @@
     if (!h || !h.passable || h.isCity) return false;
     var firstCity = !world.cities || world.cities.length === 0;
     h.isCity = true; h.seed = true;
+    if (!world.urbanSince) world.urbanSince = {};
+    if (world.urbanSince[i] == null) world.urbanSince[i] = world.tick || 0;
     if (!h.paved) { h.paved = true; computeCapacity(world, i); world.Ksub = world.hexes.reduce(function (a, hh) { return a + hh.Lsub; }, 0); }  // urbanised land: farmland gone for good
     if (Aexplicit != null) h.explicitA = Aexplicit;   // pin productivity (fidelity tests)
     if (world.prices[i] == null) world.prices[i] = 1.0;
@@ -1067,6 +1178,7 @@
     var h = world.hexes[i];
     if (!h || !h.isCity) return false;
     h.isCity = false; h.seed = false; h.explicitA = null; h.A = 0; delete world.prices[i];
+    if (world.urbanSince) delete world.urbanSince[i];
     world.projects = world.projects.filter(function (pr) { return pr.a !== i && pr.b !== i; });
     rebuildClusters(world);
     return true;
@@ -1271,7 +1383,7 @@
         var bestF = -Infinity, bkF = -1;
         for (var cf = 0; cf < world.cities.length; cf++) {
           var kf = world.cities[cf], tf = world.transport[kf] ? world.transport[kf][h2.i] : Infinity;
-          if (isFinite(tf)) { var vf = eq.P[kf] - tf; if (vf > bestF) { bestF = vf; bkF = kf; } }
+          if (isFinite(tf)) { var vf = netbackOf(cfg, eq.P[kf], tf).v; if (vf > bestF) { bestF = vf; bkF = kf; } }
         }
         if (bestF > 0) { var ff = mkt(fcap, bestF, eq.w, cfg.kappa, cfg.c); h2.LmktT = ff.L; h2.Fmkt = ff.F; h2.netback = bestF; h2.basin = bkF; }
         else { h2.LmktT = 0; h2.Fmkt = 0; h2.netback = -Infinity; }
@@ -1280,11 +1392,14 @@
       var prevBasin = h2.basin;                 // last tick's allegiance (for hysteresis)
       h2.basin = -1; h2.netback = -Infinity;
       if (!h2.passable) { h2.LmktT = 0; h2.LsubT = 0; h2.Fmkt = 0; continue; }
-      var best = -Infinity, bk = -1;
+      var best = -Infinity, bk = -1, bestDes = false;
       for (var c3 = 0; c3 < world.cities.length; c3++) {
         var kk3 = world.cities[c3];
         var t = world.transport[kk3] ? world.transport[kk3][h2.i] : Infinity;
-        if (isFinite(t)) { var v = eq.P[kk3] - t; if (v > best) { best = v; bk = kk3; } }
+        if (isFinite(t)) {
+          var nb3 = netbackOf(cfg, eq.P[kk3], t);
+          if (nb3.v > best) { best = nb3.v; bk = kk3; bestDes = nb3.dessert; }
+        }
       }
       // BASIN HYSTERESIS: stay with the current city unless a rival delivers a
       // clearly better netback (> basinHyst better). Stops the tick-to-tick
@@ -1299,14 +1414,14 @@
         if (effRep !== bk && world.transport[effRep]) {
           var tc = world.transport[effRep][h2.i];
           if (isFinite(tc)) {
-            var curV = eq.P[effRep] - tc;
-            if (curV > 0 && best <= curV * (1 + cfg.basinHyst)) { best = curV; bk = effRep; }
+            var nbc = netbackOf(cfg, eq.P[effRep], tc);
+            if (nbc.v > 0 && best <= nbc.v * (1 + cfg.basinHyst)) { best = nbc.v; bk = effRep; bestDes = nbc.dessert; }
           }
         }
       }
-      h2.netback = best;
+      h2.netback = best; h2.isDessert = bestDes;
       if (best > 0) { var f = mkt(h2.Cfood, best, eq.w, cfg.kappa, cfg.c); h2.LmktT = f.L; h2.Fmkt = f.F; h2.basin = bk; }
-      else { h2.LmktT = 0; h2.Fmkt = 0; }
+      else { h2.LmktT = 0; h2.Fmkt = 0; h2.isDessert = false; }
       totalSlack += subRoomTile(world, h2, h2.LmktT); // desperation room on top of market labour
     }
     // pass 2: distribute subsistence across slack; blend actual mkt & sub labor
@@ -1314,6 +1429,9 @@
     // is economically real (transient imbalance resolves; conserved at steady state).
     var subs = eq.subs || 0;
     var foodProduced = 0, marketFarmers = 0, subsistence = 0, fishermen = 0;
+    var foodWasted = 0, dessertQty = {}, dessertTotal = 0, delivered = 0;
+    var landTiles = 0, farmedTiles = 0, farmedOutsideBasin = 0, tileDeficit = 0;
+    for (var dq = 0; dq < world.cities.length; dq++) dessertQty[world.cities[dq]] = 0;
     for (var i3 = 0; i3 < hexes.length; i3++) {
       var h3 = hexes[i3];
       if (!h3.passable) continue;
@@ -1322,9 +1440,10 @@
         if ((h3.fishCap || 0) <= 0) { h3.Lmkt = 0; h3.L = 0; h3.out = 0; continue; }
         h3.Lmkt += (h3.LmktT - h3.Lmkt) * mig; if (h3.Lmkt < 0) h3.Lmkt = 0;
         h3.Lsubw = 0; h3.L = h3.Lmkt;
-        var Ff = h3.fishCap * (1 - Math.exp(-h3.Lmkt / cfg.kappa));
+        var Ff = Ffood(h3.fishCap, h3.Lmkt, cfg.kappa);
         foodProduced += Ff;                              // fish food
         h3.out = Math.max(0, Ff - h3.Lmkt * cfg.c);      // fish surplus feeds the city
+        delivered += h3.out;
         fishermen += h3.Lmkt;
         continue;
       }
@@ -1335,15 +1454,48 @@
       if (h3.Lmkt < 0) h3.Lmkt = 0;
       if (h3.Lsubw < 0) h3.Lsubw = 0;
       h3.L = h3.Lmkt + h3.Lsubw;
-      // Market farmers work the tile for gold (surplus ships); subsistence farmers pile
-      // onto the SAME curve out of desperation and self-feed. Capping subsistence at the
-      // break-even residual keeps market-food + self-food <= the tile's capacity (no
-      // phantom double count), while conserving (each subsister eats exactly what it grows).
-      var Fm = h3.Cfood > 0 ? h3.Cfood * (1 - Math.exp(-h3.Lmkt / cfg.kappa)) : 0;
-      foodProduced += Fm + h3.Lsubw * cfg.c;            // market food + subsistence self-food
-      h3.out = Math.max(0, Fm - h3.Lmkt * cfg.c);       // market surplus shipped to basin
+      // Market farmers work the tile to MPL = c + w/nb; subsisters pile onto the SAME
+      // curve past them, out to MPL = c. Under the marginal rule a subsister no longer
+      // "eats exactly what it grows" -- the inframarginal ones grow MORE than c -- so the
+      // old `Lsubw * c` shortcut would silently under-count production. Compute both
+      // stretches of the curve honestly instead.
+      var Ltot = h3.Lmkt + h3.Lsubw;
+      var Fm = Ffood(h3.Cfood, h3.Lmkt, cfg.kappa);          // the market operation's output
+      var Fsub = Ffood(h3.Cfood, Ltot, cfg.kappa) - Fm;      // extra grown by the subsisters
+      foodProduced += Fm + Fsub;
+      // A tile should never feed fewer people than it carries. Provably so for market
+      // labour: Fm - Lmkt*c > 0 whenever Lmkt <= Lsub = sqrt(C*kappa/c) - kappa, because
+      // sqrt(C*kappa/c) < C/c exactly when C > kappa*c -- the viability condition every
+      // farmed tile already passes. Lmkt is blended toward LmktT <= Lsub from 0, so it
+      // stays inside that bound. Kept as a guard rather than an assert because Lmkt and
+      // Lsubw blend INDEPENDENTLY, so their sum has no such proof; a clamp alone would
+      // hide the deficit and silently break the balance. Measured: fires 0 times.
+      var mktRaw = Fm - h3.Lmkt * cfg.c;
+      if (mktRaw < 0) tileDeficit -= mktRaw;
+      var mktSurplus = Math.max(0, mktRaw);
+      if (h3.isDessert && cfg.desserts) {
+        // ships as desserts: X food -> 1 unit. No raw food reaches the city from here.
+        var q = mktSurplus / cfg.dessertX;
+        dessertQty[h3.basin] = (dessertQty[h3.basin] || 0) + q;
+        dessertTotal += q;
+        h3.out = 0; h3.dessertOut = q;
+      } else { h3.out = mktSurplus; h3.dessertOut = 0; delivered += mktSurplus; }
+      // Subsisters are OUTSIDE the market by definition (no netback reaches them), so
+      // their surplus has no buyer and rots. This is the marginal rule's honest cost:
+      // production no longer equals consumption tile-by-tile -- see conservation below.
+      var subRaw = Fsub - h3.Lsubw * cfg.c;                  // same lag applies to subsisters
+      if (subRaw < 0) tileDeficit -= subRaw;
+      else foodWasted += subRaw;
       marketFarmers += h3.Lmkt;
       subsistence += h3.Lsubw;
+      // Settlement EXTENT (vs the density the marginal cap controls). A tile with
+      // basin < 0 has no city in reach at any price -- its people are the city-less
+      // frontier squatters, the thing we are trying not to carpet the map with.
+      landTiles++;
+      if (h3.Lmkt + h3.Lsubw > 0.5) {
+        farmedTiles++;
+        if (h3.basin < 0) farmedOutsideBasin++;
+      }
     }
     // city workforce: persistent, blended toward the solved target
     var byCityN = eq.byCityN || {};
@@ -1409,18 +1561,77 @@
     var eaters = farmersAll + cityWorkers + crewsEmployed + harborTotal + fishermen; // fishermen & harbour crews eat too
     var foodEaten = cfg.c * eaters;
 
+    // ---- disposal of food delivered beyond what the cities can eat -----------
+    // At w=0 the market-supply curve is a STAIRCASE: mkt() reduces to E=sqrt(kappa*c/C),
+    // independent of netback, so price only gates WHETHER a tile ships, not how much it
+    // grows. Demand generically crosses inside a riser, so no clearing price exists and
+    // the bisection lands on the jump. (The old exponential had the same w=0 degeneracy;
+    // its staircase merely happened to cancel.) The tick also applies basin hysteresis
+    // that innerP does not, so actual shipments differ from the solver's assumed supply.
+    // Grain delivered past the last mouth has no buyer and no granary: it rots.
+    //
+    // Desserts shrink the raw-grain a city needs: `displaced` mouths ate dessert instead.
+    // Mirror innerP's per-city clamp exactly -- displacing globally would let one city's
+    // desserts soak up another's food demand, which no cart ever did.
+    var displacedFood = 0;
+    for (var dc = 0; dc < world.cities.length; dc++) {
+      var dk = world.cities[dc];
+      var demK = cfg.c * ((world.cityN[dk] || 0) + (crewFood[dk] || 0));
+      displacedFood += displaceOf(cfg, dessertQty[dk] || 0, demK);
+    }
+    var citySideDemand = cfg.c * (cityWorkers + crewsEmployed + harborTotal) - displacedFood;
+    var glut = Math.max(0, delivered - citySideDemand);
+    foodWasted += glut;
+    // The opposite sign is NOT an accounting term -- it means mouths ate food that never
+    // arrived. Malthus lags, so a transient gap is expected; a persistent one is a bug.
+    // tileDeficit is the same thing measured at the farm rather than the city gate.
+    var foodShortfall = Math.max(0, citySideDemand - delivered) + tileDeficit;
+
     if (cfg.malthus) {
       var eps = Math.max(1, 0.001 * world.Ksub);        // scale-relative slack epsilon
       // Use the solver's LAG-FREE targets (not the migration-lagged actuals) so
       // population approaches carrying capacity monotonically instead of limit-
       // cycling against the migration delay.
       var supportedTarget = eq.Lm + eq.Nc + (eq.subs || 0) + crewsEmployed + harborTotal;
+      world.lastSupported = supportedTarget;
       var sig;
       if (eq.w > 1e-4) sig = 1;                         // labor scarce -> grow
       else if ((eq.room || 0) > eps) sig = 0.5;         // subsistence room -> grow slow
       else if (world.N > supportedTarget + eps) sig = -1; // genuinely over capacity -> shrink
       else sig = 0;
-      world.N = Math.max(0.1, world.N + cfg.r * world.N * Math.tanh(sig));
+      // ---- growth controller: bang-bang (legacy) | deadband | proportional -----
+      // NOTE supportedTarget is NOT carrying capacity. When labor is scarce the wage
+      // bisection drives formal == Npool exactly, so Lm+Nc == N and supportedTarget is
+      // just a lagged copy of N (measured: N/supportedTarget pinned at 1.0762 == 1+r*tanh(1)
+      // for the whole growth phase). It is only meaningful as an OVERSHOOT test, which is
+      // all the legacy sig=-1 branch uses it for. The real "how far below capacity" signal
+      // is eq.room -- unfilled subsistence capacity -- which falls to 0 at capacity.
+      //
+      // LEGACY bang-bang: sig in {1, 0.5, 0, -1}, never scaled by the size of the error,
+      // so the step is a fixed r*tanh(sig) (7.6% at r=0.10) and can only stop if sig hits
+      // exactly 0. It rings at ~r peak-to-peak forever. `eps` above is nominally the
+      // deadband but at 0.1% of Ksub the step vaults straight over it.
+      if (cfg.growth === 'deadband') {
+        // Stop growing once room falls within growBand of capacity. To CAPTURE the cycle
+        // rather than relocate it the band must exceed one step's worth of population.
+        // Cost: settles BELOW capacity by roughly the band, on purpose.
+        var bandAbs = (cfg.growBand != null ? cfg.growBand : 0.05) * world.Ksub;
+        if (sig > 0 && eq.w <= 1e-4 && (eq.room || 0) <= bandAbs) sig = 0;
+        world.N = Math.max(0.1, world.N + cfg.r * world.N * Math.tanh(sig));
+      } else if (cfg.growth === 'proportional') {
+        // Never take a step bigger than the error it is correcting -- that is what makes
+        // bang-bang straddle. Growth while the wage is up fades smoothly as w -> 0;
+        // growth into subsistence room is capped BY that room; shrink is capped by the
+        // actual overshoot. Lands on capacity with no ripple and no underfill.
+        var step;
+        if (eq.w > 1e-4) step = cfg.r * world.N * Math.tanh(eq.w / (cfg.wRef || 0.25));
+        else if ((eq.room || 0) > 0) step = Math.min(cfg.r * world.N * 0.5, eq.room);
+        else if (world.N > supportedTarget) step = -Math.min(cfg.r * world.N, world.N - supportedTarget);
+        else step = 0;
+        world.N = Math.max(0.1, world.N + step);
+      } else {
+        world.N = Math.max(0.1, world.N + cfg.r * world.N * Math.tanh(sig));
+      }
     }
 
     // ---- per-tile readouts (for the UI: farmers/gold/gov, food, gold) --------
@@ -1460,13 +1671,29 @@
     for (var c6 = 0; c6 < world.cities.length; c6++) avgPrice += world.prices[world.cities[c6]];
     avgPrice = world.cities.length ? avgPrice / world.cities.length : 0;
 
-    var conservationErr = Math.abs(foodProduced - foodEaten);
+    // CONSERVATION — was `produced == eaten`. The marginal cap breaks that equality on
+    // purpose: a tile grows MORE than its farmers eat (that surplus is the whole reason
+    // cities can exist), and where no city is in reach it rots. Desserts add a second
+    // sink: X food leaves the fields per dessert, but only `displacedFood` of grain demand
+    // goes away with it, so the difference is burned as luxury. The invariant is the BALANCE
+    //     produced == (eaten - displaced) + X * desserts + wasted - shortfall
+    // i.e. grain eaten as grain, plus grain turned into desserts, plus grain that rotted.
+    // It must hold EXACTLY, or food is being created/destroyed by accident.
+    // (desserts:false => both dessert terms vanish => produced == eaten + wasted.)
+    var dessertGrain = cfg.desserts ? cfg.dessertX * dessertTotal : 0;
+    var dessertSink = dessertGrain - displacedFood;   // net luxury burn, for readouts
+    var conservationErr = Math.abs(foodProduced -
+      ((foodEaten - displacedFood) + dessertGrain + foodWasted - foodShortfall));
     world.metrics = {
       tick: world.tick, N: world.N, w: eq.w,
       marketFarmers: marketFarmers, farmersAll: farmersAll, fishermen: fishermen,
       cityWorkers: cityWorkers, subsistence: subsistence,
       crewsEmployed: crewsEmployed, crewDemand: crewDemand, fundedFrac: fundedFrac,
       foodProduced: foodProduced, foodEaten: foodEaten, conservationErr: conservationErr,
+      foodWasted: foodWasted, desserts: dessertTotal, dessertSink: dessertSink,
+      foodDelivered: delivered, foodGlut: glut, foodShortfall: foodShortfall,
+      tileDeficit: tileDeficit,
+      landTiles: landTiles, farmedTiles: farmedTiles, farmedOutsideBasin: farmedOutsideBasin,
       Ytotal: Ytotal, taxCollected: taxCollected, treasury: world.treasury,
       avgPrice: avgPrice, cities: world.cities.length,
       urbanTiles: urbanTileCount(world),
