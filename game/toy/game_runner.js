@@ -135,9 +135,12 @@ function runGame(mapData, params, stratName, opts) {
 var UI_DEFAULTS = { K0: 1.0, roadMult: 0.30, urban: 0.5, kappa: 200, basinHyst: 0.08,
   r: 0.10, migrate: 0.5, cityFoundPop: 1000, tau: 0.15, wageShare: 2.5,
   garrisonPerDist: 3.0, degrade: 0.2, urbanDensityTarget: 2000, newCoreMinDist: 5,
-  newCoreMinFarmers: 1500, maxUrbanFrac: 0.5, growBand: 0.05, dessertX: 3.0,
-  dessertPremium: 0.5, dessertDisplace: 0, malthus: true, seaTravel: false,
-  urbanize: true, desserts: false, growth: 'bangbang' };
+  newCoreMinFarmers: 1500, newCoreMinSurplus: 400, maxUrbanFrac: 0.5, growBand: 0.05,
+  dessertX: 3.0, dessertPremium: 0.5, dessertDisplace: 0, malthus: true, seaTravel: false,
+  urbanize: true, desserts: false, growth: 'deadband',
+  // stability layer (2026-07-16) — see docs/economy-stability.md
+  basinAdjacency: true, stickyBasins: true, storage: true, merchants: true,
+  storageDays: 8, storageRate: 0.15, merchantCapPerWorker: 0.5, merchantAggression: 0.35 };
 function permalinkFor(mapData, params, siteIdx, ticks) {
   if (!mapData.graph) return null;
   var parts = [];

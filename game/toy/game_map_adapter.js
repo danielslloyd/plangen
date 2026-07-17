@@ -31,6 +31,12 @@
   var BLOCK = { glacier: 1, mountain: 1 };   // impassable land: no farm, no city
   var MINERAL_LAYERS = ['iron', 'gold', 'oil', 'coal', 'copper', 'silver', 'uranium', 'bauxite'];
   var CAP_TARGET = 520;    // engine "farm" tier — median land tile is scaled to here
+  // NAMED CROPS (crops_spec.md). PlanGen already exports a per-tile suitability 0..1 for
+  // each of these; the toy economy used to throw them all away and keep only `calories`.
+  // `fish` is crop #5 (Dan's call, spec §6.4) but is NOT a land crop — it comes from
+  // fishBonus (adjacent water) and so is excluded from the land-suitability ratio below.
+  var LAND_CROPS = ['wheat', 'corn', 'rice', 'pasture'];
+  var CROPS = LAND_CROPS.concat(['fish']);
 
   function decodeLayer(def, count) {
     var out = new Float64Array(count);
@@ -176,6 +182,37 @@
     var capBase = new Float64Array(n);
     for (i = 0; i < n; i++) capBase[i] = passable[i] ? calories[i] * capScale : 0;
 
+    // ---- PER-CROP CAPACITY (crops_spec.md §3.1) -----------------------------
+    //     C_g(tile) = calories(tile) x ( suit_g(tile) / max_h suit_h(tile) )
+    //
+    // The best crop yields the FULL `calories`, so total capacity is unchanged and the
+    // entire existing calibration (kappa, N, cities, extent) survives untouched — and
+    // one-crop-per-tile at a single price reproduces the pre-crop engine exactly.
+    // Growing the 2nd-best crop costs a yield penalty equal to the suitability ratio,
+    // which is what lets a price signal flip a tile.
+    //
+    // Do NOT be tempted by the obvious `C_g = suit_g x YIELD_g` instead: those YIELD
+    // constants (wheat 7 / corn 15 / rice 11 / pasture 200) are calibrated for collapsing
+    // crops into the scalar `calories` envelope, a different job. Used as a decomposition
+    // they are pure distortion — pasture x200 beats corn x15 by 13x regardless of
+    // suitability. Measured on sample-map: pasture would win 90.7% of land, rice 0.0%,
+    // median winner/runner-up 11.57x => terrain-determined, price-blind, near-total
+    // autarky. The ratio rule measures 27.4/26.4/20.3/26.0 with a median margin of 1.69x
+    // and 22% of land within 25% of flipping. See crops_spec.md §2.
+    var cropSuit = {}, cropCap = {};
+    for (var ci0 = 0; ci0 < LAND_CROPS.length; ci0++) {
+      cropSuit[LAND_CROPS[ci0]] = decodeLayer(json.tileLayers[LAND_CROPS[ci0]], n);
+      cropCap[LAND_CROPS[ci0]] = new Float64Array(n);
+    }
+    for (i = 0; i < n; i++) {
+      if (!passable[i]) continue;
+      var mx = 0;
+      for (var c1 = 0; c1 < LAND_CROPS.length; c1++) mx = Math.max(mx, cropSuit[LAND_CROPS[c1]][i]);
+      if (mx <= 0) continue;                       // grows nothing (3% of farmable land)
+      for (var c2 = 0; c2 < LAND_CROPS.length; c2++)
+        cropCap[LAND_CROPS[c2]][i] = capBase[i] * (cropSuit[LAND_CROPS[c2]][i] / mx);
+    }
+
     // tile coordinates (lat,lon radians) + degrees, median edge length --------
     var coords = new Float64Array(n * 2), coordsDeg = new Float64Array(n * 2);
     for (var t = 0; t < n; t++) {
@@ -218,6 +255,13 @@
       costOut[u] = co; costIn[u] = cin;
       if (passable[u]) fishBonus[u] = fb;
     }
+    // FISH is crop #5, and unlike the land crops it is already an ABSOLUTE capacity
+    // (fishBonus, from adjacent water's calories) rather than a 0..1 suitability — so it
+    // is not part of the land ratio above, it is simply its own capacity. This is what
+    // makes "fish = crop #5" safe: an inland city cannot source it at any price, and the
+    // Cobb-Douglas basket RENORMALISES over the crops a city can actually reach, so the
+    // missing good drops out instead of driving its price to the bisection cap.
+    cropCap.fish = fishBonus;
 
     // inert minerals (display only) ------------------------------------------
     var minerals = {};
@@ -242,6 +286,7 @@
         n: n, adj: adj,
         passable: passable, water: water, terrainName: terrainName,
         capBase: capBase, fishBonus: fishBonus, elevation: elevation,
+        crops: CROPS, landCrops: LAND_CROPS, cropSuit: cropSuit, cropCap: cropCap,
         costOut: costOut, costIn: costIn,
         coords: coords, coordsDeg: coordsDeg, hopLen: hopLen,
         capScale: capScale, mcNorm: mcNorm,

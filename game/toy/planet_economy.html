@@ -148,11 +148,15 @@
     <div id="knobs"></div>
     <div class="toggle"><input type="checkbox" id="malthus" checked><label for="malthus">Malthusian population growth (off = fixed pool, reallocation only)</label></div>
     <div class="toggle"><input type="checkbox" id="seaTravel"><label for="seaTravel">Harbour labour + coastal-town bias (sea <i>trade</i> always uses the map's baked costs)</label></div>
+    <div class="toggle"><input type="checkbox" id="basinAdjacency" checked><label for="basinAdjacency">Contiguous basins (a basin only grows into land it touches; water blocks — merchants cross it)</label></div>
+    <div class="toggle"><input type="checkbox" id="stickyBasins" checked><label for="stickyBasins">Sticky buyers (a tile commits to one city per tick; makes each city's price independent)</label></div>
+    <div class="toggle"><input type="checkbox" id="storage" checked><label for="storage">City granaries (continuous price bid + physical buffer)</label></div>
+    <div class="toggle"><input type="checkbox" id="merchants" checked><label for="merchants">Merchants (city→city arbitrage on lagged prices)</label></div>
     <div class="toggle"><input type="checkbox" id="desserts"><label for="desserts">Desserts (remote surplus ships as a dense luxury instead of grain)</label></div>
     <div class="knob" style="grid-template-columns:112px 1fr"><label>Growth<span class="g">bang-bang rings at ±r forever; deadband stops near capacity</span></label>
       <select id="growth" style="background:var(--panel-2);color:inherit;border:1px solid var(--line);border-radius:6px;padding:4px">
         <option value="bangbang">bang-bang (legacy, oscillates)</option>
-        <option value="deadband">deadband (settles)</option>
+        <option value="deadband" selected>deadband (settles)</option>
         <option value="proportional">proportional (experimental)</option>
       </select></div>
 
@@ -211,6 +215,11 @@ const KNOBS={
   dessertX:{v:3.0,min:1.5,max:8,step:0.5,g:"Desserts",label:"Food per dessert",hint:"X food → 1 dessert (ships as ONE unit, so transport/food ÷ X)"},
   dessertPremium:{v:0.5,min:0.1,max:0.95,step:0.05,g:"Desserts",label:"Premium (m)",hint:"price = m × X × P. MUST be <1 or every tile converts. Reach × = m×X"},
   dessertDisplace:{v:0,min:0,max:8,step:0.5,g:"Desserts",label:"Displacement (D)",hint:"grain demand displaced per dessert, richest-first. Burn = X−D. D=X is food-neutral"},
+  newCoreMinSurplus:{v:400,min:50,max:3000,step:50,g:"Emergence",label:"New-town surplus",hint:"local SPARE food (radius 2) needed to seed a town (New-town gate = surplus)"},
+  storageDays:{v:8,min:0,max:30,step:1,g:"Granaries & trade",label:"Granary size",hint:"days of the city's own demand it tries to hold"},
+  storageRate:{v:0.15,min:0.02,max:0.4,step:0.01,g:"Granaries & trade",label:"Granary rate",hint:"max fraction of target moved/tick. Below 1/GranarySize it can't cover a day's demand"},
+  merchantCapPerWorker:{v:0.5,min:0,max:3,step:0.1,g:"Granaries & trade",label:"Merchant capacity",hint:"food/tick a city's merchants can move, per city worker"},
+  merchantAggression:{v:0.35,min:0.05,max:1,step:0.05,g:"Granaries & trade",label:"Merchant damping",hint:"how fast caravans approach the arbitrage-free flow (<1 = probe, avoids cobweb)"},
 };
 
 /* ---------- terrain palette (game terrain names) ---------- */
@@ -242,6 +251,10 @@ function cfgFromKnobs(){
   c.seaTravel=$("seaTravel").checked;
   c.urbanize=$("urbanize").checked;
   c.desserts=$("desserts").checked;
+  c.basinAdjacency=$("basinAdjacency").checked;
+  c.stickyBasins=$("stickyBasins").checked;
+  c.storage=$("storage").checked;
+  c.merchants=$("merchants").checked;
   c.growth=$("growth").value;
   c.yieldVar=0;            // calories already carry the per-tile variation
   return c;
@@ -255,14 +268,15 @@ function cfgFromKnobs(){
    if the seeding mode or the map's site ranking later changes. `ticks` fast-forwards
    on load, so a link can point at a settled state rather than turn 0.
    Round-trip contract: paramsFromState() -> applyParams() must be a fixed point. */
-const TOGGLES=["malthus","seaTravel","urbanize","desserts"];
-const TOGGLE_DEFAULT={malthus:true,seaTravel:false,urbanize:true,desserts:false};
+const TOGGLES=["malthus","seaTravel","urbanize","desserts","basinAdjacency","stickyBasins","storage","merchants"];
+const TOGGLE_DEFAULT={malthus:true,seaTravel:false,urbanize:true,desserts:false,
+                      basinAdjacency:true,stickyBasins:true,storage:true,merchants:true};
 function paramsFromState(opts){
   opts=opts||{};
   const p=new URLSearchParams();
   for(const k in KNOBS) if(KNOBS[k].v!==KNOBS[k].def) p.set(k,String(KNOBS[k].v));
   for(const t of TOGGLES) if($(t).checked!==TOGGLE_DEFAULT[t]) p.set(t,$(t).checked?"1":"0");
-  if($("growth").value!=="bangbang") p.set("growth",$("growth").value);
+  if($("growth").value!=="deadband") p.set("growth",$("growth").value);
   const mode=document.querySelector('input[name="mode"]:checked').value;
   if(mode!=="priority") p.set("mode",mode);
   if(+$("seedN").value!==5) p.set("seedN",$("seedN").value);
@@ -1244,7 +1258,7 @@ $("fitBtn").onclick=()=>{
   else { camAz=0; camEl=20; camDist=globeRadius*2.6; updateGlobeCamera(); renderGlobeFrame(); }
 };
 $("exportBtn").onclick=exportMap;
-["malthus","seaTravel","urbanize"].forEach(id=>$(id).addEventListener("change",()=>{
+["malthus","seaTravel","urbanize","basinAdjacency","stickyBasins","storage","merchants"].forEach(id=>$(id).addEventListener("change",()=>{
   if(!world) return; world.cfg[id]=$(id).checked; Econ.reconfigure(world); if(!playing) stepOnce();
 }));
 ["showCities","showRoads","showArrows"].forEach(id=>$(id).addEventListener("change",draw));

@@ -21,12 +21,17 @@ function fertileMap(cols, rows, blobs) {
   return { cols: cols, rows: rows, cells: cells };
 }
 
+// NOTE on `newCoreMinFarmers: 1e9, newCoreMinSurplus: 1e9` below — that pair is how these
+// tests say "no emergent towns, I am studying ONE city". Both are needed because the default
+// ignition gate moved from farmer mass to local SURPLUS (cfg.newCoreGate, crops_spec §6.3),
+// so the farmer-mass knob alone no longer holds the door shut. Same trap applies to any
+// pre-2026-07-16 sweep spec that used newCoreMinFarmers to suppress towns.
 // ---------------------------------------------------------------------------
 console.log('== A: a lone seed grows suburbs (a multi-tile city), stays conserved ==');
 (function () {
   var m = fertileMap(20, 14, [[10, 7, 8, 'rich'], [10, 7, 11, 'farm']]);
   var w = Econ.createWorld({ cols: m.cols, rows: m.rows, cells: m.cells,
-    cities: [{ col: 10, row: 7 }], config: { urban: 0.7, migrate: 0.5, edgeVar: 0.3, newCoreMinFarmers: 1e9, urbanDensityTarget: 1500 } });
+    cities: [{ col: 10, row: 7 }], config: { urban: 0.7, migrate: 0.5, edgeVar: 0.3, newCoreMinFarmers: 1e9, newCoreMinSurplus: 1e9, urbanDensityTarget: 1500 } });
   var hist = [];
   for (var t = 0; t < 400; t++) { var mm = Econ.step(w); hist.push(mm.urbanTiles); }
   var mm = w.metrics;
@@ -66,7 +71,7 @@ console.log('\n== C: connected urban tiles are ONE city (the merge rule) ==');
   var m = fertileMap(14, 10, [[6, 5, 4, 'rich'], [7, 5, 4, 'rich'], [7, 5, 6, 'farm']]);
   var w = Econ.createWorld({ cols: m.cols, rows: m.rows, cells: m.cells,
     cities: [{ col: 6, row: 5 }, { col: 7, row: 5 }],
-    config: { urban: 0.7, migrate: 0.5, edgeVar: 0.2, newCoreMinFarmers: 1e9 } });
+    config: { urban: 0.7, migrate: 0.5, edgeVar: 0.2, newCoreMinFarmers: 1e9, newCoreMinSurplus: 1e9 } });
   var oneAtStart = w.clusters.length === 1 && w.clusters[0].tiles.length === 2;
   check('two adjacent seeds = one 2-tile city at start', oneAtStart,
     'clusters=' + w.clusters.length + ' tiles=' + (w.clusters[0] ? w.clusters[0].tiles.length : 0));

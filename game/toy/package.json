@@ -5,9 +5,10 @@
   "private": true,
   "type": "commonjs",
   "scripts": {
-    "validate": "node test/validate_core.js && node test/validate_layers.js && node test/validate_organic.js && node test/validate_transport.js && node test/validate_planet.js",
-    "test": "node test/validate_core.js && node test/validate_layers.js && node test/validate_organic.js && node test/validate_transport.js && node test/validate_planet.js",
+    "validate": "node test/validate_core.js && node test/validate_layers.js && node test/validate_organic.js && node test/validate_transport.js && node test/validate_planet.js && node test/validate_trade.js",
+    "test": "node test/validate_core.js && node test/validate_layers.js && node test/validate_organic.js && node test/validate_transport.js && node test/validate_planet.js && node test/validate_trade.js",
     "validate:planet": "node test/validate_planet.js",
+    "validate:trade": "node test/validate_trade.js",
     "gen-maps": "node test/gen_maps.js",
     "sweep": "node harness.js",
     "sweep:quick": "node harness.js --quick",

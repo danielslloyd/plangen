@@ -1,9 +1,98 @@
 # Crops & Regional Trade — design spec
 
-Status: **proposed, not built.** Handoff document.
-Everything under "Current state" IS built and passing. Everything under
-"The design" is not. The numbers in §2 and §3 are measured against
-`maps/sample-map.json`, not estimated.
+Status (2026-07-16): **§6 decided, §2/§3 re-verified, Stage 0 data layer BUILT.
+The solver work (Stage 1+) is NOT built.** Handoff document.
+The numbers in §2 and §3 are measured against `maps/sample-map.json`, not estimated.
+
+## What changed since this spec was written
+
+**A stability rework landed first** (`docs/economy-stability.md`), because the
+oscillation Dan hit while testing turned out to be this spec's own "market supply is
+a staircase" warning with a continent-sized riser: basin assignment was winner-take-all
+across every city, so each city's supply was a *step function of its own price* (0 →
+166,332 food in one jump) and **no clearing price existed**. Contiguous basins, sticky
+buyers, granaries and merchants fix it (N ripple 0.57 → 0.00, glut 59,104 → 444, 6.5×
+faster). Crops multiply the number of markets by G, so this had to come first.
+
+**§6 open decisions — all resolved by Dan:**
+
+1. **`validate_core` Part A** → keep it, add `foodModel:'legacy'`. **Done.** It now
+   reproduces the reference core to the digit (`Prich=1.36 / Ppoor=0.95`; the old
+   engine gave 1.50/1.00). Ksub reads 367 vs the reference's 382 — fully accounted
+   for: both city sites sit inside C=9 blobs and the engine *paves* city tiles, so it
+   loses exactly those 2 × Lsub(9) ≈ 15.
+2. **`growth` default** → flip to `'deadband'`. **Done.** Worth 0.1228 → 0.0000 of
+   residual N ripple on Dan's permalink after the structural fix.
+3. **`newCoreMinFarmers`** → replaced by a local-**surplus** gate
+   (`newCoreGate:'surplus'`, `newCoreMinSurplus`). **Done.** Directly implicated: the
+   8-worker city that priced itself to P=306 ignited where farmer mass was high but
+   spare grain was not.
+4. **`fish`** → **crop #5**, own price and basket share. **Data layer done.** Safe only
+   because of (5): fish is strictly coastal, so an inland city cannot source it at any
+   price, and renormalisation drops it from the basket rather than sending its price to
+   the cap.
+5. **NOT IN THE ORIGINAL SPEC — the missing-crop problem.** Measured: **14% of farmable
+   tiles grow only ONE crop** (tundra: pasture only; plains/desert: wheat only; 3% grow
+   nothing). With contiguous basins a city's farmer-sourced crops are limited to its own
+   basin, so some cities genuinely cannot obtain some crops. Under plain Cobb–Douglas the
+   unit food bill `e(P) = Π (P_g/s_g)^{s_g}` then drives `P_g` to the bisection cap and the
+   bill explodes. **Dan's call: renormalise the basket over the crops a city can actually
+   source.** Shares redistribute over `S_k`; the missing crop drops out.
+6. **`timber`** → parked, out of scope. **`minViableCap`** → untouched, still orthogonal.
+
+## Built (Stage 0 data layer), in `game_map_adapter.js`
+
+`graph.cropCap[g][i]` per §3.1, plus `graph.cropSuit`, `graph.crops`, `graph.landCrops`.
+Verified through the real code path, not a side script:
+
+- **`max |C_best − capBase| / capBase = 0.00e+0`** — the best crop yields the full
+  `calories` *exactly*, so total capacity is unchanged and the existing calibration
+  (κ, N, cities, extent) survives untouched. This is what makes Stage 0's bit-identical
+  anchor possible; if it ever drifts, stop.
+- Tile-count share **wheat 28.4 / corn 29.2 / rice 22.4 / pasture 19.9 %**, median
+  switching margin **1.67×**, **23.2%** of land within 1.25× of flipping. (§3.1 quotes
+  27.4/26.4/20.3/26.0 and 1.69×/22% over *all* land, 1016 tiles; the engine's farmable set
+  excludes mountain/glacier, 918 tiles — same measurement, different denominator.)
+- Fish capacity on **372** tiles.
+- **Not in §3.1, worth knowing:** the balance is in *tile count*, not food. Calorie share
+  by winning crop is **corn 42.4 / wheat 22.5 / rice 22.0 / pasture 13.1 %** — corn carries
+  nearly twice its tile share. Still competitive, still not autarky, but do not quote
+  "27/26/20/26" as if it described the food supply.
+
+## Still to build — Stage 1+, and the one design note the spec lacks
+
+The remaining work is the solver. Sketch that survived the §6 decisions:
+
+- Keep `world.prices[k]` as the **basket price index** `e_k(P)` and add
+  `world.cropPrices[k][g]`. Everything downstream (UI, metrics, gates) keeps working.
+- Use the **share-normalised** index `U = Π (q_g/s_g)^{s_g}` with `e(P) = Π P_g^{s_g}`,
+  **not** the plain `Π q_g^{s_g}` this spec's §3.2 implies. This matters and is easy to get
+  wrong: under the plain form, equal shares and equal prices give `q_g = c` for every crop,
+  so a worker eats **G·c of mass** — at G=4 that is 4× the food demand and the entire
+  calibration dies. The normalised form gives `q_g = c·s_g·e(P)/P_g`, hence `Σq_g = c` at
+  equal prices, and collapses to `q = c`, `e = P` at G=1 — the exact anchor.
+- `T = w + e_k(P)·c` replaces `T = w + P·c`.
+- **Sourceable set `S_k`**: crops any tile *eligible to sell to k* can grow (`cropCap_g > 0`).
+  Price-independent, so it is stable and computable once per tick from the basin/eligibility
+  map — no chicken-and-egg with the price.
+- Per-`(k,g)` bisection. Note §3.2's claim that Cobb–Douglas makes demand depend only on
+  `P_g` holds for a *fixed budget*; under a fixed **calorie requirement** (which is what this
+  engine models) demand for `g` depends on the others through `e(P)`. That coupling is
+  gross-substitutes (`∂dem_g/∂P_h > 0`), which is the classical condition under which
+  tâtonnement converges — but it is a coupling, so it needs iterating to convergence, not
+  one pass.
+- **`stickyBasins` makes this much cheaper than feared**: a tile already commits to one
+  buyer per tick, so extend that commitment to one `(crop, city)` pair — set `h.crop` and
+  `h.Cfood = cropCap[h.crop][i]`, and every downstream consumer (`mkt`, `Ffood`, surplus)
+  works unchanged.
+- Conservation: the **total** mass identity still holds and is simpler than G separate ones;
+  add per-crop readouts on top. Careful: city workers eat `Σ_g q_g` (≠ c when prices differ —
+  people substitute toward the cheap crop), while farmers and subsisters eat `c` of their own
+  crop.
+
+Everything below this line is the original spec, unedited.
+
+---
 
 Goal: replace the toy economy's single generic `food` good with **named crops**,
 each with its own per-city price and its own dessert, so scarcity in one place

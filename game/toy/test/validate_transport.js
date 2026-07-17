@@ -23,10 +23,10 @@ console.log('== A: basin hysteresis kills the tile-vs-tile basin flip-flop ==');
   // settled-tail basin switches on real catalog maps: with hysteresis off, tiles
   // near a catchment boundary ship to a different city every tick even though the
   // economy is at rest; with it on, allegiance is sticky.
-  function settledFlips(mapName, basinHyst) {
+  function settledFlips(mapName, basinHyst, sticky) {
     var m = Maps.GENERATORS[mapName]();
     var w = Econ.createWorld({ name: m.name, seed: m.seed, cols: m.cols, rows: m.rows, cells: m.cells,
-      config: { urban: 0.6, migrate: 0.5, basinHyst: basinHyst } });
+      config: { urban: 0.6, migrate: 0.5, basinHyst: basinHyst, stickyBasins: !!sticky } });
     (m.sites || []).slice(0, 3).forEach(function (s) { var h = Econ.getHex(w, s.col, s.row); if (h) Econ.foundCity(w, h.i); });
     var prev = w.hexes.map(function (h) { return h.basin; }), flips = 0;
     for (var t = 0; t < 600; t++) {
@@ -37,12 +37,33 @@ console.log('== A: basin hysteresis kills the tile-vs-tile basin flip-flop ==');
     }
     return flips;
   }
+  // Two independent damping mechanisms now exist and this gate must keep them separable:
+  //   basinHyst    — a rival must beat the incumbent by a margin to steal a tile
+  //   stickyBasins — a tile does not even re-shop unless its buyer's price moved
+  // Sticky basins subsume much of hysteresis's job (measured: the hysteresis-off repro
+  // drops 50+ flips -> 30 with stickiness on), so testing basinHyst in isolation requires
+  // pinning stickyBasins:false. Both are asserted below — a regression in EITHER shows up.
   var maps = ['rich_and_poor', 'breadbasket', 'rain_shadow'];
-  var off = 0, on = 0;
-  maps.forEach(function (n) { off += settledFlips(n, 0); on += settledFlips(n, 0.08); });
-  console.log('  settled-tail basin switches: off=' + off + '  on=' + on);
-  check('with hysteresis OFF, tiles flip basin at rest (repro)', off > 50, 'off=' + off);
-  check('with hysteresis ON, basin flip-flop is eliminated', on === 0, 'on=' + on);
+  var off = 0, on = 0, stickyOnly = 0, both = 0;
+  maps.forEach(function (n) {
+    off += settledFlips(n, 0, false);          // neither damper: the original flip-flop
+    on += settledFlips(n, 0.08, false);        // hysteresis alone
+    stickyOnly += settledFlips(n, 0, true);    // stickiness alone (hysteresis off)
+    both += settledFlips(n, 0.08, true);       // the shipped default
+  });
+  console.log('  settled-tail basin switches: none=' + off + '  hysteresis-only=' + on +
+              '  sticky-only=' + stickyOnly + '  both(default)=' + both);
+  check('with BOTH dampers off, tiles flip basin at rest (repro)', off > 50, 'off=' + off);
+  check('basinHyst alone eliminates the flip-flop', on === 0, 'on=' + on);
+  // Stickiness is a strong damper but NOT a complete one, and that is by construction:
+  // stickyRefresh forces every tile to re-shop periodically (so nothing is ever stuck
+  // with a permanently stale buyer), and a tile sitting exactly on a catchment boundary
+  // can legitimately switch on its refresh tick. Measured 291 -> 30, i.e. ~90% removed.
+  // basinHyst is what closes the remaining 10%. They are complementary, not redundant —
+  // assert the real relationship rather than pretending either one does the whole job.
+  check('stickyBasins alone is a strong (not total) damper', stickyOnly < 0.2 * off && stickyOnly > 0,
+    'sticky-only=' + stickyOnly + ' vs none=' + off);
+  check('the shipped default (both dampers) leaves ZERO settled flips', both === 0, 'both=' + both);
 })();
 
 // ---------------------------------------------------------------------------
@@ -174,13 +195,25 @@ console.log('\n== H: subsistence shares the tile\'s curve (no food beyond capaci
   check('subsistence still supports population on under-served land', subs > 0, 'subsistence workers=' + Math.round(subs));
   check('conservation holds under the shared-curve model', w.metrics.conservationErr / w.metrics.foodProduced < 0.02,
     'rel=' + (w.metrics.conservationErr / w.metrics.foodProduced).toFixed(4));
-  // legacy model DOES let a tile exceed capacity (contrast, confirms the reform matters)
+  // RETIRED CHECK, REPLACED (crops_spec "known-failing tests"): this used to assert that
+  // the legacy independent-curve subsistence (subsistenceShare:false) WOULD exceed
+  // capacity, as a contrast proving the shared-curve reform mattered. Under the marginal
+  // cap the two formulations COINCIDE — marginal product depends only on total labour, so
+  // the exponential's memorylessness trick that the independent curve needed is moot — and
+  // the phantom it contrasted against cannot occur. The check could only ever fail.
+  //
+  // What is actually worth pinning is the reason it died: cfg.subsistenceShare is now
+  // INERT. That is a load-bearing claim (the knob still exists and still loads from old
+  // sweep specs), so assert it rather than asserting a bug that no longer exists.
   var wl = Econ.createWorld({ cols: m.cols, rows: m.rows, cells: m.cells,
     cities: [{ col: 4, row: 7 }], config: { urban: 0.5, migrate: 0.5, urbanize: false, yieldVar: 0, subsistenceShare: false } });
   for (var t2 = 0; t2 < 300; t2++) Econ.step(wl);
   var overLegacy = 0;
   for (var j = 0; j < wl.hexes.length; j++) { var g = wl.hexes[j]; if (!g.isCity && g.passable && (g.marketFood + g.subsFood) > g.foodCap + 0.5) overLegacy++; }
-  check('legacy independent-curve model would exceed capacity (contrast)', overLegacy > 0, 'legacy tiles over cap=' + overLegacy);
+  check('no tile exceeds capacity under EITHER subsistence formulation', overLegacy === 0, 'legacy-flag tiles over cap=' + overLegacy);
+  check('cfg.subsistenceShare is inert (both settings give the identical economy)',
+    Math.abs(wl.N - w.N) < 1e-9 && Math.abs(wl.metrics.foodProduced - w.metrics.foodProduced) < 1e-6,
+    'N ' + w.N.toFixed(6) + ' vs ' + wl.N.toFixed(6));
 })();
 
 // ---------------------------------------------------------------------------

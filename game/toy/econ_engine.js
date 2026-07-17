@@ -126,14 +126,26 @@
     // New cores ignite in food-RICH, populous areas FAR from any city; spacing
     // self-limits how many (once cities cover the map, nowhere is "far" enough).
     newCoresPerTick: 1,
-    // Local farmer mass (radius 2) needed to seed a town. RECALIBRATED 6000 -> 1500 for
-    // the marginal cap: the whole point of that rule is fewer farmers per tile, so the
-    // old threshold silently stopped igniting anything (5 cities, 81% subsistence).
-    // Farmer mass is now a poor proxy for "can this place support a town" -- the honest
-    // gate is local SURPLUS (what actually feeds a city), which the marginal rule makes
-    // available per-tile. Left as farmer mass here to keep the knob's meaning stable for
-    // existing sweeps; see STATUS notes.
+    // What qualifies a site to ignite a market town (crops_spec §6.3, Dan's call).
+    //   'surplus' (default) — local SPARE food: sum over the radius-2 ball of
+    //                         (what the land grows) - (what its farmers eat). This is
+    //                         what actually feeds a town, and under the marginal cap it
+    //                         is exactly the quantity the rule leaves on the tile.
+    //   'farmers'           — legacy: local farmer MASS. The marginal cap makes farmer
+    //                         mass a bad proxy BY DESIGN (its whole purpose is fewer
+    //                         farmers per tile), which is how a site with 2500 farmers
+    //                         and no spare grain ignited the 8-worker city that priced
+    //                         itself to P=306. Kept for reproducing old sweeps.
+    newCoreGate: 'surplus',
+    // Local farmer mass (radius 2) needed to seed a town — only read when
+    // newCoreGate:'farmers'. RECALIBRATED 6000 -> 1500 for the marginal cap: the whole
+    // point of that rule is fewer farmers per tile, so the old threshold silently
+    // stopped igniting anything (5 cities, 81% subsistence).
     newCoreMinFarmers: 1500,
+    // Local SPARE food (radius 2) needed to seed a town — read when newCoreGate:'surplus'.
+    // Units are food/tick, so it is directly comparable to what a town of N workers eats
+    // (N*c): the default sustains a few hundred citizens before a town is worth founding.
+    newCoreMinSurplus: 400,
     newCoreMinDist: 5,       // physical hexes from the nearest city
     maxUrbanFrac: 0.5,  // hard backstop: urban tiles never exceed this of the land
     // population dynamics
@@ -143,7 +155,13 @@
     // 'deadband'     = stop growing within growBand below the target (captures the cycle
     //                  only if the band is wider than one step; settles BELOW capacity).
     // 'proportional' = scale the step by the relative gap (settles ON capacity, no ripple).
-    growth: 'bangbang',
+    //
+    // DEFAULT FLIPPED 'bangbang' -> 'deadband' (Dan's call, crops_spec §6.2): measured
+    // ripple 11.4% -> 0.0% with N/cities/extent unchanged, i.e. free. NOTE this silently
+    // rewrites what pre-2026-07-16 sweeps mean — those ran bang-bang's limit cycle and
+    // their oscAmp numbers are not comparable to anything measured after this change.
+    // Set growth:'bangbang' to reproduce them.
+    growth: 'deadband',
     growBand: 0.05,   // 'deadband': stop growing when unfilled room <= this x Ksub
     wRef: 0.25,       // 'proportional': wage at which growth runs at ~76% of full speed
     malthus: true,    // growth on/off (off => fixed pool, reallocation only)
@@ -155,6 +173,42 @@
     // flip-flops every tick. basinHyst = how much MORE a rival must beat the
     // current basin before the tile switches allegiance (0.08 => 8% better).
     basinHyst: 0.08,
+    // ---- CONTIGUOUS BASINS: the fix for the winner-take-all staircase ---------
+    // Without this a tile picks its buyer from EVERY city on the map, so a city's
+    // supply is a step function of its OWN price: zero until it outbids its
+    // neighbours, then whole basins at once (measured: 0 -> 166,332 food in one
+    // jump). No price clears that, the bisection lands ON the discontinuity, and
+    // the two sides of the jump are the two symptoms — an 8-worker city priced at
+    // P=306 while the tick delivers 139k of grain that rots. See docs/economy-stability.md.
+    //
+    // The clamp: a tile may only join basin k if it ALREADY belongs to k, or is
+    // adjacent to a LAND tile that does, or is adjacent to k's own city tiles. So
+    // a basin grows one ring per tick and a price spike can annex one ring, not a
+    // continent. Read it as information, not law: a farmer learns what a market
+    // pays from the neighbours who sell there, and word travels at a walking pace.
+    //
+    // WATER BLOCKS the chain deliberately — a farmer does not ship grain across an
+    // ocean, a MERCHANT does. That division (farmers sell to their local market
+    // town; merchants arbitrage between market towns) is what `merchants` below
+    // implements, and it is why the two features must ship together: the clamp
+    // alone would strand every island and coast that trades by sea today.
+    basinAdjacency: true,
+    // ---- STICKY BASINS: assign the buyer ONCE per tick, before the solve -------
+    // A tile commits to its buyer using LAST tick's prices, then holds that buyer
+    // through the whole equilibrium solve (it still responds to that buyer's live
+    // price — it just doesn't re-auction its harvest to 32 cities per bisection
+    // round). Three things fall out:
+    //   1. Each city's supply depends ONLY on its own price => the per-city price
+    //      bisections become exactly independent, not approximately. This is the
+    //      property the whole solver was already assuming.
+    //   2. The supply staircase's risers shrink from "a whole basin" to "one tile".
+    //   3. innerP's inner loop drops from O(tiles x cities) to O(tiles).
+    // Also just truer: a classical-era farmer has a buyer, not an auction.
+    stickyBasins: true,
+    stickyPriceTol: 0.05,  // re-shop only if the buyer's price moved this much (relative)
+    stickyRefresh: 20,     // ...or every this many ticks regardless (staggered by tile id,
+                           // so the re-shopping cost is spread evenly across ticks and no
+                           // tile is ever permanently stuck with a stale buyer)
     // ---- harbours & sea travel ----------------------------------------------
     // A coastal URBAN tile (adjacent to water) is a harbour: it commits
     // harborWorkers labourers (automatic, not tax-funded) and opens sea routes.
@@ -185,6 +239,75 @@
     // model; false = the legacy independent-curve subsistence (kept for the reference
     // port-fidelity check only — it lets a tile's food exceed capacity).
     subsistenceShare: true,
+    // FOOD MODEL. 'marginal' = the current rule (Michaelis-Menten yield, marginal
+    // population cap Lsub = sqrt(C*kappa/c) - kappa). 'legacy' = the exponential
+    // yield + average-rule cap of the reference core (hex_economy_v2_core.js):
+    // Ffood = C*(1-e^-L/kappa), Lsub solves F(L) = L*c, mkt E = (c+w/nb)*kappa/C.
+    // 'legacy' exists ONLY so validate_core Part A can keep testing port fidelity
+    // against a reference that deliberately no longer matches the shipped model.
+    foodModel: 'marginal',
+    // ---- CITY FOOD STORAGE (granary) -----------------------------------------
+    // Two distinct jobs, both needed:
+    //  1. PRICE: the granary bids in the market — it buys when grain is below the
+    //     price it remembers and sells when it is above. That bid is CONTINUOUS in
+    //     P (unlike farm supply, which is a staircase), so it guarantees an actual
+    //     crossing exists for the bisection to find. This is what makes the price
+    //     solvable rather than merely bounded.
+    //  2. PHYSICS: it absorbs surplus that would otherwise rot and releases grain
+    //     to cover a deficit. Glut therefore only happens when the granary is FULL
+    //     and shortfall only when it is EMPTY, instead of every tick the staircase
+    //     lands wrong.
+    // The granary's reference price is an EMA of the city's own past price —
+    // adaptive expectations, so it needs no global tuning and each city learns what
+    // grain "normally" costs at home.
+    storage: true,
+    storageDays: 8,      // target stock = this x the city's own daily food demand
+    // Max fraction of TARGET the granary moves in one tick, both directions. There is a
+    // floor and a ceiling on what is sensible here, and both were found the hard way:
+    //   * ABOVE ~0.25 the granary's own restocking dwarfs the city it serves (at
+    //     storageDays=8 it would bid 2 days of food per tick against a city that eats 1)
+    //     and it becomes the market instead of damping it.
+    //   * BELOW 1/storageDays = 0.125 it physically cannot cover one day's demand in one
+    //     tick, so it fails at the one job it has — measured at 0.10, a granary with 5.6
+    //     days of grain still let the price spike 69% because it could only release 0.8
+    //     days' worth. A reserve you cannot spend fast enough is not a reserve.
+    // 0.15 clears the floor with margin and stays far from the ceiling.
+    storageRate: 0.15,
+    storageFill: 0.5,    // weight on the RESTOCK motive vs the price-timing motive (see storageBid)
+    storageEma: 0.15,    // EMA weight on the new price when updating the remembered price
+    // ---- MERCHANTS: city -> city arbitrage ------------------------------------
+    // A merchant in A hears grain is dear in B, buys A's spare, sells it in B, and
+    // pockets  margin = P_B - P_A - transit(A,B).  This is the mechanism that was
+    // missing: today a city that runs short can only bid up its price and annex
+    // distant LAND, which is exactly the pathology basinAdjacency clamps. With
+    // merchants it instead imports from a neighbour that has a glut.
+    //
+    // Merchants act on LAGGED information (last tick's prices) — they commit before
+    // they can know what the new price will be. That lag is not a simplification,
+    // it is the point: it keeps each city's merchant inflow EXOGENOUS to this tick's
+    // price, so the per-city bisections stay decoupled (see stickyBasins). Coupling
+    // them is what made v1's tatonnement oscillate; do not "improve" this by solving
+    // merchant flows inside the price loop.
+    //
+    // Volume is capped three ways, per Dan's spec: by A's spare grain, by B's unmet
+    // demand PLUS room in B's granary (merchants past that point have no buyer and
+    // do not ship), and by A's merchant capacity. Routes fill highest-margin-first.
+    merchants: true,
+    merchantCapPerWorker: 0.5,  // food/tick a city's merchants can move, per city worker.
+                                // Scales with the city: a 9-worker town moves ~4 units and
+                                // cannot distort the map; a metropolis runs real convoys.
+    merchantMinMargin: 0.02,    // don't bother below this gold margin per unit
+    merchantRoutes: 6,          // max import routes serving one city per tick (a market has
+                                // only so many gates); highest-margin routes win the slots
+    // Fraction of the arbitrage-closing quantity a caravan actually carries. MUST be < 1:
+    // at 1 the plan tries to close the whole price gap in one tick, but it is computed on
+    // LAST tick's prices against a demand curve that is wildly elastic (N ~ P^-2.857) and a
+    // workforce that only migrates `migrate` of the way per tick — so the grain lands, the
+    // city cannot eat it yet, and the price OVERSHOOTS straight past the target. Measured
+    // at 1.0: the destination's price ping-ponged 94.4 <-> 0.54 and merchants spent alternate
+    // ticks shipping grain BACK into the breadbasket. That is a textbook cobweb, and this
+    // is the textbook fix — probe, converge geometrically, never overshoot.
+    merchantAggression: 0.35,
     // taxation / crews / garrisons
     tau: 0.15,        // tax rate on city output Y_k -> pool
     wageShare: 2.5,   // public-worker wage as a multiple of avg productivity; with
@@ -208,6 +331,14 @@
     // solver constants (fixed; not user-exposed)
     wIters: 36,
     priceRounds: 40,
+    // Price bisection bracket. These were hard-coded 0.001/600 and were doing real,
+    // invisible work: when a city's supply staircase had no crossing, the bisection
+    // pinned P at the bracket and `priceMax` alone decided how absurd the spike got
+    // (a measured P=306 is just 600 halved). With storage the crossing exists, so the
+    // bracket is back to being a bracket. Exposed because the reference core uses
+    // 0.01/300 and validate_core Part A must be able to pin it.
+    priceMin: 0.001,
+    priceMax: 600,
     zetaTerms: 200000
   };
 
@@ -521,7 +652,7 @@
     }
     h.fishCap = fish;
     h.Cfood = h.C + fish;
-    h.Lsub = Lsub(h.Cfood, cfg.kappa, cfg.c);
+    h.Lsub = Lsub(h.Cfood, cfg.kappa, cfg.c, cfg.foodModel);
   }
   // Food capacity a tile offers to the market/subsistence machinery: a FARM tile
   // = farm C + fishing; a CITY tile = fishing ONLY (urban tiles don't farm, but a
@@ -622,15 +753,31 @@
     else ret = cfg.c;                                                           // subsistence-ish
     return ret - cfg.c;
   }
-  function localFarmers(world, i, radius) {
+  // Local draw around a candidate town site, over the radius-`radius` ball.
+  // metric 'farmers' -> total farmer MASS (legacy).
+  // metric 'surplus' -> total SPARE food: what the land grows minus what its own farmers
+  //   eat. This is what can actually feed a town, and it is the gate cfg.newCoreGate
+  //   defaults to (crops_spec §6.3). Under the marginal cap the two diverge hard by
+  //   design: the rule's whole purpose is fewer farmers per tile, so farmer mass stops
+  //   tracking "can this place support a town" — which is how a site with 2500 farmers
+  //   but no spare grain ignited an 8-worker town that then priced itself to P=306.
+  function localDraw(world, i, radius, metric) {
+    var surplus = (metric === 'surplus');
+    var val = function (ht) {
+      if (ht.isCity || !ht.passable) return 0;
+      if (!surplus) return ht.Lmkt + ht.Lsubw;
+      var L = ht.Lmkt + ht.Lsubw;
+      if (L <= 0) return 0;
+      return Math.max(0, Ffood(ht.Cfood, L, world.cfg.kappa, world.cfg.foodModel) - L * world.cfg.c);
+    };
     if (world.dirCost) {                 // planet: BFS the hop-ball (avoid O(n) scan/tile)
       var sum0 = 0, seen = {}, frontier = [i], depth = 0, rad = Math.max(1, Math.round(radius));
       seen[i] = true;
       while (frontier.length && depth <= rad) {
         var next = [];
         for (var f = 0; f < frontier.length; f++) {
-          var t = frontier[f], ht = world.hexes[t];
-          if (!ht.isCity && ht.passable) sum0 += (ht.Lmkt + ht.Lsubw);
+          var t = frontier[f];
+          sum0 += val(world.hexes[t]);
           if (depth < rad) { var nbf = world.adj[t];
             for (var m = 0; m < nbf.length; m++) if (!seen[nbf[m]]) { seen[nbf[m]] = true; next.push(nbf[m]); } }
         }
@@ -640,12 +787,11 @@
     }
     var sum = 0, h0 = world.hexes[i];
     for (var j = 0; j < world.hexes.length; j++) {
-      var h = world.hexes[j];
-      if (h.isCity || !h.passable) continue;
-      if (axialDist(h0, h) <= radius) sum += (h.Lmkt + h.Lsubw);
+      if (axialDist(h0, world.hexes[j]) <= radius) sum += val(world.hexes[j]);
     }
     return sum;
   }
+  function localFarmers(world, i, radius) { return localDraw(world, i, radius, 'farmers'); }
 
   // ORGANIC URBANIZATION — after the equilibrium solves, tiles flip WHOLESALE
   // between farm and gold-work (flips take effect next tick => one-tick lag,
@@ -753,13 +899,14 @@
     // so towns historically cluster on coasts. The site's local farmer mass is the
     // base draw; a tile touching water gets a coastalCoreBonus multiplier on top.
     if (urban < cap) {
-      var bestCore = -1, bestPot = cfg.newCoreMinFarmers;
+      var coreMetric = (cfg.newCoreGate === 'farmers') ? 'farmers' : 'surplus';
+      var bestCore = -1, bestPot = (coreMetric === 'farmers') ? cfg.newCoreMinFarmers : cfg.newCoreMinSurplus;
       for (var i = 0; i < hexes.length; i++) {
         var h = hexes[i]; if (!h.passable || h.isCity || !canFlip(i, true)) continue;
         var dCity = Infinity;
         for (var r = 0; r < world.cities.length; r++) dCity = Math.min(dCity, physDist(world, i, world.cities[r]));
         if (dCity < cfg.newCoreMinDist) continue;
-        var pot = localFarmers(world, i, 2);
+        var pot = localDraw(world, i, 2, coreMetric);
         if (cfg.seaTravel && cfg.coastalCoreBonus > 0) {
           var coastal = false, nbh = neighborsOf(world, i);
           for (var w2 = 0; w2 < nbh.length; w2++) if (hexes[nbh[w2]].terrain === 'water') { coastal = true; break; }
@@ -824,8 +971,21 @@
   // only holds where someone can EXCLUDE the next hungry arrival. This is a deliberate
   // world-model commitment -- enclosed land, not open commons. See surplus handling in
   // step(): that spare food ships to a basin city or rots.
-  function Lsub(C, kappa, c) {
+  // model 'legacy' = the reference core's AVERAGE rule: keep adding people until the
+  // COLLECTIVE just feeds itself, F(L) = L*c, solved by bisection (no closed form for
+  // the exponential yield). Only reachable via foodModel:'legacy'.
+  function Lsub(C, kappa, c, model) {
     if (C <= kappa * c) return 0;
+    if (model === 'legacy') {
+      // bracket [0, max(50, C/c)]: C/c is the absolute ceiling (a tile cannot feed more
+      // than it grows). 50 reproduces the reference core's own bracket at its scale.
+      var lo = 0, hi = Math.max(50, C / c);
+      for (var i = 0; i < 50; i++) {
+        var L = 0.5 * (lo + hi);
+        if (C * (1 - Math.exp(-L / kappa)) > L * c) lo = L; else hi = L;
+      }
+      return 0.5 * (lo + hi);
+    }
     return Math.sqrt(C * kappa / c) - kappa;
   }
   // RESIDUAL room on a tile already worked by Lmkt market farmers. Market labour stops
@@ -838,12 +998,347 @@
   // COINCIDE (the exponential's memorylessness trick, C*exp(-Lmkt/kappa), was only ever
   // needed to avoid double-counting under the average rule). cfg.subsistenceShare is
   // therefore inert now; kept so existing configs/sweeps still load.
-  function residualSub(C, Lmkt, kappa, c) {
-    return Math.max(0, Lsub(C, kappa, c) - Lmkt);
+  function residualSub(C, Lmkt, kappa, c, model) {
+    return Math.max(0, Lsub(C, kappa, c, model) - Lmkt);
   }
   function subRoomTile(world, h, Lmkt) {
     var cfg = world.cfg;
-    return residualSub(h.Cfood, Lmkt, cfg.kappa, cfg.c);
+    return residualSub(h.Cfood, Lmkt, cfg.kappa, cfg.c, cfg.foodModel);
+  }
+
+  // ============================================================================
+  //  BASINS: who is allowed to buy this tile's grain, and who actually does
+  // ============================================================================
+  // Map a possibly-stale city id to the cluster rep that currently represents it.
+  // A growing city's rep can move between ticks (rebuildClusters), so any id held
+  // across a tick boundary — h.basin, a merchant route — must be remapped before use.
+  function liveRep(world, k) {
+    if (k == null || k < 0) return -1;
+    var h = world.hexes[k];
+    if (!h) return -1;
+    if (world.transport[k]) return k;                    // still a rep
+    if (h.isCity && h.clusterRep != null && world.transport[h.clusterRep]) return h.clusterRep;
+    return -1;
+  }
+
+  // ELIGIBILITY — the contiguity clamp (cfg.basinAdjacency). world.eligible[i] is the
+  // list of cities tile i may sell to THIS tick:
+  //   * the city it already sells to (allegiance persists),
+  //   * any city whose own tiles touch it,
+  //   * any city an adjacent LAND tile already sells to.
+  // So a basin advances one ring per tick and a price spike buys one ring, not a map.
+  // Water is not a conductor here on purpose — see cfg.basinAdjacency. With the clamp
+  // off, every city is eligible everywhere (the legacy winner-take-all scan).
+  function computeBasinEligibility(world) {
+    var hexes = world.hexes, n = hexes.length;
+    if (!world.cfg.basinAdjacency) { world.eligible = null; return; }
+    var elig = new Array(n);
+    for (var i = 0; i < n; i++) {
+      var h = hexes[i];
+      if (h.isCity || !h.passable) { elig[i] = null; continue; }
+      var set = null;   // lazily allocated: most tiles see 1-3 cities, not 32
+      var add = function (k) {
+        if (k < 0) return;
+        if (!set) set = [];
+        for (var q = 0; q < set.length; q++) if (set[q] === k) return;
+        set.push(k);
+      };
+      add(liveRep(world, h.basin));                       // keep your buyer
+      var nb = neighborsOf(world, i);
+      for (var m = 0; m < nb.length; m++) {
+        var g = hexes[nb[m]];
+        if (g.isCity) add(liveRep(world, g.clusterRep != null ? g.clusterRep : nb[m]));
+        else if (g.passable) add(liveRep(world, g.basin));  // word from a neighbouring farm
+      }
+      elig[i] = set;
+    }
+    world.eligible = elig;
+  }
+  // Cities a tile may consider. null eligibility (clamp off) = all of them.
+  function eligibleFor(world, i) {
+    if (!world.eligible) return world.cities;
+    return world.eligible[i] || EMPTY;
+  }
+  var EMPTY = [];
+
+  // ASSIGN — each tile commits to ONE buyer for the whole tick, using last tick's
+  // prices. Sets h.basin, h.tcost (transport to that buyer) and h.isDessert. After
+  // this, a city's supply is a function of its OWN price alone, which is what makes
+  // the per-city bisections independent and kills the winner-take-all riser.
+  //
+  // Stickiness: a tile only re-shops when its buyer's price has moved more than
+  // stickyPriceTol, when its eligible set changed, when transport was recomputed, or
+  // on its staggered periodic refresh. Otherwise it keeps last tick's buyer — cheaper
+  // and, for a classical-era farmer, truer.
+  function assignBasins(world, Pprev) {
+    var cfg = world.cfg, hexes = world.hexes;
+    if (!world.basinPriceSeen) world.basinPriceSeen = {};   // per-tile: buyer's price when last shopped
+    var sticky = cfg.stickyBasins;
+    for (var i = 0; i < hexes.length; i++) {
+      var h = hexes[i];
+      if (h.isCity || !h.passable) continue;
+      var cur = liveRep(world, h.basin);
+      // --- may we keep last tick's decision? ---
+      if (sticky && cur >= 0 && !world.transportDirty) {
+        var seen = world.basinPriceSeen[i], now = Pprev[cur];
+        var moved = (seen == null || now == null) ? true
+                  : Math.abs(now - seen) > cfg.stickyPriceTol * Math.max(1e-9, seen);
+        var due = ((world.tick + i) % Math.max(1, cfg.stickyRefresh)) === 0;
+        if (!moved && !due) {
+          // Still must recheck that the buyer is worth selling to at all — a tile whose
+          // netback went negative drops out of the market even if it didn't re-shop.
+          var tk = world.transport[cur] ? world.transport[cur][i] : Infinity;
+          if (isFinite(tk)) {
+            var nk = netbackOf(cfg, Pprev[cur], tk);
+            if (nk.v > 0) { h.basin = cur; h.tcost = tk; h.netback = nk.v; h.isDessert = nk.dessert; continue; }
+          }
+        }
+      }
+      // --- re-shop over the eligible cities ---
+      var cand = eligibleFor(world, i);
+      var best = -Infinity, bk = -1, bt = Infinity, bd = false;
+      for (var ci = 0; ci < cand.length; ci++) {
+        var kk = cand[ci];
+        var t = world.transport[kk] ? world.transport[kk][i] : Infinity;
+        if (!isFinite(t)) continue;
+        var nb = netbackOf(cfg, Pprev[kk] != null ? Pprev[kk] : 1, t);
+        if (nb.v > best) { best = nb.v; bk = kk; bt = t; bd = nb.dessert; }
+      }
+      // BASIN HYSTERESIS — stay put unless a rival beats the incumbent by basinHyst.
+      // Stops the tick-to-tick flip-flop between two near-tied cities.
+      if (cur >= 0 && cur !== bk && world.transport[cur]) {
+        var tc = world.transport[cur][i];
+        if (isFinite(tc)) {
+          var nbc = netbackOf(cfg, Pprev[cur] != null ? Pprev[cur] : 1, tc);
+          if (nbc.v > 0 && best <= nbc.v * (1 + cfg.basinHyst)) { best = nbc.v; bk = cur; bt = tc; bd = nbc.dessert; }
+        }
+      }
+      if (best > 0 && bk >= 0) {
+        h.basin = bk; h.tcost = bt; h.netback = best; h.isDessert = bd;
+        world.basinPriceSeen[i] = Pprev[bk];
+      } else {
+        h.basin = -1; h.tcost = Infinity; h.netback = -Infinity; h.isDessert = false;
+        delete world.basinPriceSeen[i];
+      }
+    }
+    // City tiles fish for their OWN city (distance 0 — nobody outbids that).
+    for (var c = 0; c < world.cities.length; c++) {
+      var cl = world.clusterOf[world.cities[c]];
+      for (var t2 = 0; t2 < cl.tiles.length; t2++) {
+        var ht = hexes[cl.tiles[t2]];
+        if ((ht.fishCap || 0) > 0) { ht.basin = cl.rep; ht.tcost = 0; ht.isDessert = false; }
+      }
+    }
+  }
+
+  // ============================================================================
+  //  GRANARIES — the continuous term that makes a clearing price EXIST
+  // ============================================================================
+  // Target stock, in food. Uses last tick's workforce (this tick's is what we're
+  // solving for), so it is deliberately lagged by one tick.
+  function storageTarget(world, k) {
+    var cfg = world.cfg;
+    return cfg.storageDays * cfg.c * (world.cityN[k] || 0);
+  }
+  // The granary's NET DEMAND at price P. TWO motives, and both are needed:
+  //
+  //   RESTOCK  — it wants to hold `storageDays` of food. The emptier it is, the harder
+  //              it buys. Without this the granary never fills at all: its price memory
+  //              is an EMA of the price it actually sees, so at equilibrium remembered
+  //              == actual, the price motive is exactly zero, and a pure price-timer
+  //              sits empty forever (measured: stock 0 against a target of 120,708).
+  //              An empty granary buffers nothing and gives merchants nothing to ship.
+  //   TIMING   — it buys below the remembered price and sells above it. This is the part
+  //              that damps shocks, and the part that is CONTINUOUS in P.
+  //
+  // Strictly DECREASING in P either way (restock is P-independent, timing falls with P,
+  // and clamping preserves monotonicity), which is what the bisection needs. Unlike farm
+  // supply it is continuous, so excess demand actually crosses zero somewhere.
+  function storageBid(world, k, P) {
+    var cfg = world.cfg;
+    if (!cfg.storage) return 0;
+    var ref = world.priceEma[k];
+    if (ref == null || !(ref > 0)) return 0;
+    var target = storageTarget(world, k);
+    if (!(target > 0)) return 0;                     // a city with no mouths keeps no granary
+    var stock = world.stock[k] || 0;
+    var lim = cfg.storageRate * target;              // most it will move either way this tick
+    var timing = (ref - P) / ref;                    // >0 cheap => buy;  <0 dear => sell
+    // RESTOCK, faded out as grain gets dear. A half-empty granary still wants filling,
+    // but not during a famine — and adding the two motives flat let the restock term
+    // cancel most of the release exactly when the release was the point (measured: a
+    // granary holding 5.6 days of food released only 137 against a 441 shortfall, and the
+    // price spiked 69% anyway). A reserve exists to be drawn down. The weight ramps
+    // linearly to zero as P rises to 2x remembered, which keeps q both CONTINUOUS and
+    // monotone decreasing in P — the two properties the bisection actually needs.
+    var restockWeight = clamp(1 + timing, 0, 1);
+    var restock = cfg.storageFill * ((target - stock) / target) * restockWeight;
+    var q = lim * clamp(restock + timing, -1, 1);
+    var buyMax = Math.min(lim, Math.max(0, target - stock));
+    var sellMax = Math.min(lim, stock);
+    return clamp(q, -sellMax, buyMax);
+  }
+
+  // A granary is keyed by its city's cluster rep, and a rep can STOP being a city two
+  // ways: the city is removed, or two cities grow into each other and one rep loses the
+  // merge. Both used to just `delete world.stock[rep]`, which silently destroyed the
+  // grain — it never appeared in the conservation identity, so food vanished off the
+  // books. Merges happen in ordinary play, so this was a live leak, not an edge case.
+  //
+  // Now: a merged-away granary is INHERITED by the cluster that absorbed it (the grain is
+  // still in the same city, the city just has one downtown now), and a destroyed city's
+  // granary is spilled — returned as waste so the identity still balances.
+  function reconcileGranaries(world) {
+    var orphaned = 0;
+    for (var k in world.stock) {
+      if (world.Aof[k] != null) continue;                 // still a live city: keep
+      var lost = world.stock[k] || 0;
+      var h = world.hexes[k];
+      var heir = (h && h.isCity && h.clusterRep != null && world.Aof[h.clusterRep] != null)
+        ? h.clusterRep : -1;
+      if (heir >= 0) world.stock[heir] = (world.stock[heir] || 0) + lost;   // absorbed by the merge
+      else orphaned += lost;                                                // city gone: it spoils
+      delete world.stock[k];
+    }
+    for (var e in world.priceEma) if (world.Aof[e] == null) delete world.priceEma[e];
+    for (var b in world.lastBalance) if (world.Aof[b] == null) delete world.lastBalance[b];
+    return orphaned;
+  }
+
+  // ============================================================================
+  //  MERCHANTS — city -> city arbitrage on LAGGED prices
+  // ============================================================================
+  // Plans this tick's caravans from LAST tick's prices and last tick's realised
+  // surplus/deficit. Returns { imports:{k:qty}, exports:{k:qty}, routes:[...] }.
+  // Because the plan is fixed before the solve, each city's merchant inflow is a
+  // CONSTANT w.r.t. this tick's prices — the per-city bisections stay decoupled.
+  function planMerchants(world) {
+    var cfg = world.cfg;
+    var imports = {}, exports_ = {}, routes = [];
+    for (var a = 0; a < world.cities.length; a++) { imports[world.cities[a]] = 0; exports_[world.cities[a]] = 0; }
+    if (!cfg.merchants || world.cities.length < 2) return { imports: imports, exports: exports_, routes: routes };
+
+    var bal = world.lastBalance || {};
+    var spare = {}, cap = {}, slots = {};
+    for (var i = 0; i < world.cities.length; i++) {
+      var k = world.cities[i], b = bal[k] || { surplus: 0, deficit: 0 };
+      // SPARE — what A's merchants can lay hands on this tick: grain that had no eater
+      // at home last tick, plus a draw on the granary at the same rate the granary
+      // itself trades. NOT "stock above target": at a cleared equilibrium a city's
+      // surplus is ~0 by construction, so that definition made spare==0 everywhere and
+      // no caravan ever left. Drawing the granary down is the correct source — the
+      // granary then bids to refill, which lifts A's price, which is exactly how the
+      // cost of exporting reaches A's farmers.
+      // Net out what was carted IN last tick: that grain is not A's "extra", it is a
+      // caravan that has not been absorbed yet, and treating it as exportable let a city
+      // re-export its own imports the very next tick (the return leg of the period-2
+      // cycle above). Grain that has settled into the granary is fair game — that is
+      // entrepot trade and it is real — but only at the rate the granary trades.
+      var ownSurplus = Math.max(0, b.surplus - (b.imported || 0));
+      spare[k] = ownSurplus + cfg.storageRate * (world.stock[k] || 0);
+      cap[k] = cfg.merchantCapPerWorker * (world.cityN[k] || 0);
+      slots[k] = cfg.merchantRoutes;
+    }
+    // ---- how much does each city want IMPORTED this tick? -------------------
+    // Computed per DESTINATION from its own demand curve — not from its realised deficit.
+    // That distinction is load-bearing: a starved city has cityN -> 0, so its deficit AND
+    // its granary target are both 0, and a deficit-based rule sees "no need" and leaves it
+    // to die — it cannot bootstrap because it has no workers, and has no workers because
+    // nobody ships it food (measured: N=0, P pinned at the 600 cap, forever).
+    //
+    // The target is the flow that CLEARS B at the arbitrage-free price: ship
+    // `demandAt(B, cheapest delivered cost) - B's own harvest`, and the market then prices
+    // B at exactly that, closing the margin and stopping further growth by itself. This is
+    // Dan's "fill demand plus storage, then stop" — expressed as the price where stopping
+    // happens rather than as a quantity guess.
+    //
+    // Then approach the target through a FIRST-ORDER LAG (merchantAggression), and compute
+    // it per-CITY rather than per-route, so it degrades smoothly when the margin closes.
+    // Gating the flow directly on `margin > minMargin` put a cliff in the loop: the entire
+    // fleet vanished the tick the margin dipped to 0.017, lastImports reset to 0, the lag
+    // restarted from nothing, and the price rang 1.88 <-> 3.21 on a period-5 cycle. Real
+    // trade winds down; it does not evaporate.
+    var needLeft = {};
+    for (var bi0 = 0; bi0 < world.cities.length; bi0++) {
+      var Bk = world.cities[bi0];
+      // cheapest delivered cost from any other city => the arbitrage-free price at Bk
+      var bestDeliv = Infinity;
+      for (var ai0 = 0; ai0 < world.cities.length; ai0++) {
+        var Ak = world.cities[ai0];
+        if (Ak === Bk || spare[Ak] <= 0 || cap[Ak] <= 0) continue;
+        var t0 = world.transport[Bk] ? world.transport[Bk][Ak] : Infinity;
+        if (!isFinite(t0)) continue;
+        bestDeliv = Math.min(bestDeliv, (world.prices[Ak] || 0) + t0);
+      }
+      var last = (world.lastImports && world.lastImports[Bk]) || 0;
+      var want = 0;
+      if (isFinite(bestDeliv) && (world.prices[Bk] || 0) > bestDeliv + cfg.merchantMinMargin) {
+        var arbFree = bestDeliv + cfg.merchantMinMargin;
+        var localSupply = (world.lastDelivered && world.lastDelivered[Bk]) || 0;
+        // Ship what B can EAT NEXT TICK, not what it would eat once fully grown.
+        // demandAt returns the equilibrium workforce's appetite, but cityN only migrates
+        // `migrate` of the way toward that per tick — so aiming at the equilibrium lands
+        // grain the city has not yet grown the mouths to eat, and the surplus pushes the
+        // price straight past the target. Feed-forward through the same migration lag the
+        // tick will actually apply.
+        var Ntarget = demandAt(world, Bk, arbFree) / cfg.c;
+        var Nnow = world.cityN[Bk] || 0;
+        var Nnext = Nnow + clamp(cfg.migrate, 0.02, 1) * (Ntarget - Nnow);
+        var targetFlow = Math.max(0, cfg.c * Nnext - localSupply);
+        // Granary room is capped at the granary's OWN per-tick appetite (storageRate x
+        // target), not the whole empty volume. A granary with 8 days of room does not want
+        // 8 days of grain delivered this afternoon — storageBid only ever moves storageRate
+        // of target per tick, so offering the full room let caravans deliver ~4x what the
+        // city could absorb and the price overshot straight through the floor (measured:
+        // 0.82 <-> 320.6, period 2). Merchants and the granary must agree on the same rate.
+        var tgt = storageTarget(world, Bk);
+        var room = Math.min(Math.max(0, tgt - (world.stock[Bk] || 0)), cfg.storageRate * tgt);
+        want = targetFlow + room;
+      }
+      needLeft[Bk] = Math.max(0, last + cfg.merchantAggression * (want - last));
+    }
+
+    // ---- route it: highest margin first ------------------------------------
+    // Routes need only be PROFITABLE (margin > 0) to carry the smoothed need; minMargin
+    // gates whether the trade is worth GROWING (above), not whether an existing caravan
+    // finishes its journey. Highest-margin sources win the slots — Dan's "filled by
+    // whichever merchants can get there with the highest margins".
+    var cands = [];
+    for (var ai = 0; ai < world.cities.length; ai++) {
+      var A = world.cities[ai];
+      if (spare[A] <= 0 || cap[A] <= 0) continue;
+      for (var bi = 0; bi < world.cities.length; bi++) {
+        var B = world.cities[bi];
+        if (A === B || needLeft[B] <= 1e-9) continue;
+        // transport[B][A] = cost to ship one unit FROM tile A TO city B. Already
+        // computed for the farm market — merchants ride the same roads and sea lanes.
+        var t = world.transport[B] ? world.transport[B][A] : Infinity;
+        if (!isFinite(t)) continue;
+        var margin = (world.prices[B] || 0) - (world.prices[A] || 0) - t;
+        if (margin <= 0) continue;
+        cands.push({ a: A, b: B, margin: margin, t: t });
+      }
+    }
+    cands.sort(function (x, y) { return y.margin - x.margin; });
+    for (var ci = 0; ci < cands.length; ci++) {
+      var r = cands[ci];
+      if (slots[r.b] <= 0 || spare[r.a] <= 1e-9 || cap[r.a] <= 1e-9 || needLeft[r.b] <= 1e-9) continue;
+      var qty = Math.min(spare[r.a], needLeft[r.b], cap[r.a]);
+      if (qty <= 1e-9) continue;
+      spare[r.a] -= qty; needLeft[r.b] -= qty; cap[r.a] -= qty; slots[r.b]--;
+      exports_[r.a] += qty; imports[r.b] += qty;
+      routes.push({ from: r.a, to: r.b, qty: qty, margin: r.margin, cost: r.t });
+    }
+    return { imports: imports, exports: exports_, routes: routes };
+  }
+  // Food city k would buy per tick at price P, at last tick's shadow wage. This is the
+  // same NofCity the solver uses, so merchants and the price bisection agree about what
+  // a city wants — they just consult it at different prices.
+  function demandAt(world, k, P) {
+    var cfg = world.cfg, S = world.solverConst;
+    if (!(P > 0) || world.Aof[k] == null) return 0;
+    var w = world.lastW || 0;
+    return cfg.c * NofCity(world.Aof[k], w + P * cfg.c, S.Z, S.alpha, S.pconc);
   }
 
   // ============================================================================
@@ -853,8 +1348,9 @@
   // Michaelis-Menten: F -> C as L -> infinity, F' = C*kappa/(L+kappa)^2.
   // (Was C*(1-exp(-L/kappa)). MM's fatter tail is what makes the marginal cap
   // below sublinear in C rather than pinned just under the C/c ceiling.)
-  function Ffood(C, L, kappa) {
+  function Ffood(C, L, kappa, model) {
     if (C <= 0 || L <= 0) return 0;
+    if (model === 'legacy') return C * (1 - Math.exp(-L / kappa));   // reference core
     return C * L / (L + kappa);
   }
   // Market farming on hex with capacity C, netback nb, wage w.
@@ -862,8 +1358,13 @@
   // the exponential form solved exactly this). With MM, MPL = C*kappa/(L+kappa)^2 = m
   // gives the closed form below; E = sqrt(kappa*m/C) plays the role the old
   // E = (c + w/nb)*kappa/C played, including the E>=1 "not worth farming" guard.
-  function mkt(C, nb, w, kappa, c) {
+  function mkt(C, nb, w, kappa, c, model) {
     if (nb <= 0 || C <= 0) return { L: 0, F: 0 };
+    if (model === 'legacy') {                       // reference core's exponential form
+      var El = (c + w / nb) * kappa / C;
+      if (El >= 1) return { L: 0, F: 0 };
+      return { L: -kappa * Math.log(El), F: C * (1 - El) };
+    }
     var E = Math.sqrt(kappa * (c + w / nb) / C);
     if (E >= 1) return { L: 0, F: 0 };
     return { L: kappa * (1 / E - 1), F: C * (1 - E) };
@@ -904,45 +1405,98 @@
     return Math.pow(T * Z / A, 1 / (alpha - pconc));
   }
 
+  // ---- one tile's offer to its assigned buyer, at that buyer's price P ----------
+  // With stickyBasins the buyer is fixed for the tick (h.basin) and the tile's whole
+  // response to price runs through this one function. With the clamp/stickiness OFF
+  // the caller falls back to the legacy scan-every-city path.
+  function tileOffer(world, h, P, w) {
+    var cfg = world.cfg;
+    var cap = foodCapOf(h);
+    if (cap <= 0 || h.basin < 0) return null;
+    var nb = netbackOf(cfg, P, h.tcost);
+    if (!(nb.v > 0)) return null;
+    var f = mkt(cap, nb.v, w, cfg.kappa, cfg.c, cfg.foodModel);
+    return { L: f.L, surplus: Math.max(0, f.F - f.L * cfg.c), dessert: nb.dessert, nb: nb.v };
+  }
+  // Legacy scan: the tile re-auctions to every ELIGIBLE city at the live price vector,
+  // every bisection round. Kept so stickyBasins:false reproduces the old engine (with
+  // basinAdjacency:false too, that is the exact pre-2026-07-16 behaviour the gates pin).
+  // `hyst` applies basin hysteresis against h.basin — the old engine did this in step()
+  // but NOT in innerP, and that asymmetry was itself a documented glut source, so the
+  // flag preserves it rather than quietly fixing it.
+  function tileOfferScan(world, h, P, w, hyst) {
+    var cfg = world.cfg;
+    var cap = foodCapOf(h); if (cap <= 0) return null;
+    var cand = eligibleFor(world, h.i);
+    if (h.isCity) cand = world.cities;           // a city tile's catch is not clamped
+    var bestv = -Infinity, bk = -1, bestDes = false, bt = Infinity;
+    for (var ci = 0; ci < cand.length; ci++) {
+      var kk = cand[ci];
+      var t = world.transport[kk] ? world.transport[kk][h.i] : Infinity;
+      if (!isFinite(t)) continue;
+      var nbk = netbackOf(cfg, P[kk], t);
+      if (nbk.v > bestv) { bestv = nbk.v; bk = kk; bestDes = nbk.dessert; bt = t; }
+    }
+    if (hyst) {
+      var cur = liveRep(world, h.basin);
+      if (cur >= 0 && cur !== bk && world.transport[cur]) {
+        var tc = world.transport[cur][h.i];
+        if (isFinite(tc)) {
+          var nbc = netbackOf(cfg, P[cur], tc);
+          if (nbc.v > 0 && bestv <= nbc.v * (1 + cfg.basinHyst)) { bestv = nbc.v; bk = cur; bestDes = nbc.dessert; bt = tc; }
+        }
+      }
+    }
+    if (!(bestv > 0) || bk < 0) return null;
+    var f = mkt(cap, bestv, w, cfg.kappa, cfg.c, cfg.foodModel);
+    return { L: f.L, surplus: Math.max(0, f.F - f.L * cfg.c), dessert: bestDes, nb: bestv, k: bk, t: bt };
+  }
+
   // Inner: per-city price bisection to clear each city food market.
   // crewFood[k] (>=0) adds crew/garrison mouths stationed at city k.
-  function innerP(world, w, Pprev, crewFood) {
+  // trade = { imports, exports } from planMerchants: caravans committed on LAST tick's
+  // prices, so they are constants here and do not couple the cities' bisections.
+  //
+  // Each city's excess demand at its own price P:
+  //     ED(P) = [ c*N(w + P*c) + crew - displaced(desserts) + exports + granaryBid(P) ]
+  //           - [ farm surplus assigned to this city at P  + imports ]
+  // Every P-dependent term is monotone the right way (demand falls, supply rises), and
+  // granaryBid is CONTINUOUS — so ED actually crosses zero instead of jumping over it.
+  function innerP(world, w, Pprev, crewFood, trade) {
     var cfg = world.cfg, S = world.solverConst;
     var cities = world.cities, hexes = world.hexes;
+    var sticky = cfg.stickyBasins;
     var P = {}, lo = {}, hi = {};
     for (var a = 0; a < cities.length; a++) {
       var k = cities[a];
       P[k] = (Pprev && Pprev[k] != null) ? Pprev[k] : 1;
-      lo[k] = 0.001; hi[k] = 600;
+      lo[k] = cfg.priceMin; hi[k] = cfg.priceMax;
     }
     for (var rd = 0; rd < cfg.priceRounds; rd++) {
       var sup = {}, desQ = {};
       for (var b = 0; b < cities.length; b++) { sup[cities[b]] = 0; desQ[cities[b]] = 0; }
       for (var hi2 = 0; hi2 < hexes.length; hi2++) {
         var h = hexes[hi2];
-        var cap = foodCapOf(h); if (cap <= 0) continue;  // farm=farm+fish, coastal city=fish
-        var bestv = -Infinity, bk = -1, bestDes = false;
-        for (var ci = 0; ci < cities.length; ci++) {
-          var kk = cities[ci];
-          var t = world.transport[kk] ? world.transport[kk][h.i] : Infinity;
-          if (!isFinite(t)) continue;
-          var nbk = netbackOf(cfg, P[kk], t);
-          if (nbk.v > bestv) { bestv = nbk.v; bk = kk; bestDes = nbk.dessert; }
+        var o, bk;
+        if (sticky) {
+          if (h.basin < 0 || P[h.basin] == null) continue;
+          o = tileOffer(world, h, P[h.basin], w); bk = h.basin;
+        } else {
+          o = tileOfferScan(world, h, P, w); if (o) bk = o.k;
         }
-        if (bestv > 0 && bk >= 0) {
-          var f = mkt(cap, bestv, w, cfg.kappa, cfg.c);
-          var surplus = Math.max(0, f.F - f.L * cfg.c);
-          // A dessert tile ships NO food -- its surplus leaves as desserts, which only
-          // touch the food market via displacement below.
-          if (bestDes) desQ[bk] += surplus / cfg.dessertX;
-          else sup[bk] += surplus;
-        }
+        if (!o) continue;
+        // A dessert tile ships NO food -- its surplus leaves as desserts, which only
+        // touch the food market via displacement below.
+        if (o.dessert) desQ[bk] += o.surplus / cfg.dessertX;
+        else sup[bk] += o.surplus;
       }
       for (var ci2 = 0; ci2 < cities.length; ci2++) {
         var key = cities[ci2];
         var extra = crewFood ? (crewFood[key] || 0) : 0;
         var dem = cfg.c * (NofCity(world.Aof[key], w + P[key] * cfg.c, S.Z, S.alpha, S.pconc) + extra);
         dem -= displaceOf(cfg, desQ[key], dem);   // richest-first: desserts eaten instead of food
+        if (trade) { dem += trade.exports[key] || 0; sup[key] += trade.imports[key] || 0; }
+        dem += storageBid(world, key, P[key]);    // the granary bids: continuous in P
         if (dem - sup[key] > 0) lo[key] = P[key]; else hi[key] = P[key];
         P[key] = 0.5 * (lo[key] + hi[key]);
       }
@@ -951,21 +1505,18 @@
   }
 
   // Formal labor demand (market farmers + city workers) at wage w.
-  function formal(world, w, Pprev, crewFood) {
+  function formal(world, w, Pprev, crewFood, trade) {
     var cfg = world.cfg, S = world.solverConst;
-    var P = innerP(world, w, Pprev, crewFood);
+    var P = innerP(world, w, Pprev, crewFood, trade);
     var Lm = 0, Nc = 0, hexes = world.hexes;
+    var sticky = cfg.stickyBasins;
     var mktL = new Float64Array(hexes.length);
     for (var i = 0; i < hexes.length; i++) {
       var h = hexes[i];
-      var cap = foodCapOf(h); if (cap <= 0) continue;   // farm+fish, or coastal-city fishing
-      var best = -Infinity;
-      for (var ci = 0; ci < world.cities.length; ci++) {
-        var kk = world.cities[ci];
-        var t = world.transport[kk] ? world.transport[kk][h.i] : Infinity;
-        if (isFinite(t)) best = Math.max(best, netbackOf(cfg, P[kk], t).v);
-      }
-      if (best > 0) { var f = mkt(cap, best, w, cfg.kappa, cfg.c); Lm += f.L; mktL[h.i] = f.L; }
+      var o = sticky
+        ? ((h.basin >= 0 && P[h.basin] != null) ? tileOffer(world, h, P[h.basin], w) : null)
+        : tileOfferScan(world, h, P, w);
+      if (o) { Lm += o.L; mktL[h.i] = o.L; }
     }
     for (var c2 = 0; c2 < world.cities.length; c2++) {
       var key = world.cities[c2];
@@ -976,7 +1527,7 @@
 
   // Solve for equilibrium given pool Npool and mouths committed to roads.
   // Returns targets {w, P, Lm, Nc, mktL, subs, room, byCityN}.
-  function solveEquilibrium(world, Npool, Pprev, crewFood) {
+  function solveEquilibrium(world, Npool, Pprev, crewFood, trade) {
     var cfg = world.cfg, S = world.solverConst;
     if (world.cities.length === 0) {
       // no cities: everyone subsists on viable land (no market labour yet -> full Lsub)
@@ -985,13 +1536,13 @@
       return { w: 0, P: {}, Lm: 0, Nc: 0, mktL: new Float64Array(world.hexes.length),
                subs: Math.min(Npool, subRoom0), room: Math.max(0, subRoom0 - Npool), byCityN: {} };
     }
-    var f0 = formal(world, 1e-5, Pprev, crewFood);
+    var f0 = formal(world, 1e-5, Pprev, crewFood, trade);
     var out;
     if (f0.formal >= Npool) {
       var wlo = 1e-5, whi = 200, P = Pprev;
       for (var it = 0; it < cfg.wIters; it++) {
         var wm = 0.5 * (wlo + whi);
-        var f = formal(world, wm, P, crewFood); P = f.P;
+        var f = formal(world, wm, P, crewFood, trade); P = f.P;
         if (f.formal > Npool) wlo = wm; else whi = wm;
         out = { w: wm, P: f.P, Lm: f.Lm, Nc: f.Nc, mktL: f.mktL };
       }
@@ -1086,6 +1637,12 @@
       transport: {}, transportDirty: true,
       N: cfg.N0,
       prices: {},
+      // ---- granaries & trade (see the storage / merchants blocks in DEFAULTS) ----
+      stock: {},          // rep -> food currently in the city's granary
+      priceEma: {},       // rep -> the price this city REMEMBERS (adaptive expectations)
+      cityN: {},          // rep -> city workforce (persistent, blended toward the solve)
+      lastBalance: {},    // rep -> { surplus, deficit } realised last tick; what merchants read
+      trade: null,        // this tick's caravan plan (imports/exports/routes)
       treasury: 0, taxPool: 0,
       tick: 0,
       history: [],
@@ -1167,6 +1724,11 @@
     if (!h.paved) { h.paved = true; computeCapacity(world, i); world.Ksub = world.hexes.reduce(function (a, hh) { return a + hh.Lsub; }, 0); }  // urbanised land: farmland gone for good
     if (Aexplicit != null) h.explicitA = Aexplicit;   // pin productivity (fidelity tests)
     if (world.prices[i] == null) world.prices[i] = 1.0;
+    // A new town starts with an EMPTY granary and no price memory yet — it has to earn
+    // both. (priceEma seeds from the first solved price in step(), not from 1.0, so a
+    // town founded into an expensive region doesn't spend its first ticks convinced
+    // grain is cheap and dumping stock it doesn't have.)
+    if (world.stock[i] == null) world.stock[i] = 0;
     // Population is never created ex nihilo: only the FIRST city bootstraps the
     // world with cityFoundPop settlers. Every later city (player-placed OR an
     // emergent organic core) draws its people from the existing pool via migration.
@@ -1193,8 +1755,8 @@
     computeCapacity(world, i);
     var nb = neighborsOf(world, i);
     for (var k = 0; k < nb.length; k++) computeCapacity(world, nb[k]);
-    h.Lsub = Lsub(h.Cfood, world.cfg.kappa, world.cfg.c);
-    for (var k2 = 0; k2 < nb.length; k2++) world.hexes[nb[k2]].Lsub = Lsub(world.hexes[nb[k2]].Cfood, world.cfg.kappa, world.cfg.c);
+    h.Lsub = Lsub(h.Cfood, world.cfg.kappa, world.cfg.c, world.cfg.foodModel);
+    for (var k2 = 0; k2 < nb.length; k2++) world.hexes[nb[k2]].Lsub = Lsub(world.hexes[nb[k2]].Cfood, world.cfg.kappa, world.cfg.c, world.cfg.foodModel);
     world.Ksub = world.hexes.reduce(function (a, hh) { return a + hh.Lsub; }, 0);
     world.transportDirty = true;
   }
@@ -1359,10 +1921,34 @@
       }
     }
 
+    // ---- commit the tick's structure BEFORE solving prices --------------------
+    // Order matters and is the whole stability argument:
+    //   1. every farm tile picks ONE buyer, using LAST tick's prices (assignBasins);
+    //   2. merchants commit caravans, also on LAST tick's prices (planMerchants);
+    //   3. only then do prices solve.
+    // Both (1) and (2) are therefore CONSTANTS during (3), so each city's excess
+    // demand depends on its own price alone and the per-city bisections are exactly
+    // independent. Solving any of this jointly with the price is what oscillated.
+    // Settle granaries whose city merged away or was destroyed BEFORE anything reads
+    // stock — merchants price their routes off it, and the balance below closes on it.
+    var orphanWaste = reconcileGranaries(world);
+    computeBasinEligibility(world);              // the contiguity clamp (no-op if off)
+    if (cfg.stickyBasins) assignBasins(world, world.prices);
+    var trade = planMerchants(world);
+    world.trade = trade;
+
     // ---- solve equilibrium for the free pool (pool minus employed roadworkers) ----
     var Nfree = Math.max(0.1, world.N - crewsEmployed - harborTotal);
-    var eq = solveEquilibrium(world, Nfree, world.prices, crewFood);
+    var eq = solveEquilibrium(world, Nfree, world.prices, crewFood, trade);
     world.prices = eq.P;
+    world.lastW = eq.w;    // next tick's merchants price B's demand curve at this wage
+    // Remembered price per city (adaptive expectations) — drives the granary's bid.
+    // Seeded from the first solved price, so a new town isn't born with a wrong memory.
+    for (var pe = 0; pe < world.cities.length; pe++) {
+      var pk = world.cities[pe];
+      var prevE = world.priceEma[pk];
+      world.priceEma[pk] = (prevE == null) ? eq.P[pk] : prevE + cfg.storageEma * (eq.P[pk] - prevE);
+    }
 
     // ---- migration + subsistence distribution -------------------------------
     // Targets come from the solved equilibrium; actual farmer/city counts flow a
@@ -1370,58 +1956,41 @@
     // scalar eq.subs distributed across per-hex SLACK (Lsub - market L) so the
     // map fills without over-committing labor (conservation stays exact at rest).
     var mig = clamp(cfg.migrate, 0.02, 1);
-    // pass 1: per-hex market target + basin; accumulate slack for subsistence
+    // pass 1: per-hex market target at the SOLVED prices; accumulate slack for subsistence.
+    // The buyer (h.basin) was committed before the solve and is NOT revisited here — that
+    // is what keeps the tick's realised shipments consistent with the supply the solver
+    // priced. When they disagree the difference shows up as glut/shortfall, which is
+    // precisely the discontinuity this rework exists to remove.
     var totalSlack = 0;
+    var sticky1 = cfg.stickyBasins;
     for (var i2 = 0; i2 < hexes.length; i2++) {
       var h2 = hexes[i2];
       if (h2.isCity) {
         // COASTAL CITY TILE — market FISHING only (no farming, no subsistence). It
-        // sells its catch to the best city, which (at distance 0) is its own; a
-        // non-coastal city has fishCap 0 and is skipped.
+        // sells its catch to its own city (distance 0; nobody outbids that).
         var fcap = h2.fishCap || 0;
         if (fcap <= 0) { h2.LmktT = 0; h2.Fmkt = 0; continue; }
-        var bestF = -Infinity, bkF = -1;
-        for (var cf = 0; cf < world.cities.length; cf++) {
-          var kf = world.cities[cf], tf = world.transport[kf] ? world.transport[kf][h2.i] : Infinity;
-          if (isFinite(tf)) { var vf = netbackOf(cfg, eq.P[kf], tf).v; if (vf > bestF) { bestF = vf; bkF = kf; } }
-        }
-        if (bestF > 0) { var ff = mkt(fcap, bestF, eq.w, cfg.kappa, cfg.c); h2.LmktT = ff.L; h2.Fmkt = ff.F; h2.netback = bestF; h2.basin = bkF; }
-        else { h2.LmktT = 0; h2.Fmkt = 0; h2.netback = -Infinity; }
+        var offF = sticky1 ? ((h2.basin >= 0 && eq.P[h2.basin] != null) ? tileOffer(world, h2, eq.P[h2.basin], eq.w) : null)
+                           : tileOfferScan(world, h2, eq.P, eq.w, false);
+        if (offF) {
+          var capF = foodCapOf(h2);
+          var fF = mkt(capF, offF.nb, eq.w, cfg.kappa, cfg.c, cfg.foodModel);
+          h2.LmktT = fF.L; h2.Fmkt = fF.F; h2.netback = offF.nb;
+          if (!sticky1) { h2.basin = offF.k; h2.tcost = offF.t; }
+        } else { h2.LmktT = 0; h2.Fmkt = 0; h2.netback = -Infinity; }
         continue;
       }
-      var prevBasin = h2.basin;                 // last tick's allegiance (for hysteresis)
-      h2.basin = -1; h2.netback = -Infinity;
-      if (!h2.passable) { h2.LmktT = 0; h2.LsubT = 0; h2.Fmkt = 0; continue; }
-      var best = -Infinity, bk = -1, bestDes = false;
-      for (var c3 = 0; c3 < world.cities.length; c3++) {
-        var kk3 = world.cities[c3];
-        var t = world.transport[kk3] ? world.transport[kk3][h2.i] : Infinity;
-        if (isFinite(t)) {
-          var nb3 = netbackOf(cfg, eq.P[kk3], t);
-          if (nb3.v > best) { best = nb3.v; bk = kk3; bestDes = nb3.dessert; }
-        }
+      if (!h2.passable) { h2.LmktT = 0; h2.LsubT = 0; h2.Fmkt = 0; h2.basin = -1; continue; }
+      var off = sticky1 ? ((h2.basin >= 0 && eq.P[h2.basin] != null) ? tileOffer(world, h2, eq.P[h2.basin], eq.w) : null)
+                        : tileOfferScan(world, h2, eq.P, eq.w, true);   // legacy: hysteresis lives here
+      if (off) {
+        var f = mkt(h2.Cfood, off.nb, eq.w, cfg.kappa, cfg.c, cfg.foodModel);
+        h2.LmktT = f.L; h2.Fmkt = f.F; h2.netback = off.nb; h2.isDessert = off.dessert;
+        if (!sticky1) { h2.basin = off.k; h2.tcost = off.t; }
+      } else {
+        h2.LmktT = 0; h2.Fmkt = 0; h2.isDessert = false; h2.netback = -Infinity;
+        if (!sticky1) h2.basin = -1;
       }
-      // BASIN HYSTERESIS: stay with the current city unless a rival delivers a
-      // clearly better netback (> basinHyst better). Stops the tick-to-tick
-      // flip-flop when two cities are near-tied. The prev basin was stored as a
-      // cluster rep; a growing city's rep can shift between ticks, so remap a
-      // stale rep to its tile's CURRENT cluster rep before comparing (otherwise
-      // the whole hinterland loses stickiness on every rep change).
-      if (prevBasin >= 0 && world.hexes[prevBasin]) {
-        var effRep = prevBasin;
-        if (!world.transport[effRep] && world.hexes[prevBasin].isCity && world.hexes[prevBasin].clusterRep != null)
-          effRep = world.hexes[prevBasin].clusterRep;
-        if (effRep !== bk && world.transport[effRep]) {
-          var tc = world.transport[effRep][h2.i];
-          if (isFinite(tc)) {
-            var nbc = netbackOf(cfg, eq.P[effRep], tc);
-            if (nbc.v > 0 && best <= nbc.v * (1 + cfg.basinHyst)) { best = nbc.v; bk = effRep; bestDes = nbc.dessert; }
-          }
-        }
-      }
-      h2.netback = best; h2.isDessert = bestDes;
-      if (best > 0) { var f = mkt(h2.Cfood, best, eq.w, cfg.kappa, cfg.c); h2.LmktT = f.L; h2.Fmkt = f.F; h2.basin = bk; }
-      else { h2.LmktT = 0; h2.Fmkt = 0; h2.isDessert = false; }
       totalSlack += subRoomTile(world, h2, h2.LmktT); // desperation room on top of market labour
     }
     // pass 2: distribute subsistence across slack; blend actual mkt & sub labor
@@ -1431,7 +2000,11 @@
     var foodProduced = 0, marketFarmers = 0, subsistence = 0, fishermen = 0;
     var foodWasted = 0, dessertQty = {}, dessertTotal = 0, delivered = 0;
     var landTiles = 0, farmedTiles = 0, farmedOutsideBasin = 0, tileDeficit = 0;
-    for (var dq = 0; dq < world.cities.length; dq++) dessertQty[world.cities[dq]] = 0;
+    // PER-CITY deliveries. The old code only tracked a global `delivered`, which made
+    // glut a map-wide residual — one city's rotting surplus silently cancelled another's
+    // famine. Granaries and merchants are inherently per-city, so the balance has to be too.
+    var deliveredBy = {};
+    for (var dq = 0; dq < world.cities.length; dq++) { dessertQty[world.cities[dq]] = 0; deliveredBy[world.cities[dq]] = 0; }
     for (var i3 = 0; i3 < hexes.length; i3++) {
       var h3 = hexes[i3];
       if (!h3.passable) continue;
@@ -1440,10 +2013,11 @@
         if ((h3.fishCap || 0) <= 0) { h3.Lmkt = 0; h3.L = 0; h3.out = 0; continue; }
         h3.Lmkt += (h3.LmktT - h3.Lmkt) * mig; if (h3.Lmkt < 0) h3.Lmkt = 0;
         h3.Lsubw = 0; h3.L = h3.Lmkt;
-        var Ff = Ffood(h3.fishCap, h3.Lmkt, cfg.kappa);
+        var Ff = Ffood(h3.fishCap, h3.Lmkt, cfg.kappa, cfg.foodModel);
         foodProduced += Ff;                              // fish food
         h3.out = Math.max(0, Ff - h3.Lmkt * cfg.c);      // fish surplus feeds the city
         delivered += h3.out;
+        if (h3.basin >= 0 && deliveredBy[h3.basin] != null) deliveredBy[h3.basin] += h3.out;
         fishermen += h3.Lmkt;
         continue;
       }
@@ -1460,8 +2034,8 @@
       // old `Lsubw * c` shortcut would silently under-count production. Compute both
       // stretches of the curve honestly instead.
       var Ltot = h3.Lmkt + h3.Lsubw;
-      var Fm = Ffood(h3.Cfood, h3.Lmkt, cfg.kappa);          // the market operation's output
-      var Fsub = Ffood(h3.Cfood, Ltot, cfg.kappa) - Fm;      // extra grown by the subsisters
+      var Fm = Ffood(h3.Cfood, h3.Lmkt, cfg.kappa, cfg.foodModel);   // the market operation's output
+      var Fsub = Ffood(h3.Cfood, Ltot, cfg.kappa, cfg.foodModel) - Fm;   // extra grown by the subsisters
       foodProduced += Fm + Fsub;
       // A tile should never feed fewer people than it carries. Provably so for market
       // labour: Fm - Lmkt*c > 0 whenever Lmkt <= Lsub = sqrt(C*kappa/c) - kappa, because
@@ -1479,7 +2053,10 @@
         dessertQty[h3.basin] = (dessertQty[h3.basin] || 0) + q;
         dessertTotal += q;
         h3.out = 0; h3.dessertOut = q;
-      } else { h3.out = mktSurplus; h3.dessertOut = 0; delivered += mktSurplus; }
+      } else {
+        h3.out = mktSurplus; h3.dessertOut = 0; delivered += mktSurplus;
+        if (h3.basin >= 0 && deliveredBy[h3.basin] != null) deliveredBy[h3.basin] += mktSurplus;
+      }
       // Subsisters are OUTSIDE the market by definition (no netback reaches them), so
       // their surplus has no buyer and rots. This is the marginal rule's honest cost:
       // production no longer equals consumption tile-by-tile -- see conservation below.
@@ -1573,19 +2150,85 @@
     // Desserts shrink the raw-grain a city needs: `displaced` mouths ate dessert instead.
     // Mirror innerP's per-city clamp exactly -- displacing globally would let one city's
     // desserts soak up another's food demand, which no cart ever did.
-    var displacedFood = 0;
+    // ---- settle each city's food books, then the granary ---------------------
+    // For each city:            in = basin deliveries + merchant imports
+    //                          out = mouths - dessert displacement + merchant exports
+    // The granary takes the difference: it absorbs a surplus (up to capacity) and covers
+    // a deficit (down to empty). So grain only ROTS when the granary is full, and mouths
+    // only go unfed when it is empty — instead of every tick the staircase landed wrong.
+    //
+    // Merchant exports are CLAMPED to grain that physically exists at A. The caravan was
+    // planned a tick ago on stale prices, so it can over-commit; when it does, the matching
+    // imports at B are scaled back by the same factor. A caravan that could not be loaded
+    // did not arrive. Without this the plan would create food from nothing.
+    var displacedFood = 0, glut = 0, foodShortfall = tileDeficit, storageDelta = 0;
+    var importsGot = {}, exportsSent = {};
+    var newBalance = {};
+    // pass A: how much of each city's planned export can actually be loaded?
+    var exportScale = {};
+    for (var xa = 0; xa < world.cities.length; xa++) {
+      var xk = world.cities[xa];
+      var planned = trade.exports[xk] || 0;
+      if (planned <= 0) { exportScale[xk] = 1; continue; }
+      var onHand = (deliveredBy[xk] || 0) + (world.stock[xk] || 0)
+                 - cfg.c * ((world.cityN[xk] || 0) + (crewFood[xk] || 0));
+      exportScale[xk] = onHand <= 0 ? 0 : Math.min(1, onHand / planned);
+    }
+    // pass B: scale each route by its origin's loadable fraction; that is what arrives.
+    for (var rr = 0; rr < trade.routes.length; rr++) {
+      var rt = trade.routes[rr];
+      rt.shipped = rt.qty * (exportScale[rt.from] != null ? exportScale[rt.from] : 0);
+      exportsSent[rt.from] = (exportsSent[rt.from] || 0) + rt.shipped;
+      importsGot[rt.to] = (importsGot[rt.to] || 0) + rt.shipped;
+    }
+    // pass C: per-city balance -> granary -> glut/shortfall
     for (var dc = 0; dc < world.cities.length; dc++) {
       var dk = world.cities[dc];
-      var demK = cfg.c * ((world.cityN[dk] || 0) + (crewFood[dk] || 0));
-      displacedFood += displaceOf(cfg, dessertQty[dk] || 0, demK);
+      var mouths = cfg.c * ((world.cityN[dk] || 0) + (crewFood[dk] || 0));
+      // Desserts shrink the raw grain a city needs: `displaced` mouths ate dessert instead.
+      // Clamped PER CITY (as innerP does) -- displacing globally would let one city's
+      // desserts soak up another's food demand, which no cart ever did.
+      var disp = displaceOf(cfg, dessertQty[dk] || 0, mouths);
+      displacedFood += disp;
+      var inflow = (deliveredBy[dk] || 0) + (importsGot[dk] || 0);
+      var outflow = (mouths - disp) + (exportsSent[dk] || 0);
+      var net = inflow - outflow;                       // + = spare grain, - = short
+      var stock0 = world.stock[dk] || 0;
+      var capK = storageTarget(world, dk);
+      var stock1;
+      if (cfg.storage) {
+        stock1 = clamp(stock0 + net, 0, capK);
+        glut += Math.max(0, stock0 + net - capK);       // granary full: the rest rots
+        foodShortfall += Math.max(0, -(stock0 + net));  // granary empty: mouths go unfed
+      } else {
+        stock1 = 0;
+        glut += Math.max(0, net);
+        foodShortfall += Math.max(0, -net);
+      }
+      storageDelta += stock1 - stock0;
+      world.stock[dk] = stock1;
+      // What next tick's merchants will read: this city's realised spare / unmet need,
+      // plus what arrived by caravan (so `spare` can exclude it — see planMerchants).
+      newBalance[dk] = { surplus: Math.max(0, net), deficit: Math.max(0, -net),
+                         imported: importsGot[dk] || 0 };
     }
-    var citySideDemand = cfg.c * (cityWorkers + crewsEmployed + harborTotal) - displacedFood;
-    var glut = Math.max(0, delivered - citySideDemand);
-    foodWasted += glut;
-    // The opposite sign is NOT an accounting term -- it means mouths ate food that never
-    // arrived. Malthus lags, so a transient gap is expected; a persistent one is a bug.
-    // tileDeficit is the same thing measured at the farm rather than the city gate.
-    var foodShortfall = Math.max(0, citySideDemand - delivered) + tileDeficit;
+    world.lastBalance = newBalance;
+    // Next tick's merchant plan approaches its target from HERE, so it needs to know what
+    // actually flowed and what each city grew for itself.
+    world.lastImports = importsGot;
+    world.lastDelivered = deliveredBy;
+    // A destroyed city's granary spoils. It must move on BOTH sides of the identity: it
+    // rotted (+wasted) AND it left storage (-storageDelta). The two cancel, which is
+    // exactly right — that grain was produced and banked in some earlier tick, so this
+    // tick neither grew nor ate it, it merely stopped existing. Counting only the waste
+    // side made the books overstate by precisely the granary's contents (measured: 57,000
+    // of grain, 5.0e-1 relative error, on a map producing 114,000).
+    foodWasted += glut + orphanWaste;
+    storageDelta -= orphanWaste;
+    var merchantVolume = 0;
+    for (var mv = 0; mv < trade.routes.length; mv++) merchantVolume += trade.routes[mv].shipped || 0;
+    var stockTotal = 0;
+    for (var st = 0; st < world.cities.length; st++) stockTotal += world.stock[world.cities[st]] || 0;
 
     if (cfg.malthus) {
       var eps = Math.max(1, 0.001 * world.Ksub);        // scale-relative slack epsilon
@@ -1682,8 +2325,14 @@
     // (desserts:false => both dessert terms vanish => produced == eaten + wasted.)
     var dessertGrain = cfg.desserts ? cfg.dessertX * dessertTotal : 0;
     var dessertSink = dessertGrain - displacedFood;   // net luxury burn, for readouts
+    // GRANARIES add one more term, and only one: grain that went into store was produced
+    // but not eaten, so it is a sink exactly like a dessert (and a negative sink on the
+    // tick a city eats its reserves). Merchants add NO term — a caravan moves grain
+    // between cities, it does not create or destroy it, so Simports == Sexports cancels
+    // identically. (That cancellation is worth keeping honest: it is the reason exports
+    // are clamped to what can physically be loaded rather than to the plan.)
     var conservationErr = Math.abs(foodProduced -
-      ((foodEaten - displacedFood) + dessertGrain + foodWasted - foodShortfall));
+      ((foodEaten - displacedFood) + dessertGrain + foodWasted - foodShortfall + storageDelta));
     world.metrics = {
       tick: world.tick, N: world.N, w: eq.w,
       marketFarmers: marketFarmers, farmersAll: farmersAll, fishermen: fishermen,
@@ -1691,6 +2340,9 @@
       crewsEmployed: crewsEmployed, crewDemand: crewDemand, fundedFrac: fundedFrac,
       foodProduced: foodProduced, foodEaten: foodEaten, conservationErr: conservationErr,
       foodWasted: foodWasted, desserts: dessertTotal, dessertSink: dessertSink,
+      // granaries & trade
+      foodStock: stockTotal, storageDelta: storageDelta,
+      merchantVolume: merchantVolume, merchantRoutes: trade.routes.length,
       foodDelivered: delivered, foodGlut: glut, foodShortfall: foodShortfall,
       tileDeficit: tileDeficit,
       landTiles: landTiles, farmedTiles: farmedTiles, farmedOutsideBasin: farmedOutsideBasin,
@@ -1840,7 +2492,12 @@
     neighborsOf: neighborsOf, getHex: getHex, edgeKey: edgeKey, isHarbor: isHarbor,
     computeTransport: computeTransport, deriveUrban: deriveUrban,
     physDist: physDist, foodCapOf: foodCapOf,
-    Lsub: Lsub, zeta: zeta, sampleMetrics: sampleMetrics
+    Lsub: Lsub, zeta: zeta, sampleMetrics: sampleMetrics,
+    // stability layer (basins / granaries / merchants) — exposed for the gates & UI
+    computeBasinEligibility: computeBasinEligibility, eligibleFor: eligibleFor,
+    assignBasins: assignBasins, planMerchants: planMerchants,
+    storageTarget: storageTarget, storageBid: storageBid, liveRep: liveRep,
+    Ffood: Ffood, mkt: mkt, netbackOf: netbackOf, localDraw: localDraw
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = API;
   else global.Econ = API;

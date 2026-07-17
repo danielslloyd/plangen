@@ -15,16 +15,29 @@ function check(name, cond, detail) {
 // PART A — reproduce the reference core exactly (small scale, its bug regime)
 // ---------------------------------------------------------------------------
 console.log('== PART A: port fidelity vs hex_economy_v2_core.js (K0=0.5) ==');
+// This gate's ONLY job is to prove econ_engine.js still faithfully reproduces the
+// Node-validated reference core (hex_economy_v2_core.js / spec §11.5). The shipped
+// model has since moved on twice — the marginal population cap replaced the average
+// rule, and the 2026-07-16 stability layer added contiguous basins, sticky buyers,
+// granaries and merchants — so reproducing the reference means explicitly asking for
+// the reference's world, not the current default one. Every pin below is deliberate:
+//   foodModel:'legacy'  -> exponential yield + average-rule Lsub (the reference's model)
+//   priceMin/priceMax   -> the reference's own 0.01/300 bisection bracket
+//   growth:'bangbang'   -> the reference's fixed-step Malthus controller
+//   basinAdjacency/stickyBasins/storage/merchants:false -> none of these existed
+// crops_spec §6.1 asked whether to retire this gate or keep it reproducible; Dan chose
+// to keep it. If it fails, the PORT drifted — that is a real regression, not a stale test.
 (function () {
   var COLS = 14, ROWS = 10;
-  var w = Econ.createWorld({
-    cols: COLS, rows: ROWS,
-    config: { kappa: 4, K0: 0.5, edgeVar: 0, c: 1, r: 0.10, urban: 0.5, migrate: 1,
+  var REF = { foodModel: 'legacy', priceMin: 0.01, priceMax: 300, growth: 'bangbang',
+              basinAdjacency: false, stickyBasins: false, storage: false, merchants: false };
+  var cfg = { kappa: 4, K0: 0.5, edgeVar: 0, c: 1, r: 0.10, urban: 0.5, migrate: 1,
               tau: 0, N0: 15, malthus: true, urbanize: false, wIters: 38, priceRounds: 45,
               // isolate the base equilibrium: no fishing / yield noise / founder pop, and
               // legacy independent-curve subsistence (this is the reference-core model).
-              fishPerSea: 0, yieldVar: 0, cityFoundPop: 0, subsistenceShare: false }
-  });
+              fishPerSea: 0, yieldVar: 0, cityFoundPop: 0, subsistenceShare: false };
+  for (var rk in REF) cfg[rk] = REF[rk];
+  var w = Econ.createWorld({ cols: COLS, rows: ROWS, config: cfg });
   // overwrite capacities to match the reference map exactly (raw C, not terrain)
   w.hexes.forEach(function (h) { h.C = 3; h.fishCap = 0; h.Cfood = 3; });
   [[4, 4, 9], [10, 6, 9], [7, 2, 6]].forEach(function (b) {
@@ -32,7 +45,7 @@ console.log('== PART A: port fidelity vs hex_economy_v2_core.js (K0=0.5) ==');
       if (Math.hypot(h.col - b[0], h.r - b[1]) < 2.3 && b[2] > h.C) { h.C = b[2]; h.Cfood = b[2]; }
     });
   });
-  w.hexes.forEach(function (h) { h.Lsub = Econ.Lsub(h.Cfood, 4, 1); });
+  w.hexes.forEach(function (h) { h.Lsub = Econ.Lsub(h.Cfood, 4, 1, 'legacy'); });
   w.Ksub = w.hexes.reduce(function (a, h) { return a + h.Lsub; }, 0);
   // found rich & poor cities with explicit A
   Econ.foundCity(w, Econ.getHex(w, 3, 3).i, 9.0);
@@ -40,7 +53,13 @@ console.log('== PART A: port fidelity vs hex_economy_v2_core.js (K0=0.5) ==');
   Econ.computeTransport(w);
 
   var rich = w.cities[0], poor = w.cities[1], hist = [];
-  console.log('  Ksub=' + w.Ksub.toFixed(0) + '  (reference: 382)');
+  // Ksub lands at 367, not the reference's 382, and that gap is fully accounted for:
+  // both city sites sit inside the C=9 blobs (hypot((3,3),(4,4)) = hypot((11,7),(10,6))
+  // = 1.41 < 2.3), so each carried Lsub(9) ~ 7.5 of subsistence capacity. The engine
+  // PAVES a city tile (farmland gone for good — see computeCapacity), the reference has
+  // no such concept, so the engine loses exactly those 2 x 7.5 ~ 15. Prices are the real
+  // fidelity signal here and they match the reference to the digit: Prich 1.36 / Ppoor 0.95.
+  console.log('  Ksub=' + w.Ksub.toFixed(0) + '  (reference: 382; -15 = the 2 paved city tiles)');
   console.log('  t     N    mktFarm  cityPop  subs     w      Prich Ppoor');
   for (var t = 1; t <= 300; t++) {
     var m = Econ.step(w);
