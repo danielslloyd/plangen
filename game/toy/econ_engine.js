@@ -147,6 +147,18 @@
     // (N*c): the default sustains a few hundred citizens before a town is worth founding.
     newCoreMinSurplus: 400,
     newCoreMinDist: 5,       // physical hexes from the nearest city
+    // WARM-START a newly-ignited emergent city (Dan, 2026-07-17). A new core currently
+    // COLD-STARTs: it flips at the end of a tick with no price, and the next global solve
+    // yanks a big migration block into it (measured: median 233 workers in the first tick,
+    // max 1143) while pricing it from a default of 1.0. Instead, on ignition seed it with
+    // newCoreFoundPop workers drawn from the pool and a price from a LOCAL solve over the
+    // city tile + its immediate ring — so it is born at a sane (N, P) and eases into the
+    // global equilibrium rather than lurching into it. 0 => legacy cold start.
+    //
+    // This is a FLOOR that pre-positions workers, not population from nothing (unlike the
+    // first city's cityFoundPop bootstrap): the workers come out of the existing pool, so
+    // world.N is untouched and conservation holds. It cannot exceed the pool.
+    newCoreFoundPop: 0,      // default OFF pending measurement; 200 is the tested value
     maxUrbanFrac: 0.5,  // hard backstop: urban tiles never exceed this of the land
     // population dynamics
     r: 0.10,          // Malthusian growth rate
@@ -340,6 +352,27 @@
     // demand PLUS room in B's granary (merchants past that point have no buyer and
     // do not ship), and by A's merchant capacity. Routes fill highest-margin-first.
     merchants: true,
+    // HOW merchants decide what to carry (Dan, 2026-07-17):
+    //   'lag'     — the 2026-07-16 model: size each caravan against the destination's DEMAND
+    //               CURVE (demandAt) and approach it through a first-order lag
+    //               (merchantAggression). Robust but complex, and the demandAt coupling is
+    //               where the 47x price bug lived.
+    //   'granary' — Dan's simplification: a merchant just moves grain from a city with spare
+    //               (its own surplus + a draw on its granary) to a city that is short (its
+    //               crowd's unmet demand + room in its granary), highest margin first, and
+    //               STOPS. No demand-curve extrapolation. The anti-cobweb is the granary
+    //               BUFFER itself: a hungry city keeps buying until its granary fills, then
+    //               coasts on the reserve for days instead of swinging fed<->starving every
+    //               tick. That IS "hungry cities stay buyers for longer than one turn",
+    //               realised structurally rather than as a damping constant.
+    merchantModel: 'lag',
+    // Merchant PROFIT (margin x shipped) accrues as gold to the EXPORTING city — "a merchant
+    // in A hears grain is dear in B, buys in A, sells in B, keeps the margin". Off by default
+    // because it changes the wealth (Ytotal) of any trading city, which every wealth metric
+    // and the whole pop-vs-wealth experiment reads. At planet scale it is tiny (Y is in the
+    // millions, margins in the thousands) but it is the mechanism that makes TRADE a wealth
+    // strategy, which is exactly the strategic fork the harness hunts for.
+    merchantProfitGold: false,
     merchantCapPerWorker: 0.5,  // food/tick a city's merchants can move, per city worker.
                                 // Scales with the city: a 9-worker town moves ~4 units and
                                 // cannot distort the map; a metropolis runs real convoys.
@@ -983,7 +1016,7 @@
     }
 
     cands.sort(function (x, y) { return y.pri - x.pri; });
-    var applied = 0, changed = false, pavedKsub = false;
+    var applied = 0, changed = false, pavedKsub = false, newCores = [];
     for (var k = 0; k < cands.length && applied < cfg.flipsPerTick; k++) {
       var fl = cands[k];
       if (!canFlip(fl.i, fl.urban)) continue;
@@ -997,11 +1030,57 @@
       world.flipTick[fl.i] = world.tick;
       world.flipDir[fl.i] = fl.urban ? 1 : -1;
       if (fl.urban && fl.rep != null) world.growTick[fl.rep] = world.tick;
+      else if (fl.urban) newCores.push(fl.i);   // fl.rep==null => a brand-new city, not a grow
       applied++; changed = true;
     }
     if (pavedKsub) world.Ksub = world.hexes.reduce(function (a, h) { return a + h.Lsub; }, 0);
     if (changed) rebuildClusters(world);
+    // WARM-START each new core (cfg.newCoreFoundPop): pre-position workers from the pool and
+    // seed a price from a local solve over the city + its ring, so it is born at a sane (N, P)
+    // instead of cold. Done AFTER rebuildClusters so the tile is a live rep (its own cluster).
+    if (cfg.newCoreFoundPop > 0) for (var nc = 0; nc < newCores.length; nc++) warmStartCity(world, newCores[nc]);
     return changed;
+  }
+
+  // Cost to ship one unit FROM neighbour v TO city rep (one hop). Graph: the baked toward-
+  // city cost (costIn); hex: the symmetric edge cost. Used by warmStartCity before the new
+  // rep's full transport table exists.
+  function oneHopToCity(world, rep, v) {
+    if (world.dirCost) {
+      var nb = world.adj[rep];
+      for (var k = 0; k < nb.length; k++) if (nb[k] === v) return world.cfg.K0 * world.costIn[rep][k];
+      return world.cfg.K0;
+    }
+    return baseEdge(world, v, rep);
+  }
+  // Seed a newly-ignited city with newCoreFoundPop workers (drawn from the pool — never
+  // created; capped so it cannot exceed a quarter of the pool) and a price from a 1-D
+  // bisection over just its immediate ring: the P at which the ring's farm surplus feeds
+  // that many mouths. This is the "optimize over the city tile + immediate neighbours for
+  // the first tick" — a local innerP. The next global solve refines it with real transport;
+  // the warm start only has to be in the right ballpark so the birth is graceful.
+  function warmStartCity(world, rep) {
+    var cfg = world.cfg, h = world.hexes[rep];
+    if (!h || !h.isCity) return;
+    var N0 = Math.max(1, Math.min(cfg.newCoreFoundPop, 0.25 * world.N));
+    world.cityN[rep] = Math.max(world.cityN[rep] || 0, N0);
+    var ring = neighborsOf(world, rep), dem = cfg.c * N0;
+    var lo = cfg.priceMin, hi = cfg.priceMax, P = 1;
+    for (var it = 0; it < 34; it++) {
+      P = 0.5 * (lo + hi);
+      var sup = 0;
+      for (var m = 0; m < ring.length; m++) {
+        var v = ring[m], hv = world.hexes[v];
+        if (hv.isCity || !hv.passable) continue;
+        var cap = foodCapOf(hv); if (cap <= 0) continue;
+        var nb = netbackOf(cfg, P, oneHopToCity(world, rep, v));
+        if (nb.v > 0) { var f = mkt(cap, nb.v, 0, cfg.kappa, cfg.c, cfg.foodModel); sup += Math.max(0, f.F - f.L * cfg.c); }
+      }
+      if (dem - sup > 0) lo = P; else hi = P;
+    }
+    world.prices[rep] = P;
+    world.priceEma[rep] = P;
+    if (world.stock[rep] == null) world.stock[rep] = 0;
   }
 
   // ---- Max farmer population per hex: L where MARGINAL product = c ----------
@@ -1287,6 +1366,7 @@
   // Because the plan is fixed before the solve, each city's merchant inflow is a
   // CONSTANT w.r.t. this tick's prices — the per-city bisections stay decoupled.
   function planMerchants(world) {
+    if (world.cfg.merchantModel === 'granary') return planMerchantsGranary(world);
     var cfg = world.cfg;
     var imports = {}, exports_ = {}, routes = [];
     for (var a = 0; a < world.cities.length; a++) { imports[world.cities[a]] = 0; exports_[world.cities[a]] = 0; }
@@ -1418,6 +1498,71 @@
     }
     return { imports: imports, exports: exports_, routes: routes };
   }
+  // ---- Dan's simplified merchant model (cfg.merchantModel:'granary') --------------------
+  // A merchant moves grain from a city with SPARE to a city that is SHORT, highest margin
+  // first, and stops. No demand-curve extrapolation, no lag controller — the whole thing is
+  // "buy where it is cheap, sell where it is dear, pay transit". Same {imports, exports,
+  // routes} contract as planMerchants, so settlement and conservation are untouched.
+  //
+  // Why it does not cobweb without the lag machinery: the anti-oscillation is the granary
+  // BUFFER. A short city buys until its granary is full (deficit + room), then coasts on the
+  // reserve for ~storageDays before needing more — so it does not flip fed<->starving every
+  // tick, which is the exact cycle the lag model's demandAt/aggression was built to damp.
+  // The room is still capped at the granary's own per-tick intake rate (storageRate x
+  // target); delivering the whole 8-day room at once was the original overshoot bug.
+  function planMerchantsGranary(world) {
+    var cfg = world.cfg;
+    var imports = {}, exports_ = {}, routes = [];
+    for (var a = 0; a < world.cities.length; a++) { imports[world.cities[a]] = 0; exports_[world.cities[a]] = 0; }
+    if (!cfg.merchants || world.cities.length < 2) return { imports: imports, exports: exports_, routes: routes };
+
+    var bal = world.lastBalance || {};
+    var sellable = {}, buyable = {}, cap = {}, slots = {}, priced = {};
+    for (var i = 0; i < world.cities.length; i++) {
+      var k = world.cities[i], b = bal[k] || { surplus: 0, deficit: 0 };
+      priced[k] = (world.prices[k] != null && isFinite(world.prices[k]));
+      // SPARE at k: its own realised surplus last tick (net of grain still in transit to it)
+      // plus a draw on its granary at the granary's trade rate. Same source as the lag model.
+      var ownSurplus = Math.max(0, b.surplus - (b.imported || 0));
+      sellable[k] = ownSurplus + cfg.storageRate * (world.stock[k] || 0);
+      // SHORT at k: last tick's unmet crowd demand PLUS room in its granary, the room capped
+      // at the granary's per-tick intake so a caravan never delivers more than the city can
+      // absorb this tick. deficit is a realised quantity (no demand curve), and the +room is
+      // what keeps a fed-but-under-stocked city buying — the "buyer for longer" effect.
+      var tgt = storageTarget(world, k);
+      var room = Math.min(Math.max(0, tgt - (world.stock[k] || 0)), cfg.storageRate * tgt);
+      buyable[k] = Math.max(0, b.deficit) + room;
+      cap[k] = cfg.merchantCapPerWorker * (world.cityN[k] || 0);
+      slots[k] = cfg.merchantRoutes;
+    }
+    // round-robin over ordered pairs, highest margin first
+    var cands = [];
+    for (var ai = 0; ai < world.cities.length; ai++) {
+      var A = world.cities[ai];
+      if (!priced[A] || sellable[A] <= 0 || cap[A] <= 0) continue;
+      for (var bi = 0; bi < world.cities.length; bi++) {
+        var B = world.cities[bi];
+        if (A === B || !priced[B] || buyable[B] <= 0) continue;
+        var t = world.transport[B] ? world.transport[B][A] : Infinity;   // cost to ship A -> B
+        if (!isFinite(t)) continue;
+        var margin = (world.prices[B] || 0) - (world.prices[A] || 0) - t;
+        if (margin <= cfg.merchantMinMargin) continue;
+        cands.push({ a: A, b: B, margin: margin, t: t });
+      }
+    }
+    cands.sort(function (x, y) { return y.margin - x.margin; });
+    for (var ci = 0; ci < cands.length; ci++) {
+      var r = cands[ci];
+      if (slots[r.b] <= 0 || sellable[r.a] <= 1e-9 || cap[r.a] <= 1e-9 || buyable[r.b] <= 1e-9) continue;
+      var qty = Math.min(sellable[r.a], buyable[r.b], cap[r.a]);
+      if (qty <= 1e-9) continue;
+      sellable[r.a] -= qty; buyable[r.b] -= qty; cap[r.a] -= qty; slots[r.b]--;
+      exports_[r.a] += qty; imports[r.b] += qty;
+      routes.push({ from: r.a, to: r.b, qty: qty, margin: r.margin, cost: r.t });
+    }
+    return { imports: imports, exports: exports_, routes: routes };
+  }
+
   // Food city k would buy per tick at price P, at last tick's shadow wage. This is the
   // same NofCity the solver uses, so merchants and the price bisection agree about what
   // a city wants — they just consult it at different prices.
@@ -2275,11 +2420,21 @@
       exportScale[xk] = onHand <= 0 ? 0 : Math.min(1, onHand / planned);
     }
     // pass B: scale each route by its origin's loadable fraction; that is what arrives.
+    // The merchant's PROFIT (margin x what actually shipped) accrues to the EXPORTING city
+    // as gold — the caravan set out from A. Margin is last tick's price gap net of transit;
+    // it is >0 by construction (routes below that threshold were never planned), so trade
+    // can only add wealth, never subtract it.
+    var tradeProfitBy = {}, tradeProfitTotal = 0;
     for (var rr = 0; rr < trade.routes.length; rr++) {
       var rt = trade.routes[rr];
       rt.shipped = rt.qty * (exportScale[rt.from] != null ? exportScale[rt.from] : 0);
       exportsSent[rt.from] = (exportsSent[rt.from] || 0) + rt.shipped;
       importsGot[rt.to] = (importsGot[rt.to] || 0) + rt.shipped;
+      if (cfg.merchantProfitGold) {
+        var prof = Math.max(0, rt.margin) * rt.shipped;
+        tradeProfitBy[rt.from] = (tradeProfitBy[rt.from] || 0) + prof;
+        tradeProfitTotal += prof;
+      }
     }
     // pass C: per-city balance -> granary -> glut/shortfall
     for (var dc = 0; dc < world.cities.length; dc++) {
@@ -2317,6 +2472,20 @@
     // actually flowed and what each city grew for itself.
     world.lastImports = importsGot;
     world.lastDelivered = deliveredBy;
+
+    // Merchant profit -> the exporting city's wealth. Ytotal and the city rows were finalised
+    // from production BEFORE settlement (trade needs the realised `shipped` amounts, which only
+    // exist here), so fold trade gold in now. It is untaxed private income — a merchant's margin
+    // is not city output the treasury skims — so it lifts Y (wealth) without touching the tax/
+    // wage/road loop, which stays keyed on production. Tiny at planet scale, load-bearing for
+    // the pop-vs-wealth fork on maps where trade actually happens.
+    if (cfg.merchantProfitGold && tradeProfitTotal > 0) {
+      Ytotal += tradeProfitTotal;
+      for (var tp = 0; tp < cityRows.length; tp++) {
+        var extra = tradeProfitBy[cityRows[tp].city] || 0;
+        cityRows[tp].Y += extra; cityRows[tp].tradeProfit = extra; cityRows[tp].netGold += extra;
+      }
+    }
 
     // ---- per-city food security (cfg.growthGate:'foodSecurity') --------------
     // A city is "secure" once its granary has stayed FULL for growthFullTurns consecutive
@@ -2473,6 +2642,7 @@
       // granaries & trade
       foodStock: stockTotal, storageDelta: storageDelta,
       merchantVolume: merchantVolume, merchantRoutes: trade.routes.length,
+      merchantProfit: tradeProfitTotal,   // gold earned by trade this tick (cfg.merchantProfitGold)
       securityFrac: securityFrac,   // share of city pop whose granary has been full growthFullTurns ticks
       foodDelivered: delivered, foodGlut: glut, foodShortfall: foodShortfall,
       tileDeficit: tileDeficit,

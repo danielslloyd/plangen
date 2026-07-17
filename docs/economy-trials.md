@@ -460,6 +460,103 @@ If merchants ever matter on a map (i.e. roads get built), revisit `overshoot` up
 
 ---
 
+## Part 4 — Dan's simplification + seeding proposals (2026-07-17), tested
+
+> *"Each tile is attached to exactly one city; each city has two buyers (the crowd and the
+> granary). Merchants buy from the granaries to supply city-to-city when they can make a
+> profit... their profits show up as gold income in their city. Also: a minimum of __
+> workers migrate to a new city, then optimise collectively over the city tile and immediate
+> neighbours for the first tick."*
+
+**Most of the architecture Dan described is already how the engine works** — worth saying
+plainly before the new parts:
+
+| element | status |
+|---|---|
+| each tile attached to exactly one city | **already** (`stickyBasins` → `h.basin`) |
+| two buyers: crowd + granary | **already** (`innerP` demand = `c·N(P)` + `storageBid`) |
+| each tile checks one price sheet | **already** (`tileOffer` reads only `P[h.basin]`) |
+| merchants do the cross-city round-robin | **already** (`planMerchants`, O(cities²)) |
+| merchants source from granaries | refined below (`merchantModel:'granary'`) |
+| merchant profit → gold | **new** (`merchantProfitGold`) |
+| warm-start seeding | **new** (`newCoreFoundPop`) |
+
+### Merchant profit → gold: clean, adopt-able
+
+`merchantProfitGold` accrues `margin × shipped` to the **exporting** city's wealth (untaxed
+private income — a merchant's margin is not city output the treasury skims). Conserves
+(grain is unaffected; only gold moves). On the planet it is **0** (no trade happens at
+`bestMargin = −2.011`); on the island it is **94 gold/tick** to the rich city. Tiny against
+a planet `Ytotal` of 4.6e7, but it is the mechanism that makes **trade a wealth strategy** —
+exactly the pop-vs-wealth fork the harness hunts for. Latent until a map actually trades.
+
+### Warm-start seeding: clean win
+
+| `newCoreFoundPop` | median 1st-tick N | priced at birth | final N |
+|---|---|---|---|
+| 0 (cold, shipped) | 0 | **0%** | 197,995 |
+| 100 | 100 | **100%** | 196,820 |
+| 200 | 200 | 100% | 196,847 |
+| 400 | 400 | 100% | 195,802 |
+
+A cold-started city is born with **no price at all** on its birth tick (`updateUrbanization`
+flips it after the solve). The warm start seeds workers from the pool (never created —
+conserves) and prices it from a **local bisection over its own ring** (the "optimise over the
+city + immediate neighbours" Dan asked for). Fixes the missing-birth-price 0% → 100%, N
+−1.1%, conservation intact. Recommend adopting at ~100–200. (This complements the migration
+rate-limit, stability item 3 — seeding sets the *starting* workforce, a cap would bound the
+*rate*; both are worth having.)
+
+### The granary merchant model: simpler, identical on the planet — but it cannot bootstrap
+
+This is the one that taught me something. `merchantModel:'granary'` replaces the
+`demandAt`/`targetFlow`/`merchantAggression` lag controller with pure arbitrage: move grain
+from a city with spare (surplus + granary draw) to one that is short (realised deficit +
+granary room), highest margin first, stop. The anti-cobweb is meant to be the granary
+*buffer* — a fed city coasts on its reserve instead of re-buying every tick.
+
+**On the planet it is bit-identical to the lag model** (N, price, spread all equal) and
+**exactly as fast** (6175 vs 6162 ms/300 ticks). That last number kills the "cheaper compute"
+hope: the tile→one-city collapse was *already* done by `stickyBasins`, and merchants are
+O(cities²) ≈ 1,700 ops/tick against `innerP`'s ~160,000 tile-offers/solve. The compute lever
+is `innerP` (fewer price rounds, or skip re-solving cities whose inputs didn't move), not the
+merchant layer.
+
+**On the island it fails outright** — the barren, import-only city pins at N=0, P=600:
+
+| model | N[B] | P[B] | vol |
+|---|---|---|---|
+| lag (shipped) | 268 | 2.16 | 279 |
+| granary | **0** | **600** | 0 |
+| granary + seed B with 300 workers | **0** | 532 | 0 |
+
+Seeding a workforce doesn't rescue it. The cause is exactly the bootstrap trap documented in
+the earlier trial: a city with no local food has cityN→0, so its **realised deficit → 0**,
+so the granary model's demand signal is zero and no caravan is ever dispatched. And the
+moment such a city *is* fed, its deficit drops back to zero and it can't grow imports to
+match its growing population — it rings down to death. **`demandAt` is load-bearing:** it
+sizes caravans against what B *would* buy at the arbitrage-free price — a forward-looking
+demand curve that stays positive through a starving city's whole life — which is precisely
+what the backward-looking "realised deficit" cannot do.
+
+So the simplification is real and clean **for self-sufficient cities** (which is every city
+on the planet, because `newCoreGate:'surplus'` only ignites cities that have local surplus),
+and it removes the exact machinery that handles the one case it can't: a city that lives on
+imports. Given the engine's whole ethos is "no pathologies", **keep `lag` as the default.**
+`granary` is a documented option for maps guaranteed to have local food everywhere — and a
+starting point if a *siege* mechanic ever wants import-dependent cities to be fragile (though
+they should shrink gracefully, not pin at the price cap).
+
+### Recommendation
+
+- **Adopt `merchantProfitGold`** — clean, conserves, makes trade a wealth lever, latent until trade happens.
+- **Adopt `newCoreFoundPop` ≈ 100–200** — graceful births, fixes the missing-birth-price, conserves.
+- **Keep `merchantModel:'lag'`** — the granary model is simpler and identical where cities are self-sufficient, but cannot sustain an import-only city, and is not cheaper. The experiment's value was showing *why* the complexity exists.
+
+All three left **off by default** pending your call; all six gates green with each.
+
+---
+
 ## Corrections I made to my own numbers
 
 Recorded because both were wrong in a way that looked convincing:
